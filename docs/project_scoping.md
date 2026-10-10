@@ -141,7 +141,7 @@ CLEAR / word lists ──► CSV loader ─────────────�
 
 ## 4. GitHub Repository
 
-**Repository:** [ADD GITHUB LINK]
+**Repository:** https://github.com/keithfernandes12/young-illustrators-primer
 
 **Folder Structure (planned):**
 
