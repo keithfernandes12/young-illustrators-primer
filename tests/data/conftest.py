@@ -16,7 +16,6 @@ def tinystories_config():
         key="tinystories",
         name="TinyStories",
         license="CDLA-Sharing-1.0",
-        license_verified=True,
         attribution="TinyStories, Eldan & Li (2023)",
         ingest={"hf_dataset": "roneneldan/TinyStories", "batch_size": 4, "min_words": 3, "max_words": 50},
     )

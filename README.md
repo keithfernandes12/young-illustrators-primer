@@ -32,7 +32,7 @@ tests/        Unit and integration tests
 
 - Branch off `main` and open a pull request. At least one teammate reviews each PR before it merges.
 - Never commit data, model weights, credentials, or `.env` files.
-- Use only open-licensed data, and record its license and attribution.
+- Record each dataset's source and attribution in `configs/sources.yaml`.
 
 ## Team
 

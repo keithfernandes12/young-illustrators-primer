@@ -12,6 +12,17 @@ def min_records(records: list[dict], minimum: int) -> Check:
     return Check("min_records", len(records) >= minimum, f"{len(records):,} records (minimum {minimum:,})")
 
 
+def count_between(name: str, count: int, low: int, high: int | None = None) -> Check:
+    ok = count >= low and (high is None or count <= high)
+    expected = f"{low:,}+" if high is None else (f"{low:,}" if low == high else f"{low:,}-{high:,}")
+    return Check(name, ok, f"{count:,} (expected {expected})")
+
+
+def required_columns(columns: list[str], required: list[str]) -> Check:
+    missing = [c for c in required if c not in columns]
+    return Check("required_columns", not missing, f"missing: {', '.join(missing)}" if missing else "all present")
+
+
 def required_fields(records: list[dict], fields: list[str]) -> Check:
     missing = Counter(f for r in records for f in fields if f not in r)
     detail = ", ".join(f"{f} missing in {n:,}" for f, n in missing.items())

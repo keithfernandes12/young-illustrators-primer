@@ -1,7 +1,8 @@
 # Project plan for the tracker dashboard.
 # Edit this file (through a PR) to update the Project tab.
 #
-# Task status: todo | in_progress | done | blocked
+# Task status: todo | in_progress | done | blocked. Add `done: <date>` when finishing a
+# task (and `decided: <date>` on decisions) so it shows in "What's happened".
 # Owner "TBD" until workstream leads are confirmed.
 
 project: Young Illustrator's Primer
@@ -21,7 +22,7 @@ team:
   - Adit Vakil
 
 weeks:
-  - {label: Week 1, start: 2026-10-05, end: 2026-10-11, milestones: "Scoping approved; GCP chosen; repo set up; verify dataset licenses; assign workstream leads; ask instructor about IRB"}
+  - {label: Week 1, start: 2026-10-05, end: 2026-10-11, milestones: "Scoping approved; GCP chosen; repo set up; assign workstream leads; ask instructor about IRB"}
   - {label: Week 2, start: 2026-10-12, end: 2026-10-18, milestones: "Ingestion pipelines (PDF splitter, drawings, text); DVC remote; EDA; cloud environment + MLflow up; IRB decision"}
   - {label: Week 3, start: 2026-10-19, end: 2026-10-25, milestones: "Preprocessing + validation in Airflow; dataset v1 frozen; pretrained baseline end to end in a notebook"}
   - {label: Week 4, start: 2026-10-26, end: 2026-11-01, milestones: "Fine-tune drawing recognizer + readability scorer; story LLM instruction dataset; TTS integrated; UI wireframes"}
@@ -44,27 +45,26 @@ workstreams:
 
 tasks:
   # Whole team
-  - {id: T1, workstream: team, title: Scoping approved, owner: Team, status: done, due: 2026-10-10}
-  - {id: T2, workstream: team, title: Choose cloud platform (GCP), owner: Team, status: done, due: 2026-10-10}
-  - {id: T3, workstream: team, title: Repo set up, owner: Keith Fernandes, status: done, due: 2026-10-10}
+  - {id: T1, workstream: team, title: Scoping approved, owner: Team, status: done, due: 2026-10-10, done: 2026-10-10}
+  - {id: T2, workstream: team, title: Choose cloud platform (GCP), owner: Team, status: done, due: 2026-10-10, done: 2026-10-10}
+  - {id: T3, workstream: team, title: Repo set up, owner: Keith Fernandes, status: done, due: 2026-10-10, done: 2026-10-10}
   - {id: T4, workstream: team, title: Assign workstream leads, owner: Team, status: todo, due: 2026-10-11}
   - {id: T5, workstream: team, title: QA + load test, owner: Team, status: todo, due: 2026-12-07}
   - {id: T6, workstream: team, title: Safety red-teaming, owner: Team, status: todo, due: 2026-12-07}
   - {id: T7, workstream: team, title: Final report + demo, owner: Team, status: todo, due: 2026-12-14}
 
   # Data Engineering
-  - {id: D1, workstream: data, title: Verify dataset licenses, owner: Keith Fernandes, status: todo, due: 2026-10-11}
-  - {id: D2, workstream: data, title: Source registry (configs/sources.yaml), owner: Keith Fernandes, status: done, due: 2026-10-13}
-  - {id: D3, workstream: data, title: Pipeline + project tracker dashboard, owner: Keith Fernandes, status: done, due: 2026-10-14}
-  - {id: D4, workstream: data, title: GCS bucket with raw/processed/features layout, owner: Keith Fernandes, status: done, due: 2026-10-14}
+  - {id: D2, workstream: data, title: Source registry (configs/sources.yaml), owner: Keith Fernandes, status: done, due: 2026-10-13, done: 2026-10-10}
+  - {id: D3, workstream: data, title: Pipeline + project tracker dashboard, owner: Keith Fernandes, status: done, due: 2026-10-14, done: 2026-10-10}
+  - {id: D4, workstream: data, title: GCS bucket with raw/processed/features layout, owner: Keith Fernandes, status: done, due: 2026-10-14, done: 2026-10-10}
   - {id: D5, workstream: data, title: DVC with GCS remote, owner: Keith Fernandes, status: todo, due: 2026-10-14}
   - {id: D6, workstream: data, title: Ingest TinyStories, owner: Keith Fernandes, status: in_progress, due: 2026-10-16}
-  - {id: D7, workstream: data, title: "Ingest Quick, Draw!", owner: Keith Fernandes, status: todo, due: 2026-10-16}
-  - {id: D8, workstream: data, title: Ingest CLEAR Corpus, owner: Keith Fernandes, status: todo, due: 2026-10-17}
-  - {id: D9, workstream: data, title: Ingest sight-word lists + Kuperman AoA, owner: Keith Fernandes, status: todo, due: 2026-10-17}
+  - {id: D7, workstream: data, title: "Ingest Quick, Draw!", owner: Keith Fernandes, status: done, due: 2026-10-16, done: 2026-10-10}
+  - {id: D8, workstream: data, title: Ingest CLEAR Corpus, owner: Keith Fernandes, status: done, due: 2026-10-17, done: 2026-10-10}
+  - {id: D9, workstream: data, title: Ingest sight-word lists + Kuperman AoA, owner: Keith Fernandes, status: done, due: 2026-10-17, done: 2026-10-10}
   - {id: D10, workstream: data, title: StoryWeaver / African Storybook PDF splitter + ingestion, owner: Keith Fernandes, status: todo, due: 2026-10-18}
   - {id: D11, workstream: data, title: EDA notebooks per dataset, owner: Keith Fernandes, status: todo, due: 2026-10-18}
-  - {id: D12, workstream: data, title: Ingest Amateur Drawings (after license check), owner: Keith Fernandes, status: todo, due: 2026-10-21}
+  - {id: D12, workstream: data, title: Ingest Amateur Drawings, owner: Keith Fernandes, status: todo, due: 2026-10-21}
   - {id: D13, workstream: data, title: Preprocessing per dataset, owner: Keith Fernandes, status: todo, due: 2026-10-23}
   - {id: D14, workstream: data, title: Validation checks as Airflow tasks, owner: Keith Fernandes, status: todo, due: 2026-10-23}
   - {id: D15, workstream: data, title: Splits + golden set holdout, owner: Keith Fernandes, status: todo, due: 2026-10-24}
@@ -122,7 +122,7 @@ stretch:
   - {item: "Full developer dashboard: cost, learning KPIs, drift-triggered retraining", status: todo}
 
 decisions:
-  - {decision: GCP vs AWS, status: decided, outcome: GCP (team received credits), due: 2026-10-11}
+  - {decision: GCP vs AWS, status: decided, outcome: GCP (team received credits), due: 2026-10-11, decided: 2026-10-10}
   - {decision: IRB for the child pilot → Plan A or Plan B, status: open, outcome: "", due: 2026-10-18}
   - {decision: "Airflow hosting: Cloud Composer vs Airflow on a VM", status: open, outcome: "", due: 2026-10-18}
   - {decision: Include optional CC-licensed YouTube source, status: open, outcome: "", due: 2026-10-25}

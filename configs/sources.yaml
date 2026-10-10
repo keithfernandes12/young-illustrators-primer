@@ -1,7 +1,6 @@
 # Dataset registry: one entry per data source.
-# Shared by the data pipeline (what to ingest, under which license) and the
-# tracker dashboard (what to expect). Set license_verified to true only after
-# someone has read the license on the source's own site.
+# Shared by the data pipeline (what to ingest) and the tracker dashboard.
+# license and attribution are carried on every record for crediting sources.
 #
 # feeds: which model or component the data is for
 # priority: ingestion order (1 = first); mvp: needed for the Nov 15 MVP
@@ -16,7 +15,6 @@ sources:
     format: Hugging Face dataset (text)
     url: https://huggingface.co/datasets/roneneldan/TinyStories
     license: CDLA-Sharing-1.0
-    license_verified: false
     attribution: "TinyStories, Eldan & Li (2023)"
     ingest:
       hf_dataset: roneneldan/TinyStories
@@ -34,41 +32,54 @@ sources:
     format: NDJSON strokes (public GCS bucket gs://quickdraw_dataset)
     url: https://github.com/googlecreativelab/quickdraw-dataset
     license: CC-BY-4.0
-    license_verified: false
     attribution: "Quick, Draw! Dataset, Google Creative Lab"
+    ingest:
+      bucket_path: quickdraw_dataset/full/simplified
+      categories_per_batch: 50       # a run covers this many of the 345 categories
+      max_per_category: 2000         # first N drawings of each category
+      min_per_category: 100
+      recognized_only: true          # keep drawings the game's model recognized
 
   clear_corpus:
     name: CLEAR Corpus
     feeds: [readability_scorer]
     priority: 3
     mvp: true
-    format: CSV
+    format: Excel spreadsheet (CLEAR_corpus_final.xlsx)
     url: https://github.com/scrosseye/CLEAR-Corpus
     license: CC-BY-NC-SA-4.0
-    license_verified: false
-    attribution: "CLEAR Corpus, CommonLit & Georgia State University"
+    attribution: "CLEAR Corpus, CommonLit & Georgia State University (Crossley et al., 2022)"
+    ingest:
+      url: https://raw.githubusercontent.com/scrosseye/CLEAR-Corpus/main/CLEAR_corpus_final.xlsx
+      sheet: Data
+      min_records: 4000
 
   sight_words:
     name: Dolch / Fry sight words
     feeds: [target_words]
     priority: 4
     mvp: true
-    format: CSV
-    url: null
+    format: R data files from the lexicon package
+    url: https://github.com/trinker/lexicon
     license: Public-Domain
-    license_verified: false
-    attribution: "Dolch (1936) and Fry (1980) sight-word lists"
+    attribution: "Dolch (1936) and Fry (1980) sight-word lists, via the lexicon R package (Rinker)"
+    ingest:
+      dolch_url: https://raw.githubusercontent.com/trinker/lexicon/master/data/sw_dolch.rda
+      fry_url: https://raw.githubusercontent.com/trinker/lexicon/master/data/sw_fry_1000.rda
+      allowed_duplicates: [hot]      # Fry's list really has "hot" at #30 and #487
 
   kuperman_aoa:
     name: Kuperman AoA norms
     feeds: [target_words]
     priority: 4
     mvp: true
-    format: CSV
-    url: null
+    format: Excel spreadsheet (AoA_51715_words.xlsx)
+    url: https://osf.io/j94kb/
     license: Free for research
-    license_verified: false
-    attribution: "Kuperman, Stadthagen-Gonzalez & Brysbaert (2012)"
+    attribution: "Kuperman, Stadthagen-Gonzalez & Brysbaert (2012), file via Brysbaert on OSF (osf.io/j94kb)"
+    ingest:
+      url: https://osf.io/download/6kauf/
+      min_rated: 30000
 
   storyweaver:
     name: StoryWeaver
@@ -78,7 +89,6 @@ sources:
     format: PDF / ePub + metadata
     url: https://storyweaver.org.in
     license: CC-BY-4.0
-    license_verified: false
     attribution: "StoryWeaver, Pratham Books"
 
   african_storybook:
@@ -89,7 +99,6 @@ sources:
     format: PDF / web + metadata
     url: https://www.africanstorybook.org
     license: CC-BY-4.0
-    license_verified: false
     attribution: "African Storybook"
 
   amateur_drawings:
@@ -100,7 +109,6 @@ sources:
     format: Images + JSON annotations
     url: https://github.com/facebookresearch/AnimatedDrawings
     license: Research use (verify)
-    license_verified: false
     attribution: "Amateur Drawings Dataset, Meta AI"
 
   gutenberg_children:
@@ -111,7 +119,6 @@ sources:
     format: Text / HTML
     url: https://www.gutenberg.org
     license: Public-Domain
-    license_verified: false
     attribution: "Project Gutenberg"
 
   myst:
@@ -122,5 +129,4 @@ sources:
     format: Audio (WAV) + transcripts
     url: https://boulderlearning.com
     license: Non-commercial research (access by request)
-    license_verified: false
     attribution: "MyST Children's Speech Corpus, Boulder Learning"

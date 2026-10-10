@@ -28,6 +28,7 @@ PROCESSED_DIR = "processed/stories_text/source=tinystories"
 
 class TinyStories(Source):
     key = "tinystories"
+    dataset = "stories_text"
 
     def __init__(self, config, store, fetch: Fetch | None = None):
         super().__init__(config, store)
@@ -115,7 +116,7 @@ class TinyStories(Source):
         df["text_hash"] = df["text"].map(text_hash)
         df = df.drop_duplicates("text_hash")
 
-        out_path = f"{PROCESSED_DIR}/batch={run.batch_id}.parquet"
+        out_path = self.processed_path(run.batch_id)
         seen = self._existing_hashes(exclude=out_path)
         df = df[~df["text_hash"].isin(seen)].copy()
 
@@ -138,7 +139,7 @@ class TinyStories(Source):
     def _existing_hashes(self, exclude: str) -> set[str]:
         """Text hashes already in processed/, so re-ingested stories are dropped."""
         hashes: set[str] = set()
-        for path in self.store.glob(f"{PROCESSED_DIR}/batch=*.parquet"):
+        for path in self.processed_paths():
             if path != exclude:
                 hashes.update(self.store.read_parquet(path, columns=["text_hash"])["text_hash"])
         return hashes

@@ -17,7 +17,6 @@ class SourceConfig:
     key: str
     name: str
     license: str
-    license_verified: bool
     attribution: str
     feeds: list[str] = field(default_factory=list)
     priority: int = 99
@@ -34,7 +33,6 @@ def load_sources(path: Path | str | None = None) -> dict[str, SourceConfig]:
             key=key,
             name=entry.get("name", key),
             license=entry.get("license", "unknown"),
-            license_verified=bool(entry.get("license_verified", False)),
             attribution=entry.get("attribution", ""),
             feeds=entry.get("feeds") or [],
             priority=entry.get("priority", 99),

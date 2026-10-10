@@ -1,9 +1,12 @@
-# Project tracker dashboard
+# Project tracker
 
-A Streamlit app with two tabs:
+A one-page Streamlit dashboard showing what has happened so far and what's next:
 
-- **Project:** current week, days to MVP and code freeze, workstream progress, tasks, the MVP checklist, stretch goals, open decisions, and the timeline. Data comes from [project.yaml](project.yaml).
-- **Data pipeline:** each data source's license, how far it has gone through the pipeline, record counts, recent runs, failures, and validation checks. Data comes from [configs/sources.yaml](../../configs/sources.yaml) and the run manifests the pipeline writes.
+- **Header:** current week, days to the MVP and code freeze.
+- **Numbers:** tasks done, overdue tasks, data sources in the pipeline, records processed.
+- **What's happened:** newest-first feed of pipeline batches (from the run manifests in GCS), completed tasks, and decisions.
+- **Data:** each source's status, record count, and last update.
+- **Open tasks:** sorted by due date with overdue ones flagged, filterable by workstream, plus open decisions.
 
 ## Run it
 
@@ -11,39 +14,14 @@ From the repo root:
 
 ```bash
 pip install -e ".[dashboard]"
+gcloud auth application-default login
 streamlit run dashboards/tracker/app.py
 ```
 
-Turn on **Show sample pipeline data** in the sidebar to see the Data pipeline tab filled with made-up runs.
+Reading the pipeline runs needs Google Cloud credentials with access to the `young-illustrators-primer` project. Set `TRACKER_METADATA_URI` to read runs from somewhere else, such as a local folder.
 
 ## Update it
 
-- **Tasks, decisions, milestones:** edit [project.yaml](project.yaml) and open a PR. Task status is `todo`, `in_progress`, `done`, or `blocked`.
-- **Data sources:** edit [configs/sources.yaml](../../configs/sources.yaml). Set `license_verified: true` only after reading the license on the source's own site.
-- **Pipeline status:** updates itself. Each pipeline run writes one JSON manifest to `<metadata location>/runs/`, and the dashboard reads them every 60 seconds.
-
-## Where pipeline metadata lives
-
-The default location is `gs://young-illustrators-primer-data/metadata`, which needs Google Cloud credentials (`gcloud auth application-default login`) and access to the project. To read from elsewhere, such as a local folder used in testing, paste the location into the sidebar or set `TRACKER_METADATA_URI`.
-
-## Run manifest format
-
-Every pipeline stage (`ingest`, `validate`, `preprocess`, `split`, `version`) writes one file per run. The full contract is in the docstring of [loaders.py](loaders.py), and [examples/metadata/runs/](examples/metadata/runs/) has samples.
-
-```json
-{
-  "run_id": "20261014T030000Z-tinystories-ingest",
-  "source": "tinystories",
-  "stage": "ingest",
-  "status": "success",
-  "started_at": "2026-10-14T03:00:00Z",
-  "finished_at": "2026-10-14T03:04:12Z",
-  "records_in": 0,
-  "records_out": 50000,
-  "records_total": 50000,
-  "dataset_version": null,
-  "output_uri": "gs://<bucket>/raw/tinystories/20261014/",
-  "validation": {"checks": [{"name": "no_empty_text", "passed": true, "detail": ""}]},
-  "error": null
-}
-```
+- **Tasks and decisions:** edit [project.yaml](project.yaml) and open a PR. When you finish a task, set `status: done` and add `done: <date>` so it appears in the feed. Decisions get `decided: <date>`.
+- **Data sources:** edit [configs/sources.yaml](../../configs/sources.yaml).
+- **Pipeline status:** updates itself from the manifests each pipeline run writes to `gs://young-illustrators-primer-data/metadata/runs/`. The manifest format is in the docstring of [loaders.py](loaders.py).
