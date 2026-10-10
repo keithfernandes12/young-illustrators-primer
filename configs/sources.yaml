@@ -82,24 +82,38 @@ sources:
       min_rated: 30000
 
   storyweaver:
-    name: StoryWeaver
+    name: StoryWeaver (Pratham Books)
     feeds: [story_llm, readability_scorer, illustration]
     priority: 5
     mvp: true
-    format: PDF / ePub + metadata
-    url: https://storyweaver.org.in
+    format: Markdown stories + JPG image bank (Global Storybooks GitHub mirror)
+    url: https://github.com/global-asp/pb-source
     license: CC-BY-4.0
-    attribution: "StoryWeaver, Pratham Books"
+    attribution: "Pratham Books / StoryWeaver (storyweaver.org.in), via Global Storybooks"
+    ingest:
+      text_repo: global-asp/pb-source
+      image_repo: global-asp/pb-imagebank
+      branch: master
+      language: en
+      image_size: medium
+      min_stories: 300
 
   african_storybook:
     name: African Storybook
     feeds: [story_llm, illustration]
     priority: 5
     mvp: true
-    format: PDF / web + metadata
-    url: https://www.africanstorybook.org
+    format: Markdown stories + JPG image bank (Global Storybooks GitHub mirror)
+    url: https://github.com/global-asp/asp-source
     license: CC-BY-4.0
-    attribution: "African Storybook"
+    attribution: "African Storybook (africanstorybook.org), via Global Storybooks"
+    ingest:
+      text_repo: global-asp/asp-source
+      image_repo: global-asp/asp-imagebank
+      branch: master
+      language: en
+      image_size: medium
+      min_stories: 300
 
   amateur_drawings:
     name: Amateur Drawings

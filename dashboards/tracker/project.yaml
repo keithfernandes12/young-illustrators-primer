@@ -62,7 +62,7 @@ tasks:
   - {id: D7, workstream: data, title: "Ingest Quick, Draw!", owner: Keith Fernandes, status: done, due: 2026-10-16, done: 2026-10-10}
   - {id: D8, workstream: data, title: Ingest CLEAR Corpus, owner: Keith Fernandes, status: done, due: 2026-10-17, done: 2026-10-10}
   - {id: D9, workstream: data, title: Ingest sight-word lists + Kuperman AoA, owner: Keith Fernandes, status: done, due: 2026-10-17, done: 2026-10-10}
-  - {id: D10, workstream: data, title: StoryWeaver / African Storybook PDF splitter + ingestion, owner: Keith Fernandes, status: todo, due: 2026-10-18}
+  - {id: D10, workstream: data, title: StoryWeaver + African Storybook ingestion, owner: Keith Fernandes, status: done, due: 2026-10-18, done: 2026-10-10}
   - {id: D11, workstream: data, title: EDA notebooks per dataset, owner: Keith Fernandes, status: todo, due: 2026-10-18}
   - {id: D12, workstream: data, title: Ingest Amateur Drawings, owner: Keith Fernandes, status: todo, due: 2026-10-21}
   - {id: D13, workstream: data, title: Preprocessing per dataset, owner: Keith Fernandes, status: todo, due: 2026-10-23}

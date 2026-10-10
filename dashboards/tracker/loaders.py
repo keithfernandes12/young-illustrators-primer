@@ -175,8 +175,9 @@ def activity(project: dict, runs: pd.DataFrame, sources: pd.DataFrame, limit: in
             icon, text = "⏳", f"**{name}** {latest[latest['status'] == 'running'].iloc[0]['stage']} running"
         elif "preprocess" in by_stage:
             processed = by_stage["preprocess"]
+            # Only when both count the same unit (picture books fetch stories but process pages).
             raw = f" from {int(ingest['records_out']):,} fetched" if ingest is not None \
-                and pd.notna(ingest["records_out"]) else ""
+                and pd.notna(ingest["records_out"]) and ingest["records_out"] >= processed["records_out"] else ""
             icon, text = "✅", f"**{name}**: {int(processed['records_out']):,} records processed{raw}"
         else:
             last = group.sort_values("when").iloc[-1]

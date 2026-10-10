@@ -65,11 +65,11 @@ class Source(ABC):
     def raw_batches(self) -> list[str]:
         return self.store.list_dirs(f"raw/{self.key}")
 
-    def processed_path(self, batch_id: str) -> str:
-        return f"processed/{self.dataset}/source={self.key}/batch={batch_id}.parquet"
+    def processed_path(self, batch_id: str, dataset: str | None = None) -> str:
+        return f"processed/{dataset or self.dataset}/source={self.key}/batch={batch_id}.parquet"
 
-    def processed_paths(self) -> list[str]:
-        return self.store.glob(f"processed/{self.dataset}/source={self.key}/batch=*.parquet")
+    def processed_paths(self, dataset: str | None = None) -> list[str]:
+        return self.store.glob(f"processed/{dataset or self.dataset}/source={self.key}/batch=*.parquet")
 
     def read_raw(self, batch_id: str) -> list[dict]:
         """All records from a batch's ``part-*.jsonl.gz`` files (incremental sources)."""

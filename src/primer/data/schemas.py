@@ -26,6 +26,30 @@ STORIES_TEXT = {
 }
 
 
+# processed/storybook_pages/source=<source>/batch=<batch_id>.parquet
+STORYBOOK_PAGES = {
+    "record_id": "string",
+    "source": "string",
+    "book_id": "string",
+    "title": "string",
+    "page_number": "int32",            # 1-based, story pages only (no cover)
+    "n_pages": "int32",
+    "text": "string",
+    "word_count": "int32",
+    "image_uri": "string",             # illustration for this page (null if pages and images don't line up)
+    "image_caption": "string",         # illustration description, where the source provides one
+    "image_alignment": "string",       # cover+pages | cover+pages+back | pages | unaligned | no_images
+    "author": "string",
+    "illustrator": "string",
+    "translator": "string",
+    "language": "string",
+    "reading_level": "string",         # not in the source; filled in later by the readability scorer
+    "license": "string",
+    "attribution": "string",
+    "batch_id": "string",
+    "ingested_at": "datetime64[ns, UTC]",
+}
+
 # processed/drawings/source=<source>/batch=<batch_id>.parquet
 DRAWINGS = {
     "record_id": "string",

@@ -75,6 +75,23 @@ class Store:
     def read_bytes(self, rel: str) -> bytes:
         return self.fs.cat_file(self.path(rel))
 
+    def write_many(self, files: dict[str, bytes]) -> None:
+        """Write many files at once (uploads run concurrently on GCS)."""
+        if not files:
+            return
+        full = {self.path(rel): data for rel, data in files.items()}
+        if self.is_local:
+            for path in {p.rsplit("/", 1)[0] for p in full}:
+                self.fs.makedirs(path, exist_ok=True)
+        self.fs.pipe(full)
+
+    def read_many(self, rels: list[str]) -> dict[str, bytes]:
+        """Read many files at once (downloads run concurrently on GCS), keyed by relative path."""
+        if not rels:
+            return {}
+        data = self.fs.cat([self.path(r) for r in rels])
+        return {self._rel(path): content for path, content in data.items()}
+
     # -- json
 
     def write_json(self, rel: str, obj: Any) -> None:

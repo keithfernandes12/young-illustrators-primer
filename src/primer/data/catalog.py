@@ -15,7 +15,7 @@ import pandas as pd
 from primer.data.sources import SOURCES
 from primer.data.storage import Store
 
-DATASETS = ("stories_text", "drawings", "readability", "word_lists")
+DATASETS = ("stories_text", "storybook_pages", "drawings", "readability", "word_lists")
 
 
 def read_dataset(dataset: str, store: Store | None = None, sources: list[str] | None = None) -> pd.DataFrame:
