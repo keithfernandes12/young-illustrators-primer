@@ -105,7 +105,7 @@ Supporting resources: **Dolch and Fry sight-word lists** (target words for ages 
 ```
 StoryWeaver / ASB PDFs ──► PyMuPDF page splitter ──► illustration + text per page ─┐
 Gutenberg / TinyStories ──► text loader ───────────────────────────────────────────┤
-Quick, Draw! / Amateur Drawings ──► image/stroke loader ───────────────────────────┼──► Raw zone (GCS / S3)
+Quick, Draw! / Amateur Drawings ──► image/stroke loader ───────────────────────────┼──► Raw zone (GCS)
 CLEAR / word lists ──► CSV loader ─────────────────────────────────────────────────┤
 (Optional) CC YouTube ──► scene detection ──► keyframes + transcript alignment ────┘
 ```
@@ -134,7 +134,7 @@ CLEAR / word lists ──► CSV loader ─────────────�
 
 ### 3.4 Managing Data
 
-- **Storage zones:** `raw/` → `processed/` → `features/` in a cloud bucket (GCS or S3).
+- **Storage zones:** `raw/` → `processed/` → `features/` in a Google Cloud Storage bucket.
 - **Versioning:** DVC tracks every dataset version, and each trained model records the dataset version it was trained on.
 - **Validation:** Great Expectations / TFDV schema checks (missing text, empty pages, label distribution, image size) run as an Airflow task. The pipeline stops if a check fails.
 - **Lineage and metadata:** source, license, and attribution travel with every record.
@@ -356,22 +356,22 @@ flowchart TB
 
 ## 9. Deployment Infrastructure
 
-**Cloud:** GCP or AWS (decision by end of Week 1). We lean toward **GCP** for its student credits, Cloud Run with GPU support, Vertex AI, and BigQuery. Equivalent services:
+**Cloud: Google Cloud Platform (GCP).** Chosen Oct 10, 2026: the team received GCP credits, and GCP offers Cloud Run with GPU support, Vertex AI, and BigQuery.
 
-| Need | GCP | AWS |
-|---|---|---|
-| Object storage / DVC remote | Cloud Storage | S3 |
-| Pipeline orchestration | Cloud Composer (Airflow) / Airflow on VM | MWAA (Airflow) / Airflow on EC2 |
-| Model training | Vertex AI Training (GPU) | SageMaker Training |
-| Experiment tracking + registry | MLflow (self-hosted) / Vertex Model Registry | MLflow / SageMaker Model Registry |
-| API serving (CPU) | Cloud Run | ECS Fargate / App Runner |
-| GPU inference (diffusion, LLM) | Cloud Run GPU / Vertex AI Endpoints | SageMaker Endpoints (async) |
-| Job queue | Pub/Sub / Cloud Tasks | SQS |
-| App database | Firestore / Cloud SQL (Postgres) | DynamoDB / RDS (Postgres) |
-| Analytics warehouse | BigQuery | Athena / Redshift |
-| Monitoring & logs | Cloud Monitoring + Logging | CloudWatch |
-| Secrets | Secret Manager | Secrets Manager |
-| CI/CD | GitHub Actions → Artifact Registry | GitHub Actions → ECR |
+| Need | GCP service |
+|---|---|
+| Object storage / DVC remote | Cloud Storage |
+| Pipeline orchestration | Cloud Composer (Airflow) / Airflow on VM |
+| Model training | Vertex AI Training (GPU) |
+| Experiment tracking + registry | MLflow (self-hosted) / Vertex Model Registry |
+| API serving (CPU) | Cloud Run |
+| GPU inference (diffusion, LLM) | Cloud Run GPU / Vertex AI Endpoints |
+| Job queue | Pub/Sub / Cloud Tasks |
+| App database | Firestore / Cloud SQL (Postgres) |
+| Analytics warehouse | BigQuery |
+| Monitoring & logs | Cloud Monitoring + Logging |
+| Secrets | Secret Manager |
+| CI/CD | GitHub Actions → Artifact Registry |
 
 **Supported platforms:** responsive web app (desktop, tablet, phone browsers) for both the child reader and the parent dashboard. Tablet (iPad / Android) is the main target for kids. Native mobile apps are out of scope.
 
@@ -384,8 +384,8 @@ flowchart TB
         PD[Parent dashboard]
     end
     subgraph Serving
-        API[FastAPI gateway - Cloud Run / ECS]
-        Q[Job queue - Pub/Sub / SQS]
+        API[FastAPI gateway - Cloud Run]
+        Q[Job queue - Pub/Sub]
         W[GPU workers: drawing model, story LLM, diffusion, TTS, ASR]
         S[Safety + readability gate]
     end
@@ -500,7 +500,7 @@ The plan holds about **1.5 weeks of buffer**: Week 7 absorbs MVP slips (or start
 
 | Week | Dates | Milestones |
 |---|---|---|
-| 1 | Oct 5 – Oct 11 | Scoping approved; choose GCP/AWS; repo set up; verify dataset licenses; assign workstream leads; **ask instructor about IRB and submit paperwork** |
+| 1 | Oct 5 – Oct 11 | Scoping approved; GCP chosen; repo set up; verify dataset licenses; assign workstream leads; **ask instructor about IRB and submit paperwork** |
 | 2 | Oct 12 – Oct 18 | Ingestion pipelines (PDF splitter, drawings, text); DVC remote; EDA; cloud environment + MLflow up; **IRB decision → choose pilot Plan A or B** |
 | 3 | Oct 19 – Oct 25 | Preprocessing + validation in Airflow; dataset v1 frozen; pretrained baseline running end to end in a notebook |
 | 4 | Oct 26 – Nov 1 | Fine-tune drawing recognizer + readability scorer; story LLM instruction dataset built; TTS integrated; UI wireframes |
@@ -526,11 +526,11 @@ The plan holds about **1.5 weeks of buffer**: Week 7 absorbs MVP slips (or start
 - **Out of scope (future):** multilingual stories, native mobile apps, arithmetic/writing modules (the full "Primer" vision), teacher/classroom accounts, animated characters.
 
 ### Resources & Budget
-- **Compute:** the team's available compute plus cloud (GCP/AWS) credits. GPUs are needed for fine-tuning (parameter-efficient LoRA keeps jobs small) and for diffusion and LLM inference. Spot/preemptible instances and budget alerts control cost.
+- **Compute:** the team's available compute plus GCP credits. GPUs are needed for fine-tuning (parameter-efficient LoRA keeps jobs small) and for diffusion and LLM inference. Spot/preemptible instances and budget alerts control cost.
 - **People:** 6 team members across 6 workstreams (Section 12).
 
 ### Open Decisions
-- [ ] GCP vs AWS (by Oct 11)
+- [x] GCP vs AWS → **GCP** (decided Oct 10; team received GCP credits)
 - [ ] IRB decision for the child pilot → Plan A or Plan B (by Oct 18)
 - [ ] Include optional CC-licensed YouTube source or not
 - [ ] Base model choices after Week 3 baseline comparison

@@ -28,7 +28,7 @@
 
 **Models (fine-tuned from Hugging Face):** drawing recognizer · story LLM (LoRA) · readability scorer · illustration style LoRA + ControlNet · safety filter. Pretrained models handle TTS narration and Whisper speech recognition.
 
-**MLOps stack:** Airflow · DVC · MLflow · GitHub Actions CI/CD with an evaluation gate · FastAPI serving · Evidently + Prometheus + Grafana monitoring, on **GCP or AWS** (decision in Week 1).
+**MLOps stack:** Airflow · DVC · MLflow · GitHub Actions CI/CD with an evaluation gate · FastAPI serving · Evidently + Prometheus + Grafana monitoring, on **Google Cloud (GCP)**, using the team's GCP credits.
 
 **Key targets:** ≥ 95% of target words included · reading level within ±1 of target for ≥ 85% of books · zero safety violations on the golden test set · full book in ≤ 2 min · ≤ $0.25 per book · parent satisfaction ≥ 4/5.
 
