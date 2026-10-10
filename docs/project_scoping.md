@@ -23,7 +23,7 @@ The product serves two age groups with different learning goals:
 | **3–5** | *Learn to Read* | Letter-sound awareness, sight words, first vocabulary | 1–2 short sentences per page, 4–8 pages, narration on by default, word-by-word highlighting, tap any word to hear it, target words repeated 3+ times |
 | **5–8** | *Grow Vocabulary* | Richer vocabulary ("Tier 2" words) and command of language | Longer sentences, 8–16 pages, new words explained in context, end-of-book glossary, comprehension questions, read-aloud fluency practice |
 
-**Parents** use a guidance dashboard to set learning goals (target words, phonics focus, a theme or life lesson), book length, difficulty, and whether read-aloud speech recognition is on.
+**Parents** use a guidance dashboard to set learning goals (target words, phonics focus, a theme or life lesson), book length, difficulty, and whether read-aloud speech recognition is on (a stretch goal, see Section 5.4).
 
 **The development team** has an internal dashboard to track model performance, usage, cost, and product KPIs.
 
@@ -92,7 +92,9 @@ Supporting resources: **Dolch and Fry sight-word lists** (target words for ages 
 - **Data minimization:** no child names, faces, or location are needed. Drawings and books are stored under a pseudonymous ID. Read-aloud audio is **processed in memory and discarded by default**; storing it to improve the model is a separate opt-in.
 - **Right to delete:** parents can delete a child's drawings, books, and history at any time. Deletion also covers the training data (deleted items are excluded from future dataset versions).
 - **Security:** encryption in transit (TLS) and at rest, least-privilege IAM, and no child data in logs or URLs.
-- **Testing phase:** pilot users are children of consenting family and friends, with parents present. We will check with the instructor whether IRB-style approval is needed.
+- **Pilot approval (IRB):** in Week 1 we ask the instructor whether the child pilot needs IRB review, and we submit any required paperwork right away (target decision: **Oct 18**). The pilot plan depends on the answer:
+  - **Plan A (approved):** family pilot with children of consenting family and friends. Parents are present, consent forms are signed, and no pilot data is kept after the evaluation.
+  - **Plan B (not approved in time):** no children take part. Adult evaluators (team members, classmates, parents reviewing finished books) test the system with public child-style drawings from the Amateur Drawings test split. Every MVP acceptance criterion (Section 11) can be verified under Plan B.
 
 ---
 
@@ -169,7 +171,7 @@ young_illustrators_primer/
 └── README.md
 ```
 
-**README:** project overview, architecture diagram, setup (environment, credentials, DVC remote), how to run pipelines/training/serving locally, deployment steps, and dataset attributions.
+**README:** in the repository root. It currently covers the project overview, links to the scoping docs, the folder layout, contribution rules (branch + pull request with teammate review; never commit data, weights, or credentials), and the team. Installation and usage instructions (environment setup, credentials, DVC remote, running pipelines, training, and serving) are added as each component lands, along with dataset attributions.
 
 ---
 
@@ -223,6 +225,31 @@ Following the class framework, we start from the **business problem**, not the A
 - *Unstructured data, human-level performance (HLP):* humans often **cannot** tell what a 3-year-old drew. **Mitigation:** the child or parent names each drawing ("This is Zip, my dragon"). The model then extracts attributes (colors, shape, features) instead of guessing the subject.
 - *External benchmarks:* TinyStories shows that small language models can write coherent children's stories. ControlNet-Scribble shows that diffusion models can follow a rough sketch. Whisper is a widely used baseline for speech recognition.
 - *Predictive features for adaptation:* tapped words, misread words (ASR), reading time per page, and re-reads plausibly predict word mastery.
+
+### 5.4 MVP and Stretch Goals
+
+The full scope is ambitious for eight weeks, so we split it in two. The **MVP (minimum viable product)** is the smallest version that works end to end and demonstrates the core idea, and it is due **Nov 15**. **Stretch goals** are built only after the MVP works, in priority order. If stretch goals slip, the project still succeeds.
+
+**MVP (must be done by Nov 15)**
+
+| Area | Included |
+|---|---|
+| Product | Upload a drawing → parent labels it and sets target words and length → generated story → illustrated pages → narration with word highlighting → web flip-book reader + parent settings page |
+| Age modes | Both 3–5 and 5–8, as presets of the same pipeline (page count, sentence length, vocabulary list) |
+| Models trained by the team | Drawing recognizer, story LLM (LoRA), readability scorer |
+| Pretrained models | Stable Diffusion + ControlNet-Scribble (illustration), TTS (narration), safety classifier |
+| Quality gates | Readability + safety gate before any book is delivered |
+| MLOps | Airflow data pipeline, DVC data versioning, MLflow tracking + registry, CI/CD with golden-set evaluation gate, cloud deployment, basic monitoring (latency, errors, gate pass rates, safety flags, input drift) on the developer dashboard |
+
+**Stretch goals (after the MVP, in priority order)**
+
+1. **Read-aloud ASR** with a parent on/off toggle, reporting misread words.
+2. **Learner profile + adaptation:** track words mastered and adapt the next story.
+3. **Illustration style LoRA:** custom storybook art style trained on CC-BY illustrations.
+4. **Age-mode extras:** tap-to-hear words, glossary, comprehension questions.
+5. **Full developer dashboard:** cost and learning-KPI panels, automatic drift-triggered retraining.
+
+**Why this cut:** the MVP holds the core product promise and every MLOps component the course requires. Each stretch goal is an add-on that plugs into the finished pipeline without redesigning it.
 
 ---
 
@@ -293,7 +320,7 @@ flowchart TB
 | Safety violation rate (golden set + human review) | ML | 0 on golden set; < 0.1% in testing |
 | Character consistency (CLIP similarity, drawing ↔ pages) | ML | ≥ threshold set during experiments |
 | Story quality (LLM-as-judge + human rating, 1–5) | ML | ≥ 4.0 average |
-| ASR word error rate on children's speech | ML | ≤ 25% (baseline), improve with fine-tune |
+| ASR word error rate on children's speech (stretch) | ML | ≤ 25% (baseline), improve with fine-tune |
 | Time to first page / full book (p95) | Software | ≤ 20 s / ≤ 2 min |
 | Cost per book | Software | ≤ $0.25 |
 | Service uptime during testing | Software | ≥ 99% |
@@ -322,6 +349,8 @@ flowchart TB
 | Post-deployment | Input drift (new drawing styles, new themes) | Accuracy drops | Embedding drift monitoring (Evidently); retraining triggered by alerts |
 | Post-deployment | Cost spike from heavy usage | Budget overrun | Per-user rate limits; cost dashboard and alerts |
 | Privacy | Child data leak | Legal (COPPA) and ethical harm | Pseudonymous IDs, encryption, minimal retention, no PII in logs, access reviews |
+| Project | Scope creep / schedule slip | Unfinished core product | MVP defined up front (Section 5.4); stretch goals start only after the MVP works; buffer weeks in the timeline (Section 12) |
+| Project | IRB approval not granted in time for the child pilot | No child testing | Ask in Week 1; fall back to Plan B adult evaluation (Section 2.4) |
 
 ---
 
@@ -433,45 +462,55 @@ We monitor three layers: **model quality**, **system health**, and **product usa
 
 ## 11. Success and Acceptance Criteria
 
-The project is accepted when, by the end of the testing window (Dec 14):
+**MVP acceptance (required; verified by the end of the testing window, Dec 14):**
 
-- [ ] A user can upload a drawing, set goals in the parent dashboard, and receive a complete illustrated, narrated book end to end in the deployed cloud environment.
-- [ ] Both age modes (3–5 *Learn to Read*, 5–8 *Grow Vocabulary*) work with their distinct features.
-- [ ] Read-aloud ASR can be toggled on/off and, when on, reports misread words to the learner profile.
-- [ ] At least three models (drawing recognizer, story LLM, readability scorer) are trained by the team, versioned (DVC + MLflow), and reproducible from the repo.
+- [ ] A user can upload a drawing, set goals in the parent settings page, and receive a complete illustrated, narrated book end to end in the deployed cloud environment.
+- [ ] Both age modes (3–5 *Learn to Read*, 5–8 *Grow Vocabulary*) produce books matching their presets.
+- [ ] Three models (drawing recognizer, story LLM, readability scorer) are trained by the team, versioned (DVC + MLflow), and reproducible from the repo.
 - [ ] ML targets in Section 7 are met on the test and golden sets (safety: zero violations on the golden set).
 - [ ] Software targets met: p95 full book ≤ 2 min, uptime ≥ 99% during testing.
 - [ ] Automated pipelines: ingestion → validation → training → evaluation gate → deploy run in Airflow + CI/CD.
-- [ ] The developer dashboard shows live model, usage, cost, and KPI metrics, and alerts fire correctly.
+- [ ] The developer dashboard shows live latency, errors, gate pass rates, safety flags, and input drift, and alerts fire correctly.
 - [ ] COPPA-aligned privacy controls are in place: parent-owned accounts, consent flow, deletion, no PII in logs.
-- [ ] Pilot feedback collected from ≥ 5 families; parent satisfaction ≥ 4.0 / 5.
+- [ ] Evaluation feedback collected: ≥ 5 families (Plan A) or ≥ 10 adult evaluators (Plan B); satisfaction ≥ 4.0 / 5.
+
+**Stretch success (counted only if built; see Section 5.4):**
+
+- [ ] Read-aloud ASR can be toggled on/off and, when on, reports misread words to the learner profile.
+- [ ] The next story adapts to the learner profile.
+- [ ] Illustrations use the team-trained style LoRA.
+- [ ] Age-mode extras (tap-to-hear, glossary, comprehension questions) work.
+- [ ] The dashboard adds cost and learning-KPI panels, and drift alerts trigger retraining automatically.
 
 ---
 
 ## 12. Timeline Planning
 
-**Build:** Oct 5 – Nov 30, 2026 (8 weeks) · **Testing:** Dec 1 – Dec 14, 2026 (2 weeks)
+**Build:** Oct 5 – Nov 30, 2026 · **MVP complete:** Nov 15 · **Testing:** Dec 1 – Dec 14, 2026
+
+The plan holds about **1.5 weeks of buffer**: Week 7 absorbs MVP slips (or starts stretch goals if the MVP is on time), Thanksgiving week is planned light, and Dec 12–14 is reserved so the final report never competes with testing.
 
 **Workstreams (one team member leads each; leads confirmed at the Week 1 kickoff):**
 1. Data Engineering: ingestion, preprocessing, validation, DVC
-2. Vision: drawing recognizer + illustration (diffusion / LoRA)
+2. Vision: drawing recognizer + illustration
 3. Language: story LLM fine-tuning, readability scorer, safety
-4. Speech: TTS narration + read-aloud ASR
+4. Speech: TTS narration (MVP) + read-aloud ASR (stretch)
 5. MLOps / Infra: cloud, Airflow, MLflow, CI/CD, serving, developer dashboard
-6. Product / Frontend: child reader, parent dashboard, UX, pilot coordination
+6. Product / Frontend: child reader, parent settings, UX, evaluation coordination
 
 | Week | Dates | Milestones |
 |---|---|---|
-| 1 | Oct 5 – Oct 11 | Finalize scoping doc; choose GCP/AWS; repo + project skeleton; verify dataset licenses; assign workstream leads |
-| 2 | Oct 12 – Oct 18 | Ingestion pipelines (PDF splitter, drawings, text); DVC remote; EDA; cloud environment + MLflow up |
-| 3 | Oct 19 – Oct 25 | Preprocessing + validation in Airflow; dataset v1 frozen; baseline models (pretrained, no fine-tune) end to end in a notebook |
+| 1 | Oct 5 – Oct 11 | Scoping approved; choose GCP/AWS; repo set up; verify dataset licenses; assign workstream leads; **ask instructor about IRB and submit paperwork** |
+| 2 | Oct 12 – Oct 18 | Ingestion pipelines (PDF splitter, drawings, text); DVC remote; EDA; cloud environment + MLflow up; **IRB decision → choose pilot Plan A or B** |
+| 3 | Oct 19 – Oct 25 | Preprocessing + validation in Airflow; dataset v1 frozen; pretrained baseline running end to end in a notebook |
 | 4 | Oct 26 – Nov 1 | Fine-tune drawing recognizer + readability scorer; story LLM instruction dataset built; TTS integrated; UI wireframes |
-| 5 | Nov 2 – Nov 8 | Story LLM LoRA fine-tune; illustration style LoRA + ControlNet; golden set written; FastAPI serving v1 |
-| 6 | Nov 9 – Nov 15 | End-to-end pipeline deployed to cloud (async GPU workers); safety + readability gate; parent dashboard v1; ASR integrated (toggle) |
-| 7 | Nov 16 – Nov 22 | CI/CD with evaluation gate; monitoring (Evidently, Prometheus); developer dashboard v1; learner profile + adaptation |
-| 8 | Nov 23 – Nov 30 | Hardening, performance/cost tuning, bug fixes, documentation; **code freeze Nov 30** (note: Thanksgiving Nov 26) |
-| 9 | Dec 1 – Dec 7 | Internal QA + load test; safety red-teaming; pilot onboarding (consent) |
-| 10 | Dec 8 – Dec 14 | Family pilot (≥ 5 families); collect metrics + feedback; final report + demo |
+| 5 | Nov 2 – Nov 8 | Story LLM LoRA fine-tune; illustration with pretrained SD + ControlNet; golden set written; FastAPI serving v1 |
+| 6 | Nov 9 – Nov 15 | **MVP complete:** end-to-end pipeline deployed to cloud; safety + readability gate; parent settings page; CI/CD evaluation gate; basic monitoring dashboard |
+| 7 | Nov 16 – Nov 22 | **Buffer week:** finish any MVP slips first; otherwise start stretch goals in priority order (Section 5.4) |
+| 8 | Nov 23 – Nov 30 | Hardening, performance/cost tuning, documentation; light week for Thanksgiving (Nov 26); **code freeze Nov 30** |
+| 9 | Dec 1 – Dec 7 | Internal QA + load test; safety red-teaming; evaluation onboarding (consent for Plan A) |
+| 10 | Dec 8 – Dec 11 | Pilot / evaluation (Plan A families or Plan B adult evaluators); collect metrics + feedback |
+| — | Dec 12 – Dec 14 | **Buffer:** final report + demo |
 
 ---
 
@@ -483,7 +522,7 @@ The project is accepted when, by the end of the testing window (Dec 14):
 - **Open discussion:** the team reviews ethical risks at each milestone. Concerns and decisions are logged in the repo.
 
 ### Scope Boundaries
-- **In scope:** English stories; web app; two age modes; optional read-aloud ASR; developer dashboard.
+- **In scope:** the MVP (Section 5.4): English stories, web app, two age modes, narration, developer dashboard. Stretch goals (including read-aloud ASR) are in scope only once the MVP works.
 - **Out of scope (future):** multilingual stories, native mobile apps, arithmetic/writing modules (the full "Primer" vision), teacher/classroom accounts, animated characters.
 
 ### Resources & Budget
@@ -492,7 +531,6 @@ The project is accepted when, by the end of the testing window (Dec 14):
 
 ### Open Decisions
 - [ ] GCP vs AWS (by Oct 11)
-- [ ] Final product name
+- [ ] IRB decision for the child pilot → Plan A or Plan B (by Oct 18)
 - [ ] Include optional CC-licensed YouTube source or not
 - [ ] Base model choices after Week 3 baseline comparison
-- [ ] IRB/consent requirements for the December pilot (check with instructor)
