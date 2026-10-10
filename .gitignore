@@ -1,0 +1,80 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environments
+.venv/
+venv/
+env/
+.python-version
+.conda/
+
+# Secrets and credentials - never commit these
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*credentials*.json
+*service-account*.json
+gcloud/
+.aws/
+
+# Data - tracked by DVC, not git
+data/*
+!data/.gitkeep
+!data/*.dvc
+!data/.gitignore
+*.ckpt
+*.safetensors
+*.pt
+*.pth
+*.bin
+*.onnx
+
+# DVC local cache and config
+.dvc/cache/
+.dvc/tmp/
+.dvc/config.local
+
+# Experiment tracking
+mlruns/
+mlartifacts/
+wandb/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Airflow
+airflow.db
+airflow-webserver.pid
+logs/
+
+# Terraform
+infra/**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+
+# Node (web app)
+node_modules/
+.next/
+.cache/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+.claude/
