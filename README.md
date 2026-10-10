@@ -15,8 +15,9 @@ This is our MLOps course team project, inspired by Y Combinator's *"The Primer"*
 
 ```
 app/          Web app (child reader + parent dashboard)
+configs/      Dataset registry and pipeline configs
 dags/         Airflow DAGs
-dashboards/   Developer monitoring dashboards
+dashboards/   Project tracker and developer monitoring dashboards
 data/         DVC-tracked data (never committed to git)
 docs/         Scoping and design docs
 infra/        Terraform, Docker, deployment configs

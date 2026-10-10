@@ -1,0 +1,118 @@
+# Dataset registry: one entry per data source.
+# Shared by the data pipeline (what to ingest, under which license) and the
+# tracker dashboard (what to expect). Set license_verified to true only after
+# someone has read the license on the source's own site.
+#
+# feeds: which model or component the data is for
+# priority: ingestion order (1 = first); mvp: needed for the Nov 15 MVP
+
+sources:
+  tinystories:
+    name: TinyStories
+    feeds: [story_llm]
+    priority: 1
+    mvp: true
+    format: Hugging Face dataset (text)
+    url: https://huggingface.co/datasets/roneneldan/TinyStories
+    license: CDLA-Sharing-1.0
+    license_verified: false
+    attribution: "TinyStories, Eldan & Li (2023)"
+
+  quickdraw:
+    name: Quick, Draw!
+    feeds: [drawing_recognizer]
+    priority: 2
+    mvp: true
+    format: NDJSON strokes (public GCS bucket gs://quickdraw_dataset)
+    url: https://github.com/googlecreativelab/quickdraw-dataset
+    license: CC-BY-4.0
+    license_verified: false
+    attribution: "Quick, Draw! Dataset, Google Creative Lab"
+
+  clear_corpus:
+    name: CLEAR Corpus
+    feeds: [readability_scorer]
+    priority: 3
+    mvp: true
+    format: CSV
+    url: https://github.com/scrosseye/CLEAR-Corpus
+    license: CC-BY-NC-SA-4.0
+    license_verified: false
+    attribution: "CLEAR Corpus, CommonLit & Georgia State University"
+
+  sight_words:
+    name: Dolch / Fry sight words
+    feeds: [target_words]
+    priority: 4
+    mvp: true
+    format: CSV
+    url: null
+    license: Public-Domain
+    license_verified: false
+    attribution: "Dolch (1936) and Fry (1980) sight-word lists"
+
+  kuperman_aoa:
+    name: Kuperman AoA norms
+    feeds: [target_words]
+    priority: 4
+    mvp: true
+    format: CSV
+    url: null
+    license: Free for research
+    license_verified: false
+    attribution: "Kuperman, Stadthagen-Gonzalez & Brysbaert (2012)"
+
+  storyweaver:
+    name: StoryWeaver
+    feeds: [story_llm, readability_scorer, illustration]
+    priority: 5
+    mvp: true
+    format: PDF / ePub + metadata
+    url: https://storyweaver.org.in
+    license: CC-BY-4.0
+    license_verified: false
+    attribution: "StoryWeaver, Pratham Books"
+
+  african_storybook:
+    name: African Storybook
+    feeds: [story_llm, illustration]
+    priority: 5
+    mvp: true
+    format: PDF / web + metadata
+    url: https://www.africanstorybook.org
+    license: CC-BY-4.0
+    license_verified: false
+    attribution: "African Storybook"
+
+  amateur_drawings:
+    name: Amateur Drawings
+    feeds: [drawing_recognizer]
+    priority: 6
+    mvp: true
+    format: Images + JSON annotations
+    url: https://github.com/facebookresearch/AnimatedDrawings
+    license: Research use (verify)
+    license_verified: false
+    attribution: "Amateur Drawings Dataset, Meta AI"
+
+  gutenberg_children:
+    name: Project Gutenberg (children's)
+    feeds: [story_llm]
+    priority: 7
+    mvp: false
+    format: Text / HTML
+    url: https://www.gutenberg.org
+    license: Public-Domain
+    license_verified: false
+    attribution: "Project Gutenberg"
+
+  myst:
+    name: MyST children's speech
+    feeds: [asr]
+    priority: 8
+    mvp: false
+    format: Audio (WAV) + transcripts
+    url: https://boulderlearning.com
+    license: Non-commercial research (access by request)
+    license_verified: false
+    attribution: "MyST Children's Speech Corpus, Boulder Learning"

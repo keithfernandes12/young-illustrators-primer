@@ -1,0 +1,21 @@
+{
+  "run_id": "20261014T031000Z-tinystories-validate",
+  "source": "tinystories",
+  "stage": "validate",
+  "status": "success",
+  "started_at": "2026-10-14T03:10:00Z",
+  "finished_at": "2026-10-14T03:11:30Z",
+  "records_in": 50000,
+  "records_out": 50000,
+  "dataset_version": null,
+  "output_uri": "gs://example-bucket/raw/tinystories/20261014/",
+  "validation": {
+    "checks": [
+      {"name": "schema_matches", "passed": true, "detail": ""},
+      {"name": "no_empty_text", "passed": true, "detail": ""},
+      {"name": "word_count_in_range", "passed": true, "detail": "20-1500 words"},
+      {"name": "no_duplicate_ids", "passed": true, "detail": ""}
+    ]
+  },
+  "error": null
+}

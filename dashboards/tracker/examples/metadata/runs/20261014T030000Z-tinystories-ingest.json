@@ -1,0 +1,14 @@
+{
+  "run_id": "20261014T030000Z-tinystories-ingest",
+  "source": "tinystories",
+  "stage": "ingest",
+  "status": "success",
+  "started_at": "2026-10-14T03:00:00Z",
+  "finished_at": "2026-10-14T03:04:12Z",
+  "records_in": 0,
+  "records_out": 50000,
+  "records_total": 50000,
+  "dataset_version": null,
+  "output_uri": "gs://example-bucket/raw/tinystories/20261014/",
+  "error": null
+}

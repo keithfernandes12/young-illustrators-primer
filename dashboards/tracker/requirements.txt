@@ -1,0 +1,5 @@
+streamlit>=1.40
+pandas>=2.0
+pyyaml>=6.0
+fsspec>=2024.2
+gcsfs>=2024.2  # only needed to read gs:// metadata
