@@ -1,0 +1,16 @@
+md5: 4a4f38935db111148e46b82d4a3e5051
+frozen: true
+deps:
+- hash: md5
+  path: gs://young-illustrators-primer-data/processed/readability
+  fs_config:
+    version_aware: true
+  files:
+  - relpath: source=clear_corpus/batch=20261010T211824Z.parquet
+    etag: 08da80ea8db0b097031001
+    size: 3468293
+    version_id: '1791667111362650'
+outs:
+- hash: md5
+  path: readability
+  push: false

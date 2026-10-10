@@ -57,7 +57,7 @@ tasks:
   - {id: D2, workstream: data, title: Source registry (configs/sources.yaml), owner: Keith Fernandes, status: done, due: 2026-10-13, done: 2026-10-10}
   - {id: D3, workstream: data, title: Pipeline + project tracker dashboard, owner: Keith Fernandes, status: done, due: 2026-10-14, done: 2026-10-10}
   - {id: D4, workstream: data, title: GCS bucket with raw/processed/features layout, owner: Keith Fernandes, status: done, due: 2026-10-14, done: 2026-10-10}
-  - {id: D5, workstream: data, title: DVC with GCS remote, owner: Keith Fernandes, status: todo, due: 2026-10-14}
+  - {id: D5, workstream: data, title: DVC with GCS remote, owner: Keith Fernandes, status: done, due: 2026-10-14, done: 2026-10-10}
   - {id: D6, workstream: data, title: Ingest TinyStories, owner: Keith Fernandes, status: in_progress, due: 2026-10-16}
   - {id: D7, workstream: data, title: "Ingest Quick, Draw!", owner: Keith Fernandes, status: done, due: 2026-10-16, done: 2026-10-10}
   - {id: D8, workstream: data, title: Ingest CLEAR Corpus, owner: Keith Fernandes, status: done, due: 2026-10-17, done: 2026-10-10}

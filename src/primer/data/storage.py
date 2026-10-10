@@ -72,8 +72,30 @@ class Store:
             self.fs.makedirs(full.rsplit("/", 1)[0], exist_ok=True)
         self.fs.pipe_file(full, data)
 
-    def read_bytes(self, rel: str) -> bytes:
+    def read_bytes(self, rel: str, generation: str | None = None) -> bytes:
+        """Read a file; ``generation`` reads that exact past version (GCS object versioning)."""
+        if generation and not self.is_local:
+            return self._versioned_fs().cat_file(f"{self.path(rel)}#{generation}")
         return self.fs.cat_file(self.path(rel))
+
+    def _versioned_fs(self):
+        if not hasattr(self, "_vfs"):
+            import gcsfs
+
+            self._vfs = gcsfs.GCSFileSystem(version_aware=True)
+        return self._vfs
+
+    def file_versions(self, prefix: str) -> list[dict]:
+        """Every file under ``prefix`` with its size, MD5, and GCS generation (None locally)."""
+        fs = self.fs if self.is_local else self._versioned_fs()
+        fs.invalidate_cache()
+        try:
+            found = fs.find(self.path(prefix), detail=True)
+        except FileNotFoundError:
+            return []
+        return [{"path": self._rel(path), "size": info.get("size"),
+                 "md5": info.get("md5Hash"), "generation": info.get("generation")}
+                for path, info in sorted(found.items()) if info.get("type") != "directory"]
 
     def write_many(self, files: dict[str, bytes]) -> None:
         """Write many files at once (uploads run concurrently on GCS)."""
@@ -120,5 +142,12 @@ class Store:
         df.to_parquet(buf, index=False)
         self.write_bytes(rel, buf.getvalue())
 
-    def read_parquet(self, rel: str, columns: list[str] | None = None) -> pd.DataFrame:
-        return pd.read_parquet(io.BytesIO(self.read_bytes(rel)), columns=columns)
+    def read_parquet(self, rel: str, columns: list[str] | None = None, generation: str | None = None) -> pd.DataFrame:
+        return pd.read_parquet(io.BytesIO(self.read_bytes(rel, generation)), columns=columns)
+
+    def parquet_rows(self, rel: str) -> int:
+        """Row count from the Parquet footer, without reading the data."""
+        import pyarrow.parquet as pq
+
+        with self.fs.open(self.path(rel), "rb") as fh:
+            return pq.ParquetFile(fh).metadata.num_rows

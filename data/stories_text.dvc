@@ -1,0 +1,24 @@
+md5: 253d3960de2b6eebf73ce6860117d31b
+frozen: true
+deps:
+- hash: md5
+  path: gs://young-illustrators-primer-data/processed/stories_text
+  fs_config:
+    version_aware: true
+  files:
+  - relpath: source=african_storybook/batch=20261010T214458Z.parquet
+    etag: 089d898af9b6b097031001
+    size: 343174
+    version_id: '1791668946896029'
+  - relpath: source=storyweaver/batch=20261010T214600Z.parquet
+    etag: 08c4d9feffb6b097031001
+    size: 558356
+    version_id: '1791668961389764'
+  - relpath: source=tinystories/batch=20261010T203709Z.parquet
+    etag: 0889e2aff2a6b097031001
+    size: 1018684
+    version_id: '1791664637866249'
+outs:
+- hash: md5
+  path: stories_text
+  push: false

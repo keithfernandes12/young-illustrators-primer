@@ -5,6 +5,8 @@
     primer-data ingest tinystories           fetch the next batch into raw/
     primer-data validate tinystories         check a raw batch (default: latest)
     primer-data preprocess tinystories       clean a raw batch into processed/
+    primer-data version v1 -m "notes"        freeze all processed datasets as version v1
+    primer-data versions                     list dataset versions
 
 Data goes to PRIMER_DATA_URI (default gs://young-illustrators-primer-data);
 override with --data-uri.
@@ -21,6 +23,7 @@ from primer.data.config import load_sources
 from primer.data.manifest import ValidationFailed
 from primer.data.sources import SOURCES, get_source
 from primer.data.storage import Store
+from primer.data.versioning import VersionExists, create_version, list_versions
 
 log = logging.getLogger("primer.data")
 
@@ -33,6 +36,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("sources", help="List registered sources and which have a pipeline")
+    p = sub.add_parser("version", help="Freeze all processed datasets as a named version")
+    p.add_argument("tag", help="Version name, e.g. v1")
+    p.add_argument("-m", "--message", default="", help="What this version contains or why it was made")
+    p.add_argument("--no-dvc", action="store_true", help="Skip refreshing the data/*.dvc pointer files")
+    sub.add_parser("versions", help="List dataset versions")
     for name, text in (("run", "Ingest, validate, and preprocess one new batch"),
                        ("ingest", "Fetch the next batch into raw/")):
         p = sub.add_parser(name, help=text)
@@ -67,6 +75,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{cfg.priority:>2}  {key:<20} {ready:<16} {cfg.name}")
         return 0
 
+    if args.command in ("version", "versions"):
+        return _versions(args, Store(args.data_uri))
+
     if args.source not in configs:
         log.error("Unknown source %r. Known: %s", args.source, ", ".join(configs))
         return 2
@@ -89,6 +100,26 @@ def main(argv: list[str] | None = None) -> int:
             pipeline.preprocess(source, args.batch)
     except ValidationFailed:
         return 1
+    return 0
+
+
+def _versions(args: argparse.Namespace, store: Store) -> int:
+    if args.command == "versions":
+        for v in sorted(list_versions(store), key=lambda v: v["created_at"]):
+            sizes = ", ".join(f"{name} {d['rows']:,}" for name, d in v["datasets"].items())
+            print(f"{v['tag']:<10} {v['created_at'][:16]}  {sizes}" + (f"  - {v['message']}" if v["message"] else ""))
+        return 0
+    try:
+        version = create_version(store, args.tag, args.message, dvc=not args.no_dvc)
+    except VersionExists as exc:
+        log.error(str(exc))
+        return 1
+    for name, d in version["datasets"].items():
+        log.info("  %-16s %s rows", name, f"{d['rows']:,}")
+    log.info("Version %s recorded at %s", args.tag, store.url(f"metadata/versions/{args.tag}.json"))
+    if version["dvc_files"]:
+        log.info("Next: git add data/*.dvc data/.gitignore && git commit -m 'Data version %s' && git tag data-%s",
+                 args.tag, args.tag)
     return 0
 
 

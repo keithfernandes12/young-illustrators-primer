@@ -1,0 +1,40 @@
+md5: 2a20cf42f4a0e97e0bae4290b817bfa9
+frozen: true
+deps:
+- hash: md5
+  path: gs://young-illustrators-primer-data/processed/drawings
+  fs_config:
+    version_aware: true
+  files:
+  - relpath: source=quickdraw/batch=20261010T212011Z.parquet
+    etag: 08f7b2f081b1b097031001
+    size: 22250078
+    version_id: '1791667354737015'
+  - relpath: source=quickdraw/batch=20261010T212246Z.parquet
+    etag: 08ebabf7d0b1b097031001
+    size: 21568143
+    version_id: '1791667520525803'
+  - relpath: source=quickdraw/batch=20261010T212522Z.parquet
+    etag: 08a8a68797b2b097031001
+    size: 20224876
+    version_id: '1791667667587880'
+  - relpath: source=quickdraw/batch=20261010T212749Z.parquet
+    etag: 08d2d5d8deb2b097031001
+    size: 18973933
+    version_id: '1791667817818834'
+  - relpath: source=quickdraw/batch=20261010T213019Z.parquet
+    etag: 08cfd9aba7b3b097031001
+    size: 20903975
+    version_id: '1791667970174159'
+  - relpath: source=quickdraw/batch=20261010T213252Z.parquet
+    etag: 08868bc9ebb3b097031001
+    size: 19874332
+    version_id: '1791668113261958'
+  - relpath: source=quickdraw/batch=20261010T213515Z.parquet
+    etag: 0895ae9daab4b097031001
+    size: 18499213
+    version_id: '1791668244666133'
+outs:
+- hash: md5
+  path: drawings
+  push: false

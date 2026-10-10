@@ -2,9 +2,9 @@
 
 A one-page Streamlit dashboard showing what has happened so far and what's next:
 
-- **Header:** current week, days to the MVP and code freeze.
+- **Header:** current week, days to the MVP and code freeze, latest dataset version.
 - **Numbers:** tasks done, overdue tasks, data sources in the pipeline, records processed.
-- **What's happened:** newest-first feed of pipeline batches (from the run manifests in GCS), completed tasks, and decisions.
+- **What's happened:** newest-first feed of pipeline batches (from the run manifests in GCS), dataset versions, completed tasks, and decisions.
 - **Data:** each source's status, record count, and last update.
 - **Open tasks:** sorted by due date with overdue ones flagged, filterable by workstream, plus open decisions.
 

@@ -39,6 +39,11 @@ def get_runs(uri: str) -> pd.DataFrame:
     return loaders.load_runs(uri)
 
 
+@st.cache_data(ttl=60)
+def get_versions(uri: str) -> list[dict]:
+    return loaders.load_versions(uri)
+
+
 def days_to(target: date, today: date) -> str:
     days = (target - today).days
     return f"{days} days" if days > 0 else ("today" if days == 0 else "passed")
@@ -54,10 +59,10 @@ def main() -> None:
     today = date.today()
     project, sources = get_project(), get_sources()
     try:
-        runs = get_runs(METADATA_URI)
+        runs, versions = get_runs(METADATA_URI), get_versions(METADATA_URI)
     except Exception as exc:  # noqa: BLE001 - e.g. missing GCS credentials
         st.error(f"Couldn't read pipeline runs from `{METADATA_URI}`: {exc}")
-        runs = loaders.empty_runs()
+        runs, versions = loaders.empty_runs(), []
 
     tasks = loaders.tasks_frame(project, today)
     status = loaders.source_status(sources, runs)
@@ -69,6 +74,7 @@ def main() -> None:
         week["label"] if week else "Outside the build schedule",
         f"MVP in {days_to(dates['mvp'], today)}",
         f"code freeze in {days_to(dates['code_freeze'], today)}",
+        f"data version {versions[0]['tag']}" if versions else "no data version yet",
     ]))
 
     c1, c2, c3, c4 = st.columns(4)
@@ -78,7 +84,7 @@ def main() -> None:
     c4.metric("Records", f"{int(status['Records'].fillna(0).sum()):,}")
 
     st.subheader("What's happened")
-    feed = loaders.activity(project, runs, sources)
+    feed = loaders.activity(project, runs, sources, versions)
     st.markdown("\n".join(feed_line(i) for i in feed) if feed else "Nothing yet.")
 
     st.subheader("Data")

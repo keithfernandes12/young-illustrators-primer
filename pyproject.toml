@@ -21,6 +21,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dashboard = ["streamlit>=1.40"]
+dvc = ["dvc[gs]>=3.50"]
 dev = ["pytest>=8.0", "ruff>=0.6"]
 
 [project.scripts]

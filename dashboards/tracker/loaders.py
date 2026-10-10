@@ -119,6 +119,23 @@ def load_runs(metadata_uri: str) -> pd.DataFrame:
     return runs.sort_values("when", ascending=False, ignore_index=True)
 
 
+def load_versions(metadata_uri: str) -> list[dict]:
+    """Dataset versions from ``<metadata_uri>/versions/*.json``, newest first."""
+    if "://" in metadata_uri:
+        pattern = metadata_uri.rstrip("/") + "/versions/*.json"
+    else:
+        pattern = (Path(metadata_uri) / "versions" / "*.json").as_posix()
+    try:
+        files = fsspec.open_files(pattern, mode="r", encoding="utf-8")
+    except FileNotFoundError:
+        return []
+    versions = []
+    for open_file in files:
+        with open_file as fh:
+            versions.append(json.load(fh))
+    return sorted(versions, key=lambda v: v["created_at"], reverse=True)
+
+
 def _records(run: pd.Series) -> float:
     return run["records_total"] if pd.notna(run["records_total"]) else run["records_out"]
 
@@ -139,7 +156,11 @@ def source_status(sources: pd.DataFrame, runs: pd.DataFrame) -> pd.DataFrame:
             else:
                 ok = source_runs[source_runs["status"] == "success"]
                 furthest = max(ok["stage"], key=lambda s: STAGES.index(s) if s in STAGES else -1)
-                status = "✅ processed" if furthest == "preprocess" else f"✅ {furthest}"
+                if furthest == "version":
+                    tag = ok[ok["stage"] == "version"].iloc[0]["dataset_version"]
+                    status = f"✅ processed, in {tag}"
+                else:
+                    status = "✅ processed" if furthest == "preprocess" else f"✅ {furthest}"
             processed = source_runs[(source_runs["stage"] == "preprocess") & (source_runs["status"] == "success")]
             records = _records(processed.iloc[0]) if not processed.empty else None
             updated = latest["when"]
@@ -152,12 +173,20 @@ def source_status(sources: pd.DataFrame, runs: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def activity(project: dict, runs: pd.DataFrame, sources: pd.DataFrame, limit: int = 15) -> list[dict]:
-    """Newest-first feed of pipeline batches and completed tasks: {when, icon, text}."""
+def activity(project: dict, runs: pd.DataFrame, sources: pd.DataFrame, versions: list[dict] | None = None,
+             limit: int = 15) -> list[dict]:
+    """Newest-first feed of pipeline batches, dataset versions, and completed tasks: {when, icon, text}."""
     names = sources["name"].to_dict() if "name" in sources else {}
     items = []
 
-    for (source, batch), group in runs.groupby(["source", "batch_id"], dropna=True):
+    for version in versions or []:
+        sizes = ", ".join(f"{name} {d['rows']:,}" for name, d in version["datasets"].items())
+        note = f" ({version['message']})" if version.get("message") else ""
+        items.append({"when": pd.Timestamp(version["created_at"]).tz_convert("UTC"), "icon": "🏷️",
+                      "text": f"**Dataset version {version['tag']}** frozen{note}: {sizes}"})
+
+    batches = runs[runs["stage"] != "version"]  # versions are shown once each, above
+    for (source, batch), group in batches.groupby(["source", "batch_id"], dropna=True):
         # Latest attempt at each stage, so a stage that failed and was re-run counts once.
         by_stage = {row["stage"]: row for _, row in group.sort_values("when").iterrows()}
         latest = pd.DataFrame(list(by_stage.values()))
