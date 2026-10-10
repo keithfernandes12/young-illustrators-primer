@@ -54,11 +54,11 @@ tasks:
 
   # Data Engineering
   - {id: D1, workstream: data, title: Verify dataset licenses, owner: Keith Fernandes, status: todo, due: 2026-10-11}
-  - {id: D2, workstream: data, title: Source registry (configs/sources.yaml), owner: Keith Fernandes, status: in_progress, due: 2026-10-13}
-  - {id: D3, workstream: data, title: Pipeline + project tracker dashboard, owner: Keith Fernandes, status: in_progress, due: 2026-10-14}
-  - {id: D4, workstream: data, title: GCS bucket with raw/processed/features layout, owner: Keith Fernandes, status: todo, due: 2026-10-14}
+  - {id: D2, workstream: data, title: Source registry (configs/sources.yaml), owner: Keith Fernandes, status: done, due: 2026-10-13}
+  - {id: D3, workstream: data, title: Pipeline + project tracker dashboard, owner: Keith Fernandes, status: done, due: 2026-10-14}
+  - {id: D4, workstream: data, title: GCS bucket with raw/processed/features layout, owner: Keith Fernandes, status: done, due: 2026-10-14}
   - {id: D5, workstream: data, title: DVC with GCS remote, owner: Keith Fernandes, status: todo, due: 2026-10-14}
-  - {id: D6, workstream: data, title: Ingest TinyStories, owner: Keith Fernandes, status: todo, due: 2026-10-16}
+  - {id: D6, workstream: data, title: Ingest TinyStories, owner: Keith Fernandes, status: in_progress, due: 2026-10-16}
   - {id: D7, workstream: data, title: "Ingest Quick, Draw!", owner: Keith Fernandes, status: todo, due: 2026-10-16}
   - {id: D8, workstream: data, title: Ingest CLEAR Corpus, owner: Keith Fernandes, status: todo, due: 2026-10-17}
   - {id: D9, workstream: data, title: Ingest sight-word lists + Kuperman AoA, owner: Keith Fernandes, status: todo, due: 2026-10-17}
@@ -88,7 +88,7 @@ tasks:
   - {id: S1, workstream: speech, title: TTS narration integrated, owner: TBD, status: todo, due: 2026-11-01}
 
   # MLOps / Infra
-  - {id: I1, workstream: infra, title: "GCP project, IAM, budget alerts", owner: TBD, status: todo, due: 2026-10-18}
+  - {id: I1, workstream: infra, title: "GCP project, IAM, budget alerts", owner: TBD, status: in_progress, due: 2026-10-18}
   - {id: I2, workstream: infra, title: MLflow tracking server up, owner: TBD, status: todo, due: 2026-10-18}
   - {id: I3, workstream: infra, title: Airflow environment, owner: TBD, status: todo, due: 2026-10-18}
   - {id: I4, workstream: infra, title: FastAPI serving v1, owner: TBD, status: todo, due: 2026-11-08}

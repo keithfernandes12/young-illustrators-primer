@@ -10,6 +10,8 @@ This is our MLOps course team project, inspired by Y Combinator's *"The Primer"*
 
 - **[Project summary (1 page)](docs/project_scoping_tldr.md):** start here.
 - **[Full scoping document](docs/project_scoping.md):** data, models, architecture, MLOps pipeline, monitoring, timeline, and risks.
+- **[Data pipeline](src/primer/data/README.md):** how to run ingestion and where the data lives in GCS.
+- **[Tracker dashboard](dashboards/tracker/README.md):** project progress and data pipeline status.
 
 ## Repository layout
 

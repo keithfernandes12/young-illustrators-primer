@@ -5,6 +5,7 @@
 #
 # feeds: which model or component the data is for
 # priority: ingestion order (1 = first); mvp: needed for the Nov 15 MVP
+# ingest: options for that source's pipeline (src/primer/data/sources/)
 
 sources:
   tinystories:
@@ -17,6 +18,13 @@ sources:
     license: CDLA-Sharing-1.0
     license_verified: false
     attribution: "TinyStories, Eldan & Li (2023)"
+    ingest:
+      hf_dataset: roneneldan/TinyStories
+      hf_split: train
+      text_field: text
+      batch_size: 50000
+      min_words: 20
+      max_words: 1500
 
   quickdraw:
     name: Quick, Draw!

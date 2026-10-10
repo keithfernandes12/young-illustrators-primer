@@ -11,17 +11,16 @@ import os
 from datetime import date, timedelta
 from pathlib import Path
 
+import loaders
 import pandas as pd
 import streamlit as st
-
-import loaders
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parents[1]
 PROJECT_FILE = HERE / "project.yaml"
 SOURCES_FILE = REPO_ROOT / "configs" / "sources.yaml"
 SAMPLE_METADATA = HERE / "examples" / "metadata"
-DEFAULT_METADATA = os.environ.get("TRACKER_METADATA_URI", str(REPO_ROOT / "data" / "metadata"))
+DEFAULT_METADATA = os.environ.get("TRACKER_METADATA_URI", "gs://young-illustrators-primer-data/metadata")
 
 TASK_ICONS = {"done": "✅", "in_progress": "🔄", "todo": "⬜", "blocked": "⛔"}
 WEEK_ICONS = {"done": "✅", "current": "📍", "upcoming": ""}
@@ -263,7 +262,7 @@ def main() -> None:
         uri = str(SAMPLE_METADATA) if sample else metadata_uri
         try:
             runs = get_runs(uri)
-        except Exception as exc:  # e.g. missing GCS credentials
+        except Exception as exc:  # noqa: BLE001 - e.g. missing GCS credentials
             st.error(f"Couldn't read pipeline metadata from `{uri}`: {exc}")
             runs = loaders.empty_runs()
         render_pipeline(get_sources(), runs, uri, sample)

@@ -10,11 +10,11 @@ A Streamlit app with two tabs:
 From the repo root:
 
 ```bash
-pip install -r dashboards/tracker/requirements.txt
+pip install -e ".[dashboard]"
 streamlit run dashboards/tracker/app.py
 ```
 
-Before the pipeline has written anything, turn on **Show sample pipeline data** in the sidebar to preview the Data pipeline tab.
+Turn on **Show sample pipeline data** in the sidebar to see the Data pipeline tab filled with made-up runs.
 
 ## Update it
 
@@ -24,13 +24,7 @@ Before the pipeline has written anything, turn on **Show sample pipeline data** 
 
 ## Where pipeline metadata lives
 
-The default location is `data/metadata/` in the repo, which is git-ignored. To read from GCS once the bucket exists:
-
-```bash
-TRACKER_METADATA_URI=gs://<bucket>/metadata streamlit run dashboards/tracker/app.py
-```
-
-Reading from GCS needs Google Cloud credentials (`gcloud auth application-default login`). You can also paste the location into the sidebar.
+The default location is `gs://young-illustrators-primer-data/metadata`, which needs Google Cloud credentials (`gcloud auth application-default login`) and access to the project. To read from elsewhere, such as a local folder used in testing, paste the location into the sidebar or set `TRACKER_METADATA_URI`.
 
 ## Run manifest format
 
