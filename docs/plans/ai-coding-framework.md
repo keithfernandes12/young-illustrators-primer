@@ -110,7 +110,7 @@ as required status checks to `protect-main`.
 
 | Slice | State | PR | Notes |
 |---|---|---|---|
-| S1 | in review | | |
+| S1 | in review | #1 | Windows 11 verified; awaiting first CI run |
 | S2 | not started | | needs admin |
 | S3 | not started | | after S2 and one PR run |
 
@@ -179,6 +179,19 @@ as required status checks to `protect-main`.
   the Microsoft Store stub, so every commit would have failed once `core.hooksPath` was set.
   `tests/agent_hooks/test_git_hook.py` makes git run the hook with a working and a stubbed
   `python3`. Still not run on a real Windows machine (open question 2).
+
+- **2026-10-25** — Confirmed on real Windows (Windows 11, Git Bash, Python 3.13.5): the
+  `python3`-then-`python` launcher starts both Claude hooks and the git `commit-msg` hook. A bad
+  commit subject is refused with exit 1 and HEAD unchanged; `gh pr merge` and a `primer-data` run
+  against a `gs://` root are both BLOCKED with the refusal reaching the agent; `PRIMER_DATA_URI` is
+  `.local-data`; all 12 skills load. `pytest`: 164 passed, 10 skipped (the 10 fake a broken Windows
+  `python3` and need POSIX); `ruff check .`, `mypy src` and `scripts/check_docs.py` all clean. This
+  answers open question 2 for Windows only — macOS and WSL are still unverified.
+- **2026-10-25** — `guard_bash.py` `split_segments` scans heredoc *content* as commands, so a command
+  whose heredoc body merely quotes a refused command is itself refused. Hit twice while finishing S1:
+  a heredoc mentioning the `gh pr merge` check was BLOCKED, both when writing the PR body and when
+  editing this plan. Worked around by writing the text to a file first; raised as a reviewer
+  question on the PR.
 
 ## Open questions
 
