@@ -10,6 +10,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 
 from primer.data.storage import Store
 
@@ -63,7 +64,7 @@ class StageRun:
         return f"{compact(self.started_at)}-{self.source}-{self.stage}"
 
     def to_dict(self) -> dict:
-        record = {
+        record: dict[str, Any] = {
             "run_id": self.run_id,
             "source": self.source,
             "stage": self.stage,

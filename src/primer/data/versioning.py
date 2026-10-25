@@ -22,6 +22,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from primer.data.catalog import DATASETS, VERSIONS_DIR, dataset_files
 from primer.data.config import REPO_ROOT
@@ -79,7 +80,7 @@ def create_version(store: Store, tag: str, message: str = "", dvc: bool = True,
         if sources:
             datasets[dataset] = {"rows": sum(s["rows"] for s in sources.values()), "sources": sources}
 
-    version = {
+    version: dict[str, Any] = {
         "tag": tag,
         "created_at": datetime.now(UTC).isoformat(),
         "message": message,
