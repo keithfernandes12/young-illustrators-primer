@@ -193,6 +193,22 @@ as required status checks to `protect-main`.
   editing this plan. Worked around by writing the text to a file first; raised as a reviewer
   question on the PR.
 
+- **2026-10-25** — Correction to the Windows entry above: a clean `ruff check .` on Windows does
+  not mean a clean one on Linux. The first CI run on PR #1 passed `pr-rules` but failed `test` at
+  the `ruff check .` step with 4 x EXE001 ("shebang is present but file is not executable") for
+  `guard_bash.py`, `session_start.py`, `check_docs.py` and `check_pr.py`. Ruff skips EXE001 on
+  Windows, so the local run was clean. Root cause: the patch declares mode 100755 for three of
+  those files, but a Windows clone has `core.fileMode=false`, so applying it dropped the bit and
+  they were committed 100644. `check_docs.py` and `check_pr.py` are 100644 in the patch itself,
+  with shebangs, so they would fail EXE001 on Linux from a fresh apply on any OS.
+- **2026-10-25** — The same dropped bit left `.githooks/commit-msg` non-executable. Git silently
+  skips a non-executable hook on POSIX, so a teammate cloning on WSL or macOS and running
+  `git config core.hooksPath .githooks` would have had **no local commit-subject check at all**,
+  with no error to tell them. `pr-rules.yml` still caught bad subjects at PR time, so the rule held;
+  only the fast local feedback was lost. Fixed in this PR with `git update-index --chmod=+x` on all
+  five files (blob hashes unchanged). `commit_msg.py` stays 100644: no shebang, invoked through the
+  launcher. Open question 2 should therefore be checked on a real WSL and macOS clone, not inferred.
+
 ## Open questions
 
 1. Who owns the agent and process files in CODEOWNERS once workstream leads exist? *Recommended:
