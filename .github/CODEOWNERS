@@ -1,0 +1,11 @@
+# Agent guidance, guardrails and team process. Changes here change how every agent behaves.
+# Owner: the repo owner until the MLOps/Infra workstream lead is assigned (docs/plans/ai-coding-framework.md).
+/AGENTS.md                 @keithfernandes12
+/CLAUDE.md                 @keithfernandes12
+**/AGENTS.md               @keithfernandes12
+/.claude/                  @keithfernandes12
+/.githooks/                @keithfernandes12
+/.github/                  @keithfernandes12
+/.mcp.json                 @keithfernandes12
+/docs/engineering/         @keithfernandes12
+/scripts/check_docs.py     @keithfernandes12
