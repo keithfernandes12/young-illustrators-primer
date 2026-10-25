@@ -133,6 +133,14 @@ as required status checks to `protect-main`.
 - **2026-10-25** — Skills live directly in `.claude/skills/` (everyone uses Claude Code); `AGENTS.md`
   stays tool-neutral so other tools still work if someone switches.
 
+- **2026-10-25** — Code ownership of the agent and process files is every collaborator, not one
+  named owner. A pull request touching them is reviewed by any collaborator except its author.
+  GitHub never requests review from the author and never accepts their own approval for a
+  code-owner requirement, so listing everyone expresses that rule; CODEOWNERS cannot state it
+  directly. The repository is under a personal account, so teams are unavailable and the list is
+  individual logins that must be kept in step with the collaborator list. *Team rule, resolving
+  open question 1.*
+
 ## Verified facts
 
 - **2026-10-25** — `primer-data` reads its data root from `--data-uri` (a global flag that must come
@@ -223,8 +231,10 @@ as required status checks to `protect-main`.
 
 ## Open questions
 
-1. Who owns the agent and process files in CODEOWNERS once workstream leads exist? *Recommended:
-   the MLOps/Infra lead; until then the repo owner.* (Jira T4.)
+1. ~~Who owns the agent and process files in CODEOWNERS once workstream leads exist?~~
+   **Resolved 2026-10-25**: every collaborator owns them; any collaborator except the author
+   reviews. See Decisions. Revisit only if the team grows past the point where pinging everyone
+   is reasonable, or if the repository moves to an organisation and teams become available.
 2. Does the hook command start on every teammate's OS (PowerShell-only Windows, Git Bash, macOS)?
    *Each teammate runs `/hooks` once in Claude Code and confirms the two hooks are listed, then
    runs the check in AGENTS.md → "Check your setup".*
