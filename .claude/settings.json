@@ -26,10 +26,10 @@
       "mcp__atlassian__createJiraIssue",
       "mcp__atlassian__editJiraIssue",
       "mcp__atlassian__transitionJiraIssue",
-      "mcp__atlassian__createConfluenceContent",
-      "mcp__atlassian__updateConfluenceContent",
-      "mcp__atlassian__executeWrite",
-      "mcp__atlassian__executeDestructive"
+      "mcp__atlassian__createIssueLink",
+      "mcp__atlassian__addWorklogToJiraIssue",
+      "mcp__atlassian__createConfluencePage",
+      "mcp__atlassian__updateConfluencePage"
     ],
     "deny": [
       "Bash(gh pr merge:*)",

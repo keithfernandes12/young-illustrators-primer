@@ -209,6 +209,18 @@ as required status checks to `protect-main`.
   five files (blob hashes unchanged). `commit_msg.py` stays 100644: no shebang, invoked through the
   launcher. Open question 2 should therefore be checked on a real WSL and macOS clone, not inferred.
 
+- **2026-10-25** — The Atlassian tool names in `.claude/settings.json` are now verified against
+  the authenticated `atlassian` server (site `northeastern-team-12`, Jira project KAN), replacing
+  names inferred before authentication. Three of the inferred names did not exist on this server
+  (`createConfluenceContent`, `updateConfluenceContent`, `executeWrite`, `executeDestructive` are
+  from a different Atlassian tool layout), so they matched nothing and guarded nothing. The real
+  write tools now in `permissions.ask` are `createJiraIssue`, `editJiraIssue`,
+  `transitionJiraIssue`, `createIssueLink`, `addWorklogToJiraIssue`, `createConfluencePage` and
+  `updateConfluencePage`. The server exposes no delete tool for issues or pages. Comment tools
+  (`addCommentToJiraIssue`, `createConfluenceFooterComment`, `createConfluenceInlineComment`) are
+  deliberately left unguarded, per AGENTS.md. Lesson: MCP permission entries are silent when the
+  tool name is wrong, so they must be checked against a live server rather than inferred.
+
 ## Open questions
 
 1. Who owns the agent and process files in CODEOWNERS once workstream leads exist? *Recommended:
