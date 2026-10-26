@@ -48,6 +48,15 @@ the agent will ask you to run it. To check by hand: `git config core.hooksPath` 
 `primer-data sources` runs; in Claude Code, `/hooks` lists the two hooks and `/mcp` shows
 `atlassian` connected.
 
+Once per clone, also check that the permission rules load: in a session in Manual permission mode,
+ask the agent to run `git tag --list`. It should ask you before running it, because
+`Bash(git tag:*)` is in `permissions.ask`. If it runs without asking, the `permissions` block in
+`.claude/settings.json` is not reaching that session — the usual cause is a session rooted in a
+worktree under `.claude/worktrees/`, which has no `.claude/` of its own, so open the session from
+the repository root instead. The guard hook works either way; it is the "ask first" rules that are
+lost, so an agent could write to Jira or submit a PR review without checking. Say what you find in
+`docs/plans/ai-coding-framework.md`.
+
 ## Rules that are easy to break
 
 - **Never write to the shared bucket from an agent session.** *Enforced.* `primer-data run|ingest|

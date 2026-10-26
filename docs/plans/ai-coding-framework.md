@@ -258,6 +258,13 @@ as required status checks to `protect-main`.
   the worktree session. Unchanged: `guard_bash.py` is what demonstrably enforces, and it covers
   every `deny` entry.
 
+- **2026-10-26** — The permissions question above is now closed by onboarding rather than by a
+  one-off test: `AGENTS.md` -> "Check your setup" asks each teammate to run `git tag --list` once on
+  a fresh clone and confirm the agent asks first. That checks a real clone, on each teammate's own
+  OS, as a side effect of setting up — which also feeds open question 2. It could not be tested from
+  the session that found the problem: that session was rooted in a worktree, and a worktree session
+  cannot move its own working directory (`change_directory` is refused by a hook).
+
 ## Open questions
 
 1. ~~Who owns the agent and process files in CODEOWNERS once workstream leads exist?~~
