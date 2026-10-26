@@ -77,4 +77,10 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
-.claude/
+
+# Claude Code - team config is committed; personal overrides are not
+.claude/settings.local.json
+.claude/*.local.json
+
+# Local pipeline output from agent sessions (PRIMER_DATA_URI in .claude/settings.json)
+.local-data/

@@ -63,7 +63,10 @@ def github_repo_files(repo: str, ref: str, wanted: Callable[[str], bool]) -> Ite
                 continue
             path = member.name.split("/", 1)[-1]  # drop the "<repo>-<sha>/" top folder
             if wanted(path):
-                yield path, archive.extractfile(member).read()
+                content = archive.extractfile(member)
+                if content is None:  # not a regular file; isfile() above already skips these
+                    continue
+                yield path, content.read()
 
 
 # ------------------------------------------------------------------- parsing
@@ -104,9 +107,9 @@ def align_images(n_pages: int, images: list[str]) -> tuple[str, list[str | None]
         return "no_images", [None] * n_pages
     extra = len(images) - n_pages
     if extra == 1:
-        return "cover+pages", images[1:]
+        return "cover+pages", list(images[1:])
     if extra == 2:
-        return "cover+pages+back", images[1:-1]
+        return "cover+pages+back", list(images[1:-1])
     if extra == 0:
         return "pages", list(images)
     return "unaligned", [None] * n_pages

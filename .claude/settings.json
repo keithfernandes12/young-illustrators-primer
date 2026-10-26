@@ -1,0 +1,67 @@
+{
+  "enableAllProjectMcpServers": true,
+  "env": {
+    "PRIMER_DATA_URI": ".local-data"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(pytest:*)",
+      "Bash(ruff check:*)",
+      "Bash(ruff format:*)",
+      "Bash(mypy:*)",
+      "Bash(python scripts/check_docs.py:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(primer-data sources:*)",
+      "Bash(primer-data versions:*)"
+    ],
+    "ask": [
+      "Bash(gh pr review:*)",
+      "Bash(gh label:*)",
+      "Bash(git tag:*)",
+      "Bash(gh run rerun:*)",
+      "mcp__atlassian__createJiraIssue",
+      "mcp__atlassian__editJiraIssue",
+      "mcp__atlassian__transitionJiraIssue",
+      "mcp__atlassian__createIssueLink",
+      "mcp__atlassian__addWorklogToJiraIssue",
+      "mcp__atlassian__createConfluencePage",
+      "mcp__atlassian__updateConfluencePage"
+    ],
+    "deny": [
+      "Bash(gh pr merge:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(gcloud auth:*)",
+      "Bash(dvc push:*)",
+      "Bash(dvc gc:*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "P=python3; $P -c \"\" 2>/dev/null || P=python; exec \"$P\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_start.py\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "P=python3; $P -c \"\" 2>/dev/null || P=python; exec \"$P\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_bash.py\""
+          }
+        ]
+      }
+    ]
+  }
+}

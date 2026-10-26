@@ -1,6 +1,9 @@
 """Quick, Draw!, CLEAR, and word-list sources, run against fakes and a temp store."""
 
 import io
+import re
+import time
+import zipfile
 
 import pandas as pd
 import pytest
@@ -21,10 +24,28 @@ def config(key, **ingest):
                         attribution=f"{key} attribution", ingest=ingest)
 
 
+FIXED_ZIP_TIME = (2026, 1, 1, 0, 0, 0)
+WORKBOOK_TIMESTAMPS = re.compile(rb"(<dcterms:(?:created|modified)[^>]*>)[^<]*(</dcterms:)")
+
+
 def xlsx_bytes(df, sheet="Data"):
+    """The same frame always gives the same bytes.
+
+    An .xlsx is a zip whose entries carry their write time, and whose docProps/core.xml records
+    when the workbook was created and modified. Left as is, two builds of one frame a second apart
+    hash differently, so snapshot sources see an "unchanged" file as new and tests flake.
+    """
     buf = io.BytesIO()
     df.to_excel(buf, sheet_name=sheet, index=False)
-    return buf.getvalue()
+    out = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(buf.getvalue())) as src, zipfile.ZipFile(out, "w") as dst:
+        for info in src.infolist():
+            data = src.read(info)
+            if info.filename == "docProps/core.xml":
+                data = WORKBOOK_TIMESTAMPS.sub(rb"\g<1>2026-01-01T00:00:00Z\g<2>", data)
+            dst.writestr(zipfile.ZipInfo(info.filename, date_time=FIXED_ZIP_TIME), data,
+                         compress_type=zipfile.ZIP_DEFLATED)
+    return out.getvalue()
 
 
 @pytest.fixture
@@ -187,3 +208,15 @@ def test_kuperman(store, batch_ids):
     assert df["word"].tolist() == ["a", "aardvark", "abacus", "zebra"]
     assert df["list_name"].eq("kuperman_aoa").all()
     assert df.loc[df["word"] == "zebra", "age_of_acquisition"].item() == 4.0
+
+
+
+def test_xlsx_bytes_is_deterministic():
+    """Guards the fix for a 1-in-40 flake: identical frames built in different seconds must match."""
+    first = xlsx_bytes(clear_frame())
+    second_started = int(time.time())
+    while int(time.time()) == second_started:  # cross a wall-clock second boundary (at most 1 s)
+        time.sleep(0.05)
+    assert xlsx_bytes(clear_frame()) == first
+    back = pd.read_excel(io.BytesIO(first))
+    assert list(back.columns) == list(clear_frame().columns) and len(back) == len(clear_frame())
