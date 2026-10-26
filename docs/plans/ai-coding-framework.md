@@ -245,6 +245,19 @@ as required status checks to `protect-main`.
   every `deny` entry, so nothing lost its only protection. The `ask` entries have no hook behind
   them, so "ask first" for Jira writes, PR reviews and tags is weaker than the config suggests.
 
+- **2026-10-26** — Refines the entry above, and lowers its severity. The session that saw no
+  permission prompts had **no `.claude/` directory in its project root at all**: it ran from the
+  worktree `.claude/worktrees/ai-coding-framework-setup-8f091b`, checked out at `a66b451` on a
+  branch predating the framework, so `.claude/settings.json` did not exist there. There were never
+  any project permission rules to apply, which is a far more ordinary explanation than "worktree
+  sessions ignore permissions". A normal clone has the file at its root, so a teammate is probably
+  unaffected — still unverified, because the test needs a session whose project root contains the
+  file, and a session started from this worktree inherits the worktree. Run it from a terminal in
+  the repository root instead. Unexplained: `hooks` and `env` did apply in that session despite the
+  missing file, most likely configured by the desktop app from the origin checkout when it created
+  the worktree session. Unchanged: `guard_bash.py` is what demonstrably enforces, and it covers
+  every `deny` entry.
+
 ## Open questions
 
 1. ~~Who owns the agent and process files in CODEOWNERS once workstream leads exist?~~
