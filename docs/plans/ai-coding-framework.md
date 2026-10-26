@@ -234,6 +234,17 @@ as required status checks to `protect-main`.
   deliberately left unguarded, per AGENTS.md. Lesson: MCP permission entries are silent when the
   tool name is wrong, so they must be checked against a live server rather than inferred.
 
+- **2026-10-26** — The `permissions` block in `.claude/settings.json` did not apply in a Claude Code
+  session running from a git worktree under `.claude/worktrees/`. In Manual (default) mode
+  `gh run rerun 1` and `git tag --list` both ran with no prompt, although `Bash(gh run rerun:*)` and
+  `Bash(git tag:*)` are both in `permissions.ask` — the latter since before that session started.
+  Ruled out: permission mode, mid-session settings loading, the `cd ... &&` prefix,
+  `settings.local.json`, user-level settings. `hooks` and `env` from the same file do apply, so the
+  file is read. Cause unproven; the clean test is a fresh session in the repository root, Manual
+  mode, `git tag --list`. Consequence: `guard_bash.py` is what actually enforces, and it covers
+  every `deny` entry, so nothing lost its only protection. The `ask` entries have no hook behind
+  them, so "ask first" for Jira writes, PR reviews and tags is weaker than the config suggests.
+
 ## Open questions
 
 1. ~~Who owns the agent and process files in CODEOWNERS once workstream leads exist?~~
