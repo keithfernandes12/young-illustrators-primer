@@ -51,6 +51,10 @@ behaviour would be reasonable. Do not pick the smallest interpretation silently.
   changing it.
 - Structure changes (moves, renames) in their own commits before behaviour changes.
 - Run the narrowest test first (`pytest path::test_name`), then `ruff check . && mypy src && pytest`.
+- Bug fix: write the test first and see it fail on the current code, then fix. Keep tests hermetic
+  (no network, bucket, uncontrolled time or randomness) — `docs/engineering/ci.md`.
+- Never get to green by skipping tests or adding `# type: ignore`/`# noqa`; never touch
+  `.github/` in a feature PR.
 - A test earns its place only if it would fail when the behaviour is reverted. "Not tested" is a
   decision recorded in the proof table, never an omission.
 - Pipeline runs: `primer-data --data-uri .local-data … --batch-size 2`. Never the bucket.
@@ -68,7 +72,8 @@ Verified facts, and fix any document the change made untrue. Then `create-pr`.
 ## 7. Finish on what is true
 
 Before saying the work is ready: the branch is on current `main`; CI is green on the latest commit
-(`gh pr checks <n>`); the PR body matches the final diff; every review finding has a disposition.
+(`gh pr checks <n>`; if red, use `fix-ci`); the PR body matches the final diff; every review finding
+has a disposition.
 Green CI alone does not mean ready.
 
 ## 8. Keep the lesson

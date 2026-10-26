@@ -87,6 +87,26 @@ the agent will ask you to run it. To check by hand: `git config core.hooksPath` 
 - Stacked PRs are fine, at most 2 deep. Fixes go on the top branch; never rewrite a branch below one
   that has been reviewed.
 
+## Tests and CI
+
+CI (`.github/workflows/`) runs exactly the commands above — `ruff check .`, `mypy src`, `pytest` —
+plus the PR title, commit and Jira-key checks, on every PR. Full rules, and which are enforced versus
+conventions: `docs/engineering/ci.md`. Planned CI changes: `docs/plans/ci-hardening.md`.
+
+- **A red CI run on the PR's latest commit means not ready.** Use the `fix-ci` skill: read the failing
+  step, reproduce it locally, fix the cause. **Never re-run a failed job hoping it passes.**
+- **Never make CI green by weakening it**: no `skip`/`xfail`, deleted tests, `# type: ignore`,
+  `# noqa`, removed steps or lowered thresholds without a reason in a comment and a reviewer's
+  explicit agreement — and never in the same PR as the code it unblocks.
+- **Tests are hermetic.** No bucket (*enforced*), no network, no wall-clock time or randomness the test
+  does not control, no real children's data.
+- **A bug fix includes a test that fails without the fix.** Say so in the PR body.
+- **Flaky tests are fixed or quarantined, never retried away.** Prove it with a loop and compare with
+  `main`; see `docs/engineering/ci.md` → Flaky tests.
+- **CI changes** (`.github/`) go in their own PR and follow `docs/engineering/ci.md` → Changing CI:
+  stable job names (they are required checks), read-only `permissions`, `timeout-minutes`, actions
+  pinned to a commit, event data passed through `env:`, new gates warn-only first.
+
 ## Documents (`docs/`)
 
 `docs/` is the team's shared memory: agents read it before starting work and write to it as they
@@ -101,7 +121,7 @@ go, so the next person or agent can continue without rediscovering context. Full
 | `docs/briefs/` | Shaping an idea before it is decided |
 | `docs/runbooks/` | Operating something that runs (freeze data, retrain, roll back) |
 | `docs/solutions/` | A solved problem likely to come back — check here before debugging |
-| `docs/engineering/` | How we work: `documentation.md`, `engineering-loop.md`, `review-checklist.md` |
+| `docs/engineering/` | How we work: `documentation.md`, `engineering-loop.md`, `review-checklist.md`, `ci.md` |
 | `docs/meeting-notes/` | What a meeting decided, with owners |
 
 Every document starts with frontmatter (`title`, `type`, `created`, `status`, `author`; optional
@@ -125,6 +145,7 @@ PR, review yourself with `review-pr`, then open the PR. Before asking for review
 | `create-pr` | commit, push and open a correct draft PR |
 | `review-pr` | review a PR or your own branch against the checklist, with finding categories |
 | `fix-feedback` | work through review findings and record a disposition for each |
+| `fix-ci` | diagnose and fix a red CI run without weakening CI |
 | `pr-status` | find out what is going on with a PR and what to do next |
 | `commit-reorganize` | turn a messy branch into clean, ordered commits |
 | `split-pr` | split an oversized branch, or move staged changes to their own PR |

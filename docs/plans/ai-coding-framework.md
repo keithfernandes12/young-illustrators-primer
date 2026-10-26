@@ -141,6 +141,11 @@ as required status checks to `protect-main`.
   individual logins that must be kept in step with the collaborator list. *Team rule, resolving
   open question 1.*
 
+- **2026-10-25** — CI rules for people and agents live in `docs/engineering/ci.md` (what runs, what
+  is enforced versus convention, red builds, flaky tests, changing CI); improvements are a separate
+  plan, `docs/plans/ci-hardening.md`. A `fix-ci` skill handles red builds. If ci-hardening S2
+  (`ci-pass`) lands before S3 here, the admin requires `ci-pass` instead of `test` and `pr-rules`.
+
 ## Verified facts
 
 - **2026-10-25** — `primer-data` reads its data root from `--data-uri` (a global flag that must come

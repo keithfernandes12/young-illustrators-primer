@@ -61,6 +61,8 @@ In the plan (or the PR body, for a single-PR change):
 - Find the existing tests before editing. Run the narrowest test first
   (`pytest tests/data/test_sources.py::test_x`), then `ruff check . && mypy src && pytest`.
 - A test is worth keeping only if it would fail when the behaviour it covers is broken.
+- For a bug fix, write the test first and watch it fail; then fix. Tests stay hermetic (no network,
+  bucket, uncontrolled time or randomness) — see `docs/engineering/ci.md`.
 - "Not tested" must be a decision written in the proof table, never an omission.
 
 ## 5. Review yourself before anyone else does
@@ -70,7 +72,8 @@ draft PR with the `create-pr` skill.
 
 ## 6. Finish by what is actually true
 
-A PR is ready for review when: it is based on current `main`; CI is green on its latest commit;
+A PR is ready for review when: it is based on current `main`; CI is green on its latest commit
+(if not, use the `fix-ci` skill — never re-run a failed job hoping it passes);
 every review finding has a disposition; the PR body matches the final diff; and the plan's status
 table says what landed.
 

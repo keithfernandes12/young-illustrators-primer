@@ -23,6 +23,7 @@
       "Bash(gh pr review:*)",
       "Bash(gh label:*)",
       "Bash(git tag:*)",
+      "Bash(gh run rerun:*)",
       "mcp__atlassian__createJiraIssue",
       "mcp__atlassian__editJiraIssue",
       "mcp__atlassian__transitionJiraIssue",

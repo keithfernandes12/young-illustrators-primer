@@ -30,6 +30,11 @@ a fresh subagent that did not write the code. Check:
 - **Correctness and acceptance** — does the change do what the Jira issue and plan say?
 - **Proof table** — every changed production file maps to a test, or to a stated reason. Behaviour
   with no proof is a finding. Would each new test fail if the behaviour were reverted?
+- **Tests and CI** (`docs/engineering/ci.md`) — a `fix` without a regression test is a Fix finding;
+  a non-hermetic test (network, bucket, uncontrolled time or randomness) is a Fix finding; anything
+  that weakens CI (skip/xfail, deleted test, `# type: ignore`, `# noqa`, removed step, lowered
+  threshold) without a stated reason is Blocking; `.github/` changes are checked against
+  "Changing CI".
 - **Rules in only one place** — a check enforced in the CLI or UI while the function below accepts
   anything is at least a Fix.
 - **Every checklist line**, especially data rules (raw/, licence, GCS in tests, split by book),

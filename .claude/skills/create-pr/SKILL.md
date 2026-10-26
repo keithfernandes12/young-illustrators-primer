@@ -18,6 +18,9 @@ description: Commit, push and open a correct draft pull request for the current 
 - The Jira key: from the branch name, the plan, or ask the person ("Which issue? key / skip"). A PR
   without a key is refused by the guard hook and CI. Never create a Jira issue without asking.
 - `ruff check .`, `mypy src` and `pytest` pass. If not, fix or stop and report.
+- A `fix` PR has a test that fails without the fix; write that in "How it was checked" (for
+  example "`test_x` fails on `main` with …, passes here").
+- After opening: if CI turns red on the latest commit, use `fix-ci`; do not mark ready while red.
 - Self-review done (`review-pr`, local mode) for anything non-trivial.
 
 ## 2. Commit and push

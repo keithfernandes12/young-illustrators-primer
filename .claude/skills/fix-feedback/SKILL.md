@@ -31,7 +31,8 @@ Fix the behaviour where it lives (testing a helper is not a fix when the bug is 
 ## 3. Fix
 
 In order: security, correctness, design, reliability, maintainability, style. Commit with the normal
-format. Run `ruff check .`, `mypy src` and `pytest`.
+format. Run `ruff check .`, `mypy src` and `pytest`. A failing CI check is handled with the
+`fix-ci` skill, never by re-running the job or weakening the check.
 
 ## 4. Verify
 

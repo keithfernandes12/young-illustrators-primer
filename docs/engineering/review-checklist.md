@@ -48,6 +48,23 @@ same PR.**
 - No service-account key files, `.env` files, tokens or credentials in the diff.
 - No new command that writes to the bucket by default; local runs use `--data-uri`.
 
+## Tests and CI
+
+Rules and reasons: `docs/engineering/ci.md`.
+
+- A `fix` PR includes a test that fails without the fix, and the PR body says so. *Otherwise the bug
+  can return unnoticed.*
+- New tests are hermetic: no network, no bucket, no wall-clock time or unseeded randomness, no real
+  children's data. *Tests that depend on the outside world fail for reasons unrelated to the change
+  (the CLEAR test flaked 1 run in 40 on embedded write times).*
+- Nothing weakens CI: no new `skip`/`xfail`, deleted tests, `# type: ignore`, `# noqa`, removed
+  steps or lowered thresholds without a reason and explicit agreement — and not in the same PR as
+  the code it unblocks. *A gate that can be quietly bypassed stops protecting anyone.*
+- Changes to `.github/` keep job names stable, set read-only `permissions` and `timeout-minutes`,
+  pin actions to a commit, pass event data through `env:`, and start new gates warn-only. *Renamed
+  required checks block every PR; write tokens and unpinned actions are the usual CI attack paths.*
+- CI is green on the PR's latest commit — not an older run, and not after a blind re-run.
+
 ## Finding categories (used by the `review-pr` skill)
 
 Every finding goes in exactly one category. The category decides what the author must do; a
