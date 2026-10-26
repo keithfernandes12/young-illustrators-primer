@@ -18,7 +18,8 @@ deployment, §8 failure analysis).
 - `src/primer/data/` — data pipeline, the only real code so far. Read `src/primer/data/AGENTS.md`.
 - `src/primer/{drawing,story,readability,illustration,speech,safety,serving}/` — empty, planned.
 - `configs/sources.yaml` — dataset registry. `data/` — DVC pointer files only, never data.
-- `dashboards/tracker/` — Streamlit pipeline tracker. `app/`, `dags/`, `infra/`, `notebooks/` — empty.
+- `dags/` — Airflow DAGs (`dags/README.md`); `docker-compose.yaml` and `infra/airflow/` run them.
+- `dashboards/tracker/` — Streamlit pipeline tracker. `app/`, `notebooks/` — empty.
 - `docs/` — decisions, plans, procedures. See **Documents** below.
 - `scripts/` — repo checks (`check_docs.py`, `check_pr.py`).
 - `.claude/` — agent settings, guard hooks and skills. `.githooks/` — the commit-message check.

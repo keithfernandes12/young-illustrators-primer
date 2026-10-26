@@ -1,0 +1,16 @@
+# Override: run the pipeline against the shared bucket instead of ./.local-data.
+#
+#   docker compose -f docker-compose.yaml -f docker-compose.gcs.yaml up -d
+#
+# Needs access to the young-illustrators-primer GCP project and your Application Default
+# Credentials on the host (`gcloud auth application-default login`). Set GCLOUD_CONFIG_DIR in
+# .env to the folder holding them: ~/.config/gcloud on Linux/macOS, %APPDATA%/gcloud on Windows.
+#
+# Tasks run in the scheduler container (LocalExecutor), so only it needs the credentials.
+services:
+  airflow-scheduler:
+    environment:
+      PRIMER_DATA_URI: gs://young-illustrators-primer-data
+      GOOGLE_APPLICATION_CREDENTIALS: /opt/primer/gcloud/application_default_credentials.json
+    volumes:
+      - ${GCLOUD_CONFIG_DIR:?Set GCLOUD_CONFIG_DIR in .env to your gcloud config folder}:/opt/primer/gcloud:ro
