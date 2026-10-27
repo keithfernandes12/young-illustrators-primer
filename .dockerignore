@@ -1,0 +1,17 @@
+# Keep the Airflow image build context to what infra/airflow/Dockerfile copies.
+.git
+.github
+.claude
+.dvc
+.venv
+.local-data
+logs
+data
+docs
+notebooks
+dashboards
+tests
+app
+**/__pycache__
+**/*.egg-info
+.env

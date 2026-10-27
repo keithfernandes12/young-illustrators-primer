@@ -14,6 +14,21 @@ def new_batch_id() -> str:
     return compact(utc_now())
 
 
+def unique_batch_id(source: Source) -> str:
+    """A new batch id that no existing raw batch of this source uses.
+
+    Ids are timestamps to the second, so two ingests in the same second (Airflow can run them
+    back to back) would otherwise share a folder and the second would overwrite the first's raw
+    files. A repeat gets a "-2", "-3", ... suffix, which still sorts after the plain id.
+    """
+    base = new_batch_id()
+    existing = set(source.raw_batches())
+    candidate, n = base, 2
+    while candidate in existing:
+        candidate, n = f"{base}-{n}", n + 1
+    return candidate
+
+
 def latest_batch(source: Source) -> str:
     batches = source.raw_batches()
     if not batches:
@@ -23,7 +38,7 @@ def latest_batch(source: Source) -> str:
 
 def ingest(source: Source, batch_size: int | None = None) -> str | None:
     """Ingest a new batch. Returns its batch id, or None if there was nothing new."""
-    batch_id = new_batch_id()
+    batch_id = unique_batch_id(source)
     with record_stage(source.store, source.key, "ingest", batch_id) as run:
         fetched = source.ingest(run, batch_size)
     return batch_id if fetched else None

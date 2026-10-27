@@ -68,7 +68,7 @@ tasks:
   - {id: D13, workstream: data, title: Preprocessing per dataset, owner: Keith Fernandes, status: todo, due: 2026-10-23}
   - {id: D14, workstream: data, title: Validation checks as Airflow tasks, owner: Keith Fernandes, status: todo, due: 2026-10-23}
   - {id: D15, workstream: data, title: Splits + golden set holdout, owner: Keith Fernandes, status: todo, due: 2026-10-24}
-  - {id: D16, workstream: data, title: Airflow DAGs (ingest → validate → preprocess → version), owner: Keith Fernandes, status: todo, due: 2026-10-24}
+  - {id: D16, workstream: data, title: Airflow DAGs (ingest → validate → preprocess → version), owner: Keith Fernandes, status: in_progress, due: 2026-10-24}
   - {id: D17, workstream: data, title: Freeze dataset v1 (DVC tag), owner: Keith Fernandes, status: todo, due: 2026-10-25}
 
   # Vision

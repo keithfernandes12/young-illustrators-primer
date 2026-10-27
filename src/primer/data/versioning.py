@@ -104,5 +104,12 @@ def create_version(store: Store, tag: str, message: str = "", dvc: bool = True,
     return version
 
 
+def refresh_dvc_pointers(store: Store, repo: Path = REPO_ROOT) -> list[str]:
+    """Point every data/<dataset>.dvc at the current object versions (e.g. after the Airflow
+    freeze DAG recorded a version, which can't touch the git clone)."""
+    present = [d for d in DATASETS if dataset_files(store, d)]
+    return update_dvc_pointers(store, present, repo)
+
+
 def list_versions(store: Store) -> list[dict]:
     return [store.read_json(p) for p in store.glob(f"{VERSIONS_DIR}/*.json")]

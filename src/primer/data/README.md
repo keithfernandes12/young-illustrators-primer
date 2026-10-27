@@ -44,7 +44,11 @@ primer-data validate <source>       # check a raw batch (default: latest)
 primer-data preprocess <source>     # clean a raw batch into processed/
 primer-data version <tag> -m "..."  # freeze all processed datasets as a version
 primer-data versions                # list versions
+primer-data dvc-pointers            # refresh data/*.dvc to the current object versions
 ```
+
+The same stages run on a schedule in **Airflow**, one parallel task group per source: see
+[`dags/README.md`](../../../dags/README.md). The DAG tasks call `orchestration.py`.
 
 Sources with a pipeline: `tinystories`, `quickdraw`, `clear_corpus`, `sight_words`, `kuperman_aoa`, `storyweaver`, `african_storybook`.
 

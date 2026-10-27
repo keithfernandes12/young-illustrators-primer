@@ -7,6 +7,7 @@
     primer-data preprocess tinystories       clean a raw batch into processed/
     primer-data version v1 -m "notes"        freeze all processed datasets as version v1
     primer-data versions                     list dataset versions
+    primer-data dvc-pointers                 refresh data/*.dvc to the current object versions
 
 Data goes to PRIMER_DATA_URI (default gs://young-illustrators-primer-data);
 override with --data-uri.
@@ -23,7 +24,7 @@ from primer.data.config import load_sources
 from primer.data.manifest import ValidationFailed
 from primer.data.sources import SOURCES, get_source
 from primer.data.storage import Store
-from primer.data.versioning import VersionExists, create_version, list_versions
+from primer.data.versioning import VersionExists, create_version, list_versions, refresh_dvc_pointers
 
 log = logging.getLogger("primer.data")
 
@@ -41,6 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-m", "--message", default="", help="What this version contains or why it was made")
     p.add_argument("--no-dvc", action="store_true", help="Skip refreshing the data/*.dvc pointer files")
     sub.add_parser("versions", help="List dataset versions")
+    sub.add_parser("dvc-pointers", help="Refresh data/*.dvc to the current object versions (no download)")
     for name, text in (("run", "Ingest, validate, and preprocess one new batch"),
                        ("ingest", "Fetch the next batch into raw/")):
         p = sub.add_parser(name, help=text)
@@ -73,6 +75,11 @@ def main(argv: list[str] | None = None) -> int:
         for key, cfg in sorted(configs.items(), key=lambda kv: kv[1].priority):
             ready = "pipeline ready" if key in SOURCES else "not implemented"
             print(f"{cfg.priority:>2}  {key:<20} {ready:<16} {cfg.name}")
+        return 0
+
+    if args.command == "dvc-pointers":
+        for path in refresh_dvc_pointers(Store(args.data_uri)):
+            log.info("Updated %s", path)
         return 0
 
     if args.command in ("version", "versions"):

@@ -84,3 +84,15 @@ def test_validate_passes_on_good_batch(tinystories_config, store):
     [manifest] = [store.read_json(p) for p in store.glob("metadata/runs/*-validate.json")]
     assert manifest["status"] == "success"
     assert all(c["passed"] for c in manifest["validation"]["checks"])
+
+
+def test_ingests_in_the_same_second_get_separate_batches(tinystories_config, store, monkeypatch):
+    """Regression: same-second ingests shared a batch id, so the second overwrote the first's raw files."""
+    monkeypatch.setattr(pipeline, "new_batch_id", lambda: "20261026T000000Z")
+    source = make_source(tinystories_config, store)
+    first = pipeline.ingest(source, batch_size=2)
+    second = pipeline.ingest(source, batch_size=2)
+    assert (first, second) == ("20261026T000000Z", "20261026T000000Z-2")
+    assert [r["source_id"] for r in source.read_raw(first)] == ["0", "1"]   # untouched
+    assert [r["source_id"] for r in source.read_raw(second)] == ["2", "3"]
+    assert pipeline.latest_batch(source) == second
