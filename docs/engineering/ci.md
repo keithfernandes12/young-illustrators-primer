@@ -26,7 +26,7 @@ Each rule below is marked:
 | Workflow / job | Runs on | What it checks | Blocks merge? |
 |---|---|---|---|
 | `ci.yml` / `test` | every PR, every push to `main` | `ruff check .` → `mypy src` → `pytest` (includes the hook tests, the no-GCS guard and the docs frontmatter check) | after `protect-main` requires it (framework plan, S3) |
-| `pr-rules.yml` / `pr-rules` | PR opened, edited, new commits | PR title and every commit subject match `type(scope): summary (KAN-<n>)`; PR body has a Jira key | same |
+| `pr-rules.yml` / `pr-rules` | PR opened, edited, new commits | PR title and every commit subject match `type(scope): summary (KAN-<n>)`; PR body has a Jira key. Commits from before the format existed (up to `6240f42`, see `PRE_FORMAT_TIP` in `scripts/check_pr.py`) are not checked | same |
 
 The full suite takes about 13 seconds, so CI runs everything on every PR. There is no
 "only affected tests" selection and none is needed at this size.

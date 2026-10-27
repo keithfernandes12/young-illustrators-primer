@@ -19,6 +19,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 JIRA_KEY = re.compile(r"\bKAN-\d+\b")
 
+# Commits made before the commit format existed are not checked: this commit and everything it
+# descends from (the data pipeline's first five commits on feature/data-pipeline, ending with
+# "Add dataset versioning with DVC (data v0.1)"). They can't be rewritten, because the data-v0.1 tag
+# points at one of them and later branches are built on top. Every commit after it is checked.
+PRE_FORMAT_TIP = "6240f42e3a5041aed15fa7d12b5332a45b176ed6"
+
 
 def load_commit_msg():
     path = str(ROOT / ".githooks" / "commit_msg.py")
@@ -29,9 +35,17 @@ def load_commit_msg():
     return module
 
 
-def commit_subjects(base: str, head: str) -> list[str]:
-    out = subprocess.run(["git", "log", "--no-merges", "--format=%s", f"{base}..{head}"],
-                         cwd=ROOT, capture_output=True, text=True, check=True).stdout
+def has_commit(sha: str, cwd: Path = ROOT) -> bool:
+    return subprocess.run(["git", "cat-file", "-e", f"{sha}^{{commit}}"], cwd=cwd,
+                          capture_output=True, check=False).returncode == 0
+
+
+def commit_subjects(base: str, head: str, cwd: Path = ROOT, exempt_tip: str | None = PRE_FORMAT_TIP) -> list[str]:
+    """Subjects of the PR's own commits, leaving out ``exempt_tip`` and its ancestors if present."""
+    cmd = ["git", "log", "--no-merges", "--format=%s", f"{base}..{head}"]
+    if exempt_tip and has_commit(exempt_tip, cwd):
+        cmd.append(f"^{exempt_tip}")
+    out = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=True).stdout
     return [line for line in out.splitlines() if line.strip()]
 
 
