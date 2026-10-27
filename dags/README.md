@@ -25,9 +25,10 @@ african_storybook  ingest → validate → preprocess ─┘
 - **validate** runs the source's checks. A failed check **fails** the task (no retry: the data won't
   change), so bad data never reaches `processed/`.
 - **preprocess** writes the cleaned batch to `processed/` in the dataset's schema.
-- **summarize** runs when no source failed and at least one did work. It records row counts per
-  dataset and source in `metadata/reports/<run_id>.json`. If any source failed, it is not run and
-  the whole DAG run is marked failed.
+- **summarize** always runs once every source has finished. It records each source's outcome
+  (`success`, `skipped`, or `failed` with the stage) and row counts per dataset and source in
+  `metadata/reports/<run_id>.json`, then **fails the run** if any source failed, naming which ones.
+  So a partial run is red but still leaves a report of what landed.
 - `max_active_runs=1`: incremental sources keep a position, so two runs at once would race on it.
 
 Trigger parameters (the **Trigger** form in the UI):

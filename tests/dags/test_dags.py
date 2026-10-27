@@ -44,11 +44,11 @@ def test_each_source_runs_ingest_validate_preprocess(dagbag):
         assert ingest.retries == 3 and validate.retries == 0
 
 
-def test_summarize_waits_for_every_source_and_fails_on_failure(dagbag):
+def test_summarize_always_runs_after_every_source(dagbag):
     dag = dagbag.get_dag("primer_data_pipeline")
     summarize = dag.get_task("summarize")
     assert summarize.upstream_task_ids == {f"{key}.preprocess" for key in PIPELINE_SOURCES}
-    assert summarize.trigger_rule == "none_failed_min_one_success"
+    assert summarize.trigger_rule == "all_done"   # writes the report even when a source failed
 
 
 def test_pipeline_params_and_concurrency(dagbag):

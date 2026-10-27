@@ -25,6 +25,8 @@ log = logging.getLogger(__name__)
 PIPELINE_SOURCES = ("tinystories", "quickdraw", "clear_corpus", "sight_words", "kuperman_aoa",
                     "storyweaver", "african_storybook")
 REPORTS_DIR = "metadata/reports"
+STAGE_ORDER = ("ingest", "validate", "preprocess")
+FAILED_STATES = {"failed", "upstream_failed"}
 
 
 def build_source(key: str, store: Store | None = None) -> Source:
@@ -52,8 +54,35 @@ def preprocess(key: str, batch_id: str) -> None:
     pipeline.preprocess(build_source(key), batch_id)
 
 
-def summarize(run_id: str, store: Store | None = None) -> dict[str, Any]:
-    """Count rows per dataset and source after a run, and save the counts as a report."""
+def source_outcomes(task_states: dict[str, str | None]) -> dict[str, dict[str, str | None]]:
+    """Each source's result in a DAG run, from its tasks' states (task ids like "quickdraw.validate").
+
+    failed  - a stage failed ("stage" names the first one that did)
+    success - preprocess finished
+    skipped - ingest was skipped (not selected, or nothing new)
+    unknown - anything else, e.g. the run was cancelled mid-way
+    """
+    outcomes: dict[str, dict[str, str | None]] = {}
+    for key in PIPELINE_SOURCES:
+        states = {stage: task_states.get(f"{key}.{stage}") for stage in STAGE_ORDER}
+        failed = next((s for s in STAGE_ORDER if states[s] == "failed"), None)
+        if failed or any(state in FAILED_STATES for state in states.values()):
+            outcomes[key] = {"status": "failed", "stage": failed}
+        elif states["preprocess"] == "success":
+            outcomes[key] = {"status": "success", "stage": None}
+        elif states["ingest"] == "skipped":
+            outcomes[key] = {"status": "skipped", "stage": None}
+        else:
+            outcomes[key] = {"status": "unknown", "stage": None}
+    return outcomes
+
+
+def summarize(run_id: str, outcomes: dict[str, dict[str, str | None]] | None = None,
+              store: Store | None = None) -> dict[str, Any]:
+    """Count rows per dataset and source after a run, and save them with each source's outcome.
+
+    Written whether or not sources failed, so a partial run still records what landed.
+    """
     store = store or Store()
     datasets: dict[str, Any] = {}
     for dataset in DATASETS:
@@ -61,13 +90,21 @@ def summarize(run_id: str, store: Store | None = None) -> dict[str, Any]:
                    for key, paths in dataset_files(store, dataset).items()}
         if sources:
             datasets[dataset] = {"rows": sum(sources.values()), "sources": sources}
-    report = {"run_id": run_id, "created_at": datetime.now(UTC).isoformat(), "data_uri": store.uri,
-              "datasets": datasets}
+    outcomes = outcomes or {}
+    report: dict[str, Any] = {
+        "run_id": run_id, "created_at": datetime.now(UTC).isoformat(), "data_uri": store.uri,
+        "sources": outcomes,
+        "failed": sorted(k for k, v in outcomes.items() if v["status"] == "failed"),
+        "datasets": datasets,
+    }
     safe_id = "".join(c if c.isalnum() or c in "-_." else "_" for c in run_id)
     store.write_json(f"{REPORTS_DIR}/{safe_id}.json", report)
     for name, entry in datasets.items():
         log.info("%-16s %10s rows  %s", name, f"{entry['rows']:,}",
                  ", ".join(f"{k}={v:,}" for k, v in entry["sources"].items()))
+    for key, outcome in outcomes.items():
+        log.info("%-18s %s%s", key, outcome["status"], f" at {outcome['stage']}" if outcome["stage"] else "")
+    report["report_uri"] = store.url(f"{REPORTS_DIR}/{safe_id}.json")
     return report
 
 

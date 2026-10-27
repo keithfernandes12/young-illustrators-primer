@@ -12,8 +12,10 @@ One task group per data source, all running in parallel. Inside each group:
   stops that source before anything reaches `processed/`.
 - **preprocess** cleans the batch into `processed/` in the dataset's schema.
 
-`summarize` runs once every source has finished without failures and records
-row counts per dataset in `metadata/reports/`.
+`summarize` runs once every source has finished, whatever happened. It records
+each source's outcome and row counts per dataset in `metadata/reports/`, then
+**fails the run** if any source failed, naming which ones; a partial run still
+leaves a report of what landed.
 
 Data goes to `PRIMER_DATA_URI` (a local folder by default; the bucket when the
 GCS compose override is used). See `dags/README.md`.
@@ -27,9 +29,9 @@ from datetime import datetime, timedelta
 from airflow.sdk import Param, dag, get_current_context, task, task_group
 
 try:  # Airflow 3 task SDK
-    from airflow.sdk.exceptions import AirflowSkipException
+    from airflow.sdk.exceptions import AirflowFailException, AirflowSkipException
 except ImportError:  # pragma: no cover - older Airflow
-    from airflow.exceptions import AirflowSkipException
+    from airflow.exceptions import AirflowFailException, AirflowSkipException
 
 from primer.data import orchestration
 
@@ -102,10 +104,17 @@ def primer_data_pipeline():
 
         groups.append(source_group())
 
-    # Runs when no source failed and at least one did work; a failure upstream fails the run.
-    @task(trigger_rule="none_failed_min_one_success")
+    # Always runs, so every run leaves a report; then fails the run if any source failed.
+    @task(trigger_rule="all_done")
     def summarize() -> dict:
-        return orchestration.summarize(get_current_context()["run_id"])
+        context = get_current_context()
+        ti, run_id = context["ti"], context["run_id"]
+        states = ti.get_task_states(dag_id=ti.dag_id, run_ids=[run_id]).get(run_id, {})
+        report = orchestration.summarize(run_id, orchestration.source_outcomes(states))
+        if report["failed"]:
+            failed = ", ".join(f"{k} ({report['sources'][k]['stage'] or 'upstream'})" for k in report["failed"])
+            raise AirflowFailException(f"Sources failed: {failed}. Report: {report['report_uri']}")
+        return report
 
     groups >> summarize()
 

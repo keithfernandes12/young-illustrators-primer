@@ -60,8 +60,12 @@ def test_summarize_counts_rows_and_saves_report(fake_tinystories):
     orchestration.validate("tinystories", batch)
     orchestration.preprocess("tinystories", batch)
 
-    report = orchestration.summarize("manual__2026-10-26T00:00:00+00:00")
+    outcomes = {"tinystories": {"status": "success", "stage": None},
+                "quickdraw": {"status": "failed", "stage": "validate"}}
+    report = orchestration.summarize("manual__2026-10-26T00:00:00+00:00", outcomes)
     assert report["datasets"]["stories_text"] == {"rows": 4, "sources": {"tinystories": 4}}
+    assert report["failed"] == ["quickdraw"]
+    assert report["sources"]["quickdraw"] == {"status": "failed", "stage": "validate"}
     saved = Store().glob("metadata/reports/*.json")
     assert saved == ["metadata/reports/manual__2026-10-26T00_00_00_00_00.json"]
 
@@ -71,3 +75,21 @@ def test_freeze_version(fake_tinystories):
     orchestration.validate("tinystories", batch)
     orchestration.preprocess("tinystories", batch)
     assert orchestration.freeze_version("v9", "test") == {"tag": "v9", "datasets": {"stories_text": 4}}
+
+
+def test_source_outcomes_from_task_states():
+    states = {
+        "tinystories.ingest": "success", "tinystories.validate": "success", "tinystories.preprocess": "success",
+        "quickdraw.ingest": "success", "quickdraw.validate": "failed", "quickdraw.preprocess": "upstream_failed",
+        "clear_corpus.ingest": "skipped", "clear_corpus.validate": "skipped", "clear_corpus.preprocess": "skipped",
+        "sight_words.ingest": "failed", "sight_words.validate": "upstream_failed",
+        "sight_words.preprocess": "upstream_failed",
+        "kuperman_aoa.ingest": "running",
+    }
+    outcomes = orchestration.source_outcomes(states)
+    assert outcomes["tinystories"] == {"status": "success", "stage": None}
+    assert outcomes["quickdraw"] == {"status": "failed", "stage": "validate"}
+    assert outcomes["clear_corpus"] == {"status": "skipped", "stage": None}
+    assert outcomes["sight_words"] == {"status": "failed", "stage": "ingest"}
+    assert outcomes["kuperman_aoa"] == {"status": "unknown", "stage": None}
+    assert outcomes["storyweaver"] == {"status": "unknown", "stage": None}   # no states at all
