@@ -36,6 +36,16 @@ USER_AGENT = "young-illustrators-primer-data-pipeline (+https://github.com/keith
 Download = Callable[[str], bytes]
 
 
+def batch_order(path: str) -> str:
+    """Sort key for ``.../batch=<id>.parquet`` paths: the batch id itself.
+
+    Sorting the raw paths is wrong for repeated ids: "-" sorts before ".", so
+    ``batch=X-2.parquet`` would come before ``batch=X.parquet`` although batch X-2 is newer.
+    """
+    name = path.rsplit("/", 1)[-1]
+    return name.removeprefix("batch=").removesuffix(".parquet")
+
+
 def http_get(url: str, timeout: int = 300) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -69,7 +79,8 @@ class Source(ABC):
         return f"processed/{dataset or self.dataset}/source={self.key}/batch={batch_id}.parquet"
 
     def processed_paths(self, dataset: str | None = None) -> list[str]:
-        return self.store.glob(f"processed/{dataset or self.dataset}/source={self.key}/batch=*.parquet")
+        paths = self.store.glob(f"processed/{dataset or self.dataset}/source={self.key}/batch=*.parquet")
+        return sorted(paths, key=batch_order)
 
     def read_raw(self, batch_id: str) -> list[dict]:
         """All records from a batch's ``part-*.jsonl.gz`` files (incremental sources)."""

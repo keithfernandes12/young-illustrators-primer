@@ -15,6 +15,7 @@ from __future__ import annotations
 import pandas as pd
 
 from primer.data.sources import SOURCES
+from primer.data.sources.base import batch_order
 from primer.data.storage import Store
 
 DATASETS = ("stories_text", "storybook_pages", "drawings", "readability", "word_lists")
@@ -28,7 +29,7 @@ def dataset_files(store: Store, dataset: str, sources: list[str] | None = None) 
         key = folder.removeprefix("source=")
         if sources and key not in sources:
             continue
-        paths = store.glob(f"processed/{dataset}/{folder}/batch=*.parquet")
+        paths = sorted(store.glob(f"processed/{dataset}/{folder}/batch=*.parquet"), key=batch_order)
         source_cls = SOURCES.get(key)
         if source_cls is not None and source_cls.snapshot:
             paths = paths[-1:]
