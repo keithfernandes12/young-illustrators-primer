@@ -9,6 +9,9 @@ This is our MLOps course team project, inspired by Y Combinator's *"The Primer"*
 ## Docs
 
 - **[Project summary (1 page)](docs/project_scoping_tldr.md):** start here.
+- **[Getting started as a new teammate](docs/engineering/onboarding.md):** set up your clone,
+  then what to read in which order. Working on the code? Read
+  **[AGENTS.md](AGENTS.md)** — the rules everyone and every agent follows.
 - **[Full scoping document](docs/project_scoping.md):** data, models, architecture, MLOps pipeline, monitoring, timeline, and risks.
 - **[Data pipeline](src/primer/data/README.md):** how to run ingestion and where the data lives in GCS.
 - **[Tracker dashboard](dashboards/tracker/README.md):** project progress and data pipeline status.
