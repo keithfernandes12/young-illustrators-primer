@@ -1,0 +1,146 @@
+# Dataset registry: one entry per data source.
+# Shared by the data pipeline (what to ingest) and the tracker dashboard.
+# license and attribution are carried on every record for crediting sources.
+#
+# feeds: which model or component the data is for
+# priority: ingestion order (1 = first); mvp: needed for the Nov 15 MVP
+# ingest: options for that source's pipeline (src/primer/data/sources/)
+
+sources:
+  tinystories:
+    name: TinyStories
+    feeds: [story_llm]
+    priority: 1
+    mvp: true
+    format: Hugging Face dataset (text)
+    url: https://huggingface.co/datasets/roneneldan/TinyStories
+    license: CDLA-Sharing-1.0
+    attribution: "TinyStories, Eldan & Li (2023)"
+    ingest:
+      hf_dataset: roneneldan/TinyStories
+      hf_split: train
+      text_field: text
+      batch_size: 50000
+      min_words: 20
+      max_words: 1500
+
+  quickdraw:
+    name: Quick, Draw!
+    feeds: [drawing_recognizer]
+    priority: 2
+    mvp: true
+    format: NDJSON strokes (public GCS bucket gs://quickdraw_dataset)
+    url: https://github.com/googlecreativelab/quickdraw-dataset
+    license: CC-BY-4.0
+    attribution: "Quick, Draw! Dataset, Google Creative Lab"
+    ingest:
+      bucket_path: quickdraw_dataset/full/simplified
+      categories_per_batch: 50       # a run covers this many of the 345 categories
+      max_per_category: 2000         # first N drawings of each category
+      min_per_category: 100
+      recognized_only: true          # keep drawings the game's model recognized
+
+  clear_corpus:
+    name: CLEAR Corpus
+    feeds: [readability_scorer]
+    priority: 3
+    mvp: true
+    format: Excel spreadsheet (CLEAR_corpus_final.xlsx)
+    url: https://github.com/scrosseye/CLEAR-Corpus
+    license: CC-BY-NC-SA-4.0
+    attribution: "CLEAR Corpus, CommonLit & Georgia State University (Crossley et al., 2022)"
+    ingest:
+      url: https://raw.githubusercontent.com/scrosseye/CLEAR-Corpus/main/CLEAR_corpus_final.xlsx
+      sheet: Data
+      min_records: 4000
+
+  sight_words:
+    name: Dolch / Fry sight words
+    feeds: [target_words]
+    priority: 4
+    mvp: true
+    format: R data files from the lexicon package
+    url: https://github.com/trinker/lexicon
+    license: Public-Domain
+    attribution: "Dolch (1936) and Fry (1980) sight-word lists, via the lexicon R package (Rinker)"
+    ingest:
+      dolch_url: https://raw.githubusercontent.com/trinker/lexicon/master/data/sw_dolch.rda
+      fry_url: https://raw.githubusercontent.com/trinker/lexicon/master/data/sw_fry_1000.rda
+      allowed_duplicates: [hot]      # Fry's list really has "hot" at #30 and #487
+
+  kuperman_aoa:
+    name: Kuperman AoA norms
+    feeds: [target_words]
+    priority: 4
+    mvp: true
+    format: Excel spreadsheet (AoA_51715_words.xlsx)
+    url: https://osf.io/j94kb/
+    license: Free for research
+    attribution: "Kuperman, Stadthagen-Gonzalez & Brysbaert (2012), file via Brysbaert on OSF (osf.io/j94kb)"
+    ingest:
+      url: https://osf.io/download/6kauf/
+      min_rated: 30000
+
+  storyweaver:
+    name: StoryWeaver (Pratham Books)
+    feeds: [story_llm, readability_scorer, illustration]
+    priority: 5
+    mvp: true
+    format: Markdown stories + JPG image bank (Global Storybooks GitHub mirror)
+    url: https://github.com/global-asp/pb-source
+    license: CC-BY-4.0
+    attribution: "Pratham Books / StoryWeaver (storyweaver.org.in), via Global Storybooks"
+    ingest:
+      text_repo: global-asp/pb-source
+      image_repo: global-asp/pb-imagebank
+      branch: master
+      language: en
+      image_size: medium
+      min_stories: 300
+
+  african_storybook:
+    name: African Storybook
+    feeds: [story_llm, illustration]
+    priority: 5
+    mvp: true
+    format: Markdown stories + JPG image bank (Global Storybooks GitHub mirror)
+    url: https://github.com/global-asp/asp-source
+    license: CC-BY-4.0
+    attribution: "African Storybook (africanstorybook.org), via Global Storybooks"
+    ingest:
+      text_repo: global-asp/asp-source
+      image_repo: global-asp/asp-imagebank
+      branch: master
+      language: en
+      image_size: medium
+      min_stories: 300
+
+  amateur_drawings:
+    name: Amateur Drawings
+    feeds: [drawing_recognizer]
+    priority: 6
+    mvp: true
+    format: Images + JSON annotations
+    url: https://github.com/facebookresearch/AnimatedDrawings
+    license: Research use (verify)
+    attribution: "Amateur Drawings Dataset, Meta AI"
+
+  gutenberg_children:
+    name: Project Gutenberg (children's)
+    feeds: [story_llm]
+    priority: 7
+    mvp: false
+    format: Text / HTML
+    url: https://www.gutenberg.org
+    license: Public-Domain
+    attribution: "Project Gutenberg"
+
+  myst:
+    name: MyST children's speech
+    feeds: [asr]
+    priority: 8
+    mvp: false
+    format: Audio (WAV) + transcripts
+    url: https://boulderlearning.com
+    license: Non-commercial research (access by request)
+    attribution: "MyST Children's Speech Corpus, Boulder Learning"

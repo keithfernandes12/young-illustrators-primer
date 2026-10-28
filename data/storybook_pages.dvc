@@ -1,0 +1,20 @@
+md5: e34316c9cf5510753378b99ed00fa779
+frozen: true
+deps:
+- hash: md5
+  path: gs://young-illustrators-primer-data/processed/storybook_pages
+  fs_config:
+    version_aware: true
+  files:
+  - relpath: source=african_storybook/batch=20261010T214458Z.parquet
+    etag: 08b0fcfaf8b6b097031001
+    size: 457696
+    version_id: '1791668946648624'
+  - relpath: source=storyweaver/batch=20261010T214600Z.parquet
+    etag: 0883fdebffb6b097031001
+    size: 693064
+    version_id: '1791668961083011'
+outs:
+- hash: md5
+  path: storybook_pages
+  push: false

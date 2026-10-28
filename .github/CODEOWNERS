@@ -1,0 +1,28 @@
+# Agent guidance, guardrails and team process. Changes here change how every agent behaves, so
+# they are reviewed by a collaborator other than the author.
+#
+# Every collaborator is listed deliberately. GitHub never requests review from the author of a
+# pull request, and an author's own approval never satisfies a code-owner requirement, so listing
+# everyone expresses "any collaborator except the author" without naming a single bottleneck.
+# CODEOWNERS has no way to say that directly.
+#
+# This repository is under a personal account, so GitHub teams are unavailable and collaborators
+# must be listed individually. Keep the list in step with:
+#   gh api repos/keithfernandes12/young-illustrators-primer/collaborators --jq '.[].login'
+#
+# These lines route review requests; they do not gate the merge. `protect-main` sets
+# require_code_owner_review=false, and the gate is required_approving_review_count=1 plus
+# require_last_push_approval=true, which already prevents self-approval. Setting
+# require_code_owner_review=true would change nothing while every collaborator is an owner.
+#
+# Decision of 2026-10-25 in docs/plans/ai-coding-framework.md (open question 1).
+
+/AGENTS.md              @keithfernandes12 @rishiparekh @kushpatel02 @Adit-Vakil @rutvijsurti @DiyaKaswa11
+/CLAUDE.md              @keithfernandes12 @rishiparekh @kushpatel02 @Adit-Vakil @rutvijsurti @DiyaKaswa11
+**/AGENTS.md            @keithfernandes12 @rishiparekh @kushpatel02 @Adit-Vakil @rutvijsurti @DiyaKaswa11
+/.claude/               @keithfernandes12 @rishiparekh @kushpatel02 @Adit-Vakil @rutvijsurti @DiyaKaswa11
+/.githooks/             @keithfernandes12 @rishiparekh @kushpatel02 @Adit-Vakil @rutvijsurti @DiyaKaswa11
+/.github/               @keithfernandes12 @rishiparekh @kushpatel02 @Adit-Vakil @rutvijsurti @DiyaKaswa11
+/.mcp.json              @keithfernandes12 @rishiparekh @kushpatel02 @Adit-Vakil @rutvijsurti @DiyaKaswa11
+/docs/engineering/      @keithfernandes12 @rishiparekh @kushpatel02 @Adit-Vakil @rutvijsurti @DiyaKaswa11
+/scripts/check_docs.py  @keithfernandes12 @rishiparekh @kushpatel02 @Adit-Vakil @rutvijsurti @DiyaKaswa11

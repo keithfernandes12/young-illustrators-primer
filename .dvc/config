@@ -1,0 +1,6 @@
+[core]
+    analytics = false
+    autostage = false
+    remote = gcs
+['remote "gcs"']
+    url = gs://young-illustrators-primer-data/dvc

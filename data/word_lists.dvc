@@ -1,0 +1,20 @@
+md5: c52023d59b4399944715f5ddb63d1932
+frozen: true
+deps:
+- hash: md5
+  path: gs://young-illustrators-primer-data/processed/word_lists
+  fs_config:
+    version_aware: true
+  files:
+  - relpath: source=kuperman_aoa/batch=20261010T211837Z.parquet
+    etag: 089ae7b796b0b097031001
+    size: 1016912
+    version_id: '1791667129414554'
+  - relpath: source=sight_words/batch=20261010T211833Z.parquet
+    etag: 08d2bccabcb0b097031001
+    size: 44997
+    version_id: '1791667209412178'
+outs:
+- hash: md5
+  path: word_lists
+  push: false

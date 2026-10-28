@@ -1,0 +1,129 @@
+# Project plan for the tracker dashboard.
+# Edit this file (through a PR) to update the Project tab.
+#
+# Task status: todo | in_progress | done | blocked. Add `done: <date>` when finishing a
+# task (and `decided: <date>` on decisions) so it shows in "What's happened".
+# Owner "TBD" until workstream leads are confirmed.
+
+project: Young Illustrator's Primer
+
+dates:
+  build_start: 2026-10-05
+  mvp: 2026-11-15
+  code_freeze: 2026-11-30
+  testing_end: 2026-12-14
+
+team:
+  - Rutvij Surti
+  - Kush Patel
+  - Keith Fernandes
+  - Rishi Parekh
+  - Diya Kaswa
+  - Adit Vakil
+
+weeks:
+  - {label: Week 1, start: 2026-10-05, end: 2026-10-11, milestones: "Scoping approved; GCP chosen; repo set up; assign workstream leads; ask instructor about IRB"}
+  - {label: Week 2, start: 2026-10-12, end: 2026-10-18, milestones: "Ingestion pipelines (PDF splitter, drawings, text); DVC remote; EDA; cloud environment + MLflow up; IRB decision"}
+  - {label: Week 3, start: 2026-10-19, end: 2026-10-25, milestones: "Preprocessing + validation in Airflow; dataset v1 frozen; pretrained baseline end to end in a notebook"}
+  - {label: Week 4, start: 2026-10-26, end: 2026-11-01, milestones: "Fine-tune drawing recognizer + readability scorer; story LLM instruction dataset; TTS integrated; UI wireframes"}
+  - {label: Week 5, start: 2026-11-02, end: 2026-11-08, milestones: "Story LLM LoRA fine-tune; illustration with SD + ControlNet; golden set written; FastAPI serving v1"}
+  - {label: Week 6, start: 2026-11-09, end: 2026-11-15, milestones: "MVP complete: end-to-end pipeline on cloud; safety + readability gate; parent settings; CI/CD eval gate; basic monitoring"}
+  - {label: Week 7, start: 2026-11-16, end: 2026-11-22, milestones: "Buffer week: finish MVP slips, then stretch goals in priority order"}
+  - {label: Week 8, start: 2026-11-23, end: 2026-11-30, milestones: "Hardening, performance/cost tuning, documentation; code freeze Nov 30"}
+  - {label: Week 9, start: 2026-12-01, end: 2026-12-07, milestones: "Internal QA + load test; safety red-teaming; evaluation onboarding"}
+  - {label: Week 10, start: 2026-12-08, end: 2026-12-11, milestones: "Pilot / evaluation; collect metrics + feedback"}
+  - {label: Buffer, start: 2026-12-12, end: 2026-12-14, milestones: "Final report + demo"}
+
+workstreams:
+  - {id: team, name: Whole team, lead: All}
+  - {id: data, name: Data Engineering, lead: Keith Fernandes}
+  - {id: vision, name: Vision, lead: TBD}
+  - {id: language, name: Language, lead: TBD}
+  - {id: speech, name: Speech, lead: TBD}
+  - {id: infra, name: MLOps / Infra, lead: TBD}
+  - {id: product, name: Product / Frontend, lead: TBD}
+
+tasks:
+  # Whole team
+  - {id: T1, workstream: team, title: Scoping approved, owner: Team, status: done, due: 2026-10-10, done: 2026-10-10}
+  - {id: T2, workstream: team, title: Choose cloud platform (GCP), owner: Team, status: done, due: 2026-10-10, done: 2026-10-10}
+  - {id: T3, workstream: team, title: Repo set up, owner: Keith Fernandes, status: done, due: 2026-10-10, done: 2026-10-10}
+  - {id: T4, workstream: team, title: Assign workstream leads, owner: Team, status: todo, due: 2026-10-11}
+  - {id: T5, workstream: team, title: QA + load test, owner: Team, status: todo, due: 2026-12-07}
+  - {id: T6, workstream: team, title: Safety red-teaming, owner: Team, status: todo, due: 2026-12-07}
+  - {id: T7, workstream: team, title: Final report + demo, owner: Team, status: todo, due: 2026-12-14}
+
+  # Data Engineering
+  - {id: D2, workstream: data, title: Source registry (configs/sources.yaml), owner: Keith Fernandes, status: done, due: 2026-10-13, done: 2026-10-10}
+  - {id: D3, workstream: data, title: Pipeline + project tracker dashboard, owner: Keith Fernandes, status: done, due: 2026-10-14, done: 2026-10-10}
+  - {id: D4, workstream: data, title: GCS bucket with raw/processed/features layout, owner: Keith Fernandes, status: done, due: 2026-10-14, done: 2026-10-10}
+  - {id: D5, workstream: data, title: DVC with GCS remote, owner: Keith Fernandes, status: done, due: 2026-10-14, done: 2026-10-10}
+  - {id: D6, workstream: data, title: Ingest TinyStories, owner: Keith Fernandes, status: in_progress, due: 2026-10-16}
+  - {id: D7, workstream: data, title: "Ingest Quick, Draw!", owner: Keith Fernandes, status: done, due: 2026-10-16, done: 2026-10-10}
+  - {id: D8, workstream: data, title: Ingest CLEAR Corpus, owner: Keith Fernandes, status: done, due: 2026-10-17, done: 2026-10-10}
+  - {id: D9, workstream: data, title: Ingest sight-word lists + Kuperman AoA, owner: Keith Fernandes, status: done, due: 2026-10-17, done: 2026-10-10}
+  - {id: D10, workstream: data, title: StoryWeaver + African Storybook ingestion, owner: Keith Fernandes, status: done, due: 2026-10-18, done: 2026-10-10}
+  - {id: D11, workstream: data, title: EDA notebooks per dataset, owner: Keith Fernandes, status: todo, due: 2026-10-18}
+  - {id: D12, workstream: data, title: Ingest Amateur Drawings, owner: Keith Fernandes, status: todo, due: 2026-10-21}
+  - {id: D13, workstream: data, title: Preprocessing per dataset, owner: Keith Fernandes, status: todo, due: 2026-10-23}
+  - {id: D14, workstream: data, title: Validation checks as Airflow tasks, owner: Keith Fernandes, status: todo, due: 2026-10-23}
+  - {id: D15, workstream: data, title: Splits + golden set holdout, owner: Keith Fernandes, status: todo, due: 2026-10-24}
+  - {id: D16, workstream: data, title: Airflow DAGs (ingest → validate → preprocess → version), owner: Keith Fernandes, status: in_progress, due: 2026-10-24}
+  - {id: D17, workstream: data, title: Freeze dataset v1 (DVC tag), owner: Keith Fernandes, status: todo, due: 2026-10-25}
+
+  # Vision
+  - {id: V1, workstream: vision, title: Pretrained drawing baseline in notebook, owner: TBD, status: todo, due: 2026-10-25}
+  - {id: V2, workstream: vision, title: Fine-tune drawing recognizer, owner: TBD, status: todo, due: 2026-11-01}
+  - {id: V3, workstream: vision, title: Illustration with SD + ControlNet-Scribble, owner: TBD, status: todo, due: 2026-11-08}
+
+  # Language
+  - {id: L1, workstream: language, title: Pretrained story baseline in notebook, owner: TBD, status: todo, due: 2026-10-25}
+  - {id: L2, workstream: language, title: Fine-tune readability scorer, owner: TBD, status: todo, due: 2026-11-01}
+  - {id: L3, workstream: language, title: Story LLM instruction dataset, owner: TBD, status: todo, due: 2026-11-01}
+  - {id: L4, workstream: language, title: Golden evaluation set written, owner: TBD, status: todo, due: 2026-11-08}
+  - {id: L5, workstream: language, title: Story LLM LoRA fine-tune, owner: TBD, status: todo, due: 2026-11-08}
+  - {id: L6, workstream: language, title: Safety + readability gate, owner: TBD, status: todo, due: 2026-11-15}
+
+  # Speech
+  - {id: S1, workstream: speech, title: TTS narration integrated, owner: TBD, status: todo, due: 2026-11-01}
+
+  # MLOps / Infra
+  - {id: I1, workstream: infra, title: "GCP project, IAM, budget alerts", owner: TBD, status: in_progress, due: 2026-10-18}
+  - {id: I2, workstream: infra, title: MLflow tracking server up, owner: TBD, status: todo, due: 2026-10-18}
+  - {id: I3, workstream: infra, title: Airflow environment, owner: TBD, status: todo, due: 2026-10-18}
+  - {id: I4, workstream: infra, title: FastAPI serving v1, owner: TBD, status: todo, due: 2026-11-08}
+  - {id: I5, workstream: infra, title: CI/CD with golden-set evaluation gate, owner: TBD, status: todo, due: 2026-11-15}
+  - {id: I6, workstream: infra, title: End-to-end cloud deployment, owner: TBD, status: todo, due: 2026-11-15}
+  - {id: I7, workstream: infra, title: Basic monitoring dashboard, owner: TBD, status: todo, due: 2026-11-15}
+
+  # Product / Frontend
+  - {id: F1, workstream: product, title: Ask instructor about IRB, owner: TBD, status: todo, due: 2026-10-11}
+  - {id: F2, workstream: product, title: IRB decision → pilot Plan A or B, owner: TBD, status: todo, due: 2026-10-18}
+  - {id: F3, workstream: product, title: UI wireframes, owner: TBD, status: todo, due: 2026-11-01}
+  - {id: F4, workstream: product, title: Parent settings page, owner: TBD, status: todo, due: 2026-11-15}
+  - {id: F5, workstream: product, title: Web flip-book reader with narration, owner: TBD, status: todo, due: 2026-11-15}
+  - {id: F6, workstream: product, title: Pilot / evaluation, owner: TBD, status: todo, due: 2026-12-11}
+
+mvp:
+  - {item: "Drawing upload → label → story → illustrated pages → narration → web reader", status: todo}
+  - {item: Both age modes (3–5 and 5–8) as presets, status: todo}
+  - {item: "Team-trained models: drawing recognizer, story LLM, readability scorer", status: todo}
+  - {item: Readability + safety gate before delivery, status: todo}
+  - {item: Airflow + DVC data pipeline, status: todo}
+  - {item: MLflow tracking + registry, status: todo}
+  - {item: CI/CD with golden-set evaluation gate, status: todo}
+  - {item: Cloud deployment + basic monitoring, status: todo}
+
+stretch:
+  - {item: Read-aloud ASR with parent toggle, status: todo}
+  - {item: Learner profile + adaptation, status: todo}
+  - {item: Illustration style LoRA, status: todo}
+  - {item: "Age-mode extras: tap-to-hear, glossary, comprehension questions", status: todo}
+  - {item: "Full developer dashboard: cost, learning KPIs, drift-triggered retraining", status: todo}
+
+decisions:
+  - {decision: GCP vs AWS, status: decided, outcome: GCP (team received credits), due: 2026-10-11, decided: 2026-10-10}
+  - {decision: IRB for the child pilot → Plan A or Plan B, status: open, outcome: "", due: 2026-10-18}
+  - {decision: "Airflow hosting: Cloud Composer vs Airflow on a VM", status: open, outcome: "", due: 2026-10-18}
+  - {decision: Include optional CC-licensed YouTube source, status: open, outcome: "", due: 2026-10-25}
+  - {decision: Base model choices after Week 3 baselines, status: open, outcome: "", due: 2026-10-25}
