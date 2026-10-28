@@ -125,7 +125,7 @@ def _versions(args: argparse.Namespace, store: Store) -> int:
         log.info("  %-16s %s rows", name, f"{d['rows']:,}")
     log.info("Version %s recorded at %s", args.tag, store.url(f"metadata/versions/{args.tag}.json"))
     if version["dvc_files"]:
-        log.info("Next: git add data/*.dvc data/.gitignore && git commit -m 'Data version %s' && git tag data-%s",
+        log.info("Next: git add data/*.dvc && git commit -m 'chore(data): data version %s (KAN-<n>)' && git tag data-%s",
                  args.tag, args.tag)
     return 0
 
