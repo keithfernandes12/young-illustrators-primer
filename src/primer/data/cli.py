@@ -8,6 +8,7 @@
     primer-data version v1 -m "notes"        freeze all processed datasets as version v1
     primer-data versions                     list dataset versions
     primer-data dvc-pointers                 refresh data/*.dvc to the current object versions
+    primer-data bias-report                  slice the datasets for bias; write reports/bias/ (reads only)
 
 Data goes to PRIMER_DATA_URI (default gs://young-illustrators-primer-data);
 override with --data-uri.
@@ -16,11 +17,13 @@ override with --data-uri.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
+from pathlib import Path
 
 from primer.data import pipeline
-from primer.data.config import load_sources
+from primer.data.config import REPO_ROOT, load_sources
 from primer.data.manifest import ValidationFailed
 from primer.data.sources import SOURCES, get_source
 from primer.data.storage import Store
@@ -43,6 +46,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-dvc", action="store_true", help="Skip refreshing the data/*.dvc pointer files")
     sub.add_parser("versions", help="List dataset versions")
     sub.add_parser("dvc-pointers", help="Refresh data/*.dvc to the current object versions (no download)")
+    p = sub.add_parser("bias-report", help="Slice the datasets for bias and write the report (reads data only)")
+    p.add_argument("--out", default=str(REPO_ROOT / "reports" / "bias"),
+                   help="Folder for bias_report.md and bias_report.json (default: reports/bias in the repo)")
+    p.add_argument("--max-country-share", type=float, default=0.20,
+                   help="Cap on any one country's share of drawing training weight (default 0.20)")
     for name, text in (("run", "Ingest, validate, and preprocess one new batch"),
                        ("ingest", "Fetch the next batch into raw/")):
         p = sub.add_parser(name, help=text)
@@ -81,6 +89,8 @@ def main(argv: list[str] | None = None) -> int:
         for path in refresh_dvc_pointers(Store(args.data_uri)):
             log.info("Updated %s", path)
         return 0
+    if args.command == "bias-report":
+        return _bias_report(args, Store(args.data_uri))
 
     if args.command in ("version", "versions"):
         return _versions(args, Store(args.data_uri))
@@ -107,6 +117,20 @@ def main(argv: list[str] | None = None) -> int:
             pipeline.preprocess(source, args.batch)
     except ValidationFailed:
         return 1
+    return 0
+
+
+def _bias_report(args: argparse.Namespace, store: Store) -> int:
+    from primer.data import bias  # fairlearn/scikit-learn load only for this command
+
+    log.info("Reading datasets from %s (read-only)", store.uri)
+    report = bias.build_report(store, max_country_share=args.max_country_share)
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "bias_report.md").write_text(bias.render_markdown(report), encoding="utf-8")
+    (out / "bias_report.json").write_text(json.dumps(bias.report_to_json(report), indent=2, default=str),
+                                          encoding="utf-8")
+    log.info("Wrote %s and %s", out / "bias_report.md", out / "bias_report.json")
     return 0
 
 
