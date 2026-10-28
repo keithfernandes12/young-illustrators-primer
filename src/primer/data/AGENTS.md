@@ -9,8 +9,10 @@ are easiest to break, and why:
 - **Versions are permanent.** `metadata/versions/<tag>.json` records exact GCS object generations;
   a tag can never be overwritten. Use the `freeze-dataset-version` skill — a person runs the
   `version` command.
-- **Every processed record keeps `license` and `attribution`.** Without them a record is a legal
-  risk; validation should fail rather than drop them silently.
+- **Every processed record carries `license` and `attribution`**, set by each source from
+  `configs/sources.yaml`, so datasets can be credited. They are metadata, not a gate: this is a
+  non-commercial course project and no check blocks ingestion on licence. Keep both columns filled
+  when adding a source.
 - **Tests never touch GCS.** Use a fake fetcher and the `store` fixture from `tests/data/conftest.py`
   (enforced by `tests/conftest.py`).
 - **Incremental sources keep their position** in `metadata/state/<source>.json`. Any run against the

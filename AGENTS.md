@@ -131,7 +131,7 @@ go, so the next person or agent can continue without rediscovering context. Full
 | `docs/briefs/` | Shaping an idea before it is decided |
 | `docs/runbooks/` | Operating something that runs (freeze data, retrain, roll back) |
 | `docs/solutions/` | A solved problem likely to come back — check here before debugging |
-| `docs/engineering/` | How we work: `documentation.md`, `engineering-loop.md`, `review-checklist.md`, `ci.md` |
+| `docs/engineering/` | How we work: `onboarding.md`, `documentation.md`, `engineering-loop.md`, `review-checklist.md`, `ci.md` |
 | `docs/meeting-notes/` | What a meeting decided, with owners |
 
 Every document starts with frontmatter (`title`, `type`, `created`, `status`, `author`; optional

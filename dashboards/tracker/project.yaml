@@ -65,10 +65,10 @@ tasks:
   - {id: D10, workstream: data, title: StoryWeaver + African Storybook ingestion, owner: Keith Fernandes, status: done, due: 2026-10-18, done: 2026-10-10}
   - {id: D11, workstream: data, title: EDA notebooks per dataset, owner: Keith Fernandes, status: todo, due: 2026-10-18}
   - {id: D12, workstream: data, title: Ingest Amateur Drawings, owner: Keith Fernandes, status: todo, due: 2026-10-21}
-  - {id: D13, workstream: data, title: Preprocessing per dataset, owner: Keith Fernandes, status: todo, due: 2026-10-23}
-  - {id: D14, workstream: data, title: Validation checks as Airflow tasks, owner: Keith Fernandes, status: todo, due: 2026-10-23}
+  - {id: D13, workstream: data, title: Preprocessing per dataset, owner: Keith Fernandes, status: in_progress, due: 2026-10-23}
+  - {id: D14, workstream: data, title: Validation checks as Airflow tasks, owner: Keith Fernandes, status: done, due: 2026-10-23, done: 2026-10-27}
   - {id: D15, workstream: data, title: Splits + golden set holdout, owner: Keith Fernandes, status: todo, due: 2026-10-24}
-  - {id: D16, workstream: data, title: Airflow DAGs (ingest → validate → preprocess → version), owner: Keith Fernandes, status: in_progress, due: 2026-10-24}
+  - {id: D16, workstream: data, title: Airflow DAGs (ingest → validate → preprocess → version), owner: Keith Fernandes, status: done, due: 2026-10-24, done: 2026-10-27}
   - {id: D17, workstream: data, title: Freeze dataset v1 (DVC tag), owner: Keith Fernandes, status: todo, due: 2026-10-25}
 
   # Vision
