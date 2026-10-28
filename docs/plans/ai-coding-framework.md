@@ -110,7 +110,7 @@ as required status checks to `protect-main`.
 
 | Slice | State | PR | Notes |
 |---|---|---|---|
-| S1 | in review | #1 | Windows 11 verified; awaiting first CI run |
+| S1 | merged | #1 | Windows 11 verified; CI green |
 | S2 | not started | | needs admin |
 | S3 | not started | | after S2 and one PR run |
 

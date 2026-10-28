@@ -9,7 +9,7 @@ pip install -e ".[dev,dvc]"
 gcloud auth application-default login
 ```
 
-You need access to the `young-illustrators-primer` GCP project. Nothing is stored on your machine; everything goes to the bucket.
+With access to the `young-illustrators-primer` GCP project, the CLI writes to the bucket by default. Without it (or to experiment safely), pass `--data-uri .local-data` to keep everything in a local folder.
 
 ## Using the data
 
@@ -21,7 +21,7 @@ pages = read_dataset("storybook_pages")                    # picture-book pages 
 drawings = read_dataset("drawings")                        # Quick, Draw!
 readability = read_dataset("readability")                  # CLEAR
 words = read_dataset("word_lists", sources=["sight_words"])
-drawings_v1 = read_dataset("drawings", version="v0.1")     # exactly as frozen in a version
+drawings_v01 = read_dataset("drawings", version="v0.1")   # exactly as frozen in a version
 ```
 
 Train on a named version (see [Versions](#versions)) so results are reproducible.
@@ -75,7 +75,7 @@ Sources with a pipeline: `tinystories`, `quickdraw`, `clear_corpus`, `sight_word
 
 ```bash
 git add data/*.dvc
-git commit -m "Data version v1"
+git commit -m "chore(data): data version v1 (KAN-<n>)"
 git tag data-v1
 ```
 
