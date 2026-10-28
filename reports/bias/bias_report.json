@@ -1,0 +1,351 @@
+{
+  "created_at": "2026-10-27T01:09:41.420463+00:00",
+  "data_uri": "gs://young-illustrators-primer-data",
+  "max_country_share": 0.2,
+  "drawings": {
+    "rows": 632746,
+    "countries": 194,
+    "representation": [
+      {
+        "index": "US",
+        "count": 284341,
+        "share": 0.4494
+      },
+      {
+        "index": "GB",
+        "count": 45308,
+        "share": 0.0716
+      },
+      {
+        "index": "CA",
+        "count": 23255,
+        "share": 0.0368
+      },
+      {
+        "index": "DE",
+        "count": 20756,
+        "share": 0.0328
+      },
+      {
+        "index": "AU",
+        "count": 15149,
+        "share": 0.0239
+      },
+      {
+        "index": "RU",
+        "count": 14504,
+        "share": 0.0229
+      },
+      {
+        "index": "BR",
+        "count": 11874,
+        "share": 0.0188
+      },
+      {
+        "index": "SE",
+        "count": 10722,
+        "share": 0.0169
+      },
+      {
+        "index": "FI",
+        "count": 10696,
+        "share": 0.0169
+      },
+      {
+        "index": "CZ",
+        "count": 9951,
+        "share": 0.0157
+      },
+      {
+        "index": "Other",
+        "count": 186190,
+        "share": 0.2943
+      }
+    ],
+    "recognition": {
+      "by_country": [
+        {
+          "sensitive_feature_0": "US",
+          "drawings": 309888.0,
+          "recognition_rate": 0.9175605380008262
+        },
+        {
+          "sensitive_feature_0": "Other",
+          "drawings": 157226.0,
+          "recognition_rate": 0.9086728658109982
+        },
+        {
+          "sensitive_feature_0": "GB",
+          "drawings": 49721.0,
+          "recognition_rate": 0.9112447456808994
+        },
+        {
+          "sensitive_feature_0": "CA",
+          "drawings": 25140.0,
+          "recognition_rate": 0.9250198886237072
+        },
+        {
+          "sensitive_feature_0": "DE",
+          "drawings": 21854.0,
+          "recognition_rate": 0.9497574814679235
+        },
+        {
+          "sensitive_feature_0": "AU",
+          "drawings": 16407.0,
+          "recognition_rate": 0.9233254098860243
+        },
+        {
+          "sensitive_feature_0": "RU",
+          "drawings": 15645.0,
+          "recognition_rate": 0.9270693512304251
+        },
+        {
+          "sensitive_feature_0": "BR",
+          "drawings": 12438.0,
+          "recognition_rate": 0.9546550892426435
+        },
+        {
+          "sensitive_feature_0": "SE",
+          "drawings": 11712.0,
+          "recognition_rate": 0.9154713114754098
+        },
+        {
+          "sensitive_feature_0": "FI",
+          "drawings": 11667.0,
+          "recognition_rate": 0.9167738064626725
+        },
+        {
+          "sensitive_feature_0": "CZ",
+          "drawings": 11007.0,
+          "recognition_rate": 0.9040610520577814
+        },
+        {
+          "sensitive_feature_0": "IT",
+          "drawings": 10637.0,
+          "recognition_rate": 0.9061765535395319
+        },
+        {
+          "sensitive_feature_0": "FR",
+          "drawings": 9390.0,
+          "recognition_rate": 0.9277955271565496
+        },
+        {
+          "sensitive_feature_0": "PL",
+          "drawings": 9327.0,
+          "recognition_rate": 0.9202315857188806
+        },
+        {
+          "sensitive_feature_0": "KR",
+          "drawings": 9040.0,
+          "recognition_rate": 0.9318584070796461
+        },
+        {
+          "sensitive_feature_0": "TH",
+          "drawings": 8901.0,
+          "recognition_rate": 0.8948432760364005
+        }
+      ],
+      "overall_rate": 0.9170231884057971,
+      "gap": 0.05981181320624307,
+      "worst": [
+        "TH",
+        0.8948432760364005
+      ],
+      "best": [
+        "BR",
+        0.9546550892426435
+      ]
+    },
+    "raw_rows": 690000,
+    "shares_before": {
+      "US": 0.4494,
+      "GB": 0.0716,
+      "CA": 0.0368,
+      "DE": 0.0328,
+      "AU": 0.0239,
+      "RU": 0.0229,
+      "BR": 0.0188,
+      "SE": 0.0169,
+      "FI": 0.0169,
+      "CZ": 0.0157
+    },
+    "shares_after": {
+      "US": 0.2,
+      "GB": 0.104,
+      "CA": 0.0534,
+      "DE": 0.0477,
+      "AU": 0.0348,
+      "RU": 0.0333,
+      "BR": 0.0273,
+      "SE": 0.0246,
+      "FI": 0.0246,
+      "CZ": 0.0228
+    }
+  },
+  "stories": {
+    "rows": 54642,
+    "analysed": 20754,
+    "lead_by_source": [
+      {
+        "source": "african_storybook",
+        "female": 0.3085,
+        "male": 0.5096,
+        "neutral": 0.1818
+      },
+      {
+        "source": "storyweaver",
+        "female": 0.3734,
+        "male": 0.509,
+        "neutral": 0.1176
+      },
+      {
+        "source": "tinystories",
+        "female": 0.4614,
+        "male": 0.4742,
+        "neutral": 0.0644
+      }
+    ],
+    "lead_counts": {
+      "male": 9868,
+      "female": 9486,
+      "neutral": 1400
+    },
+    "after_by_source": [
+      {
+        "source": "african_storybook",
+        "female": 185,
+        "male": 185,
+        "neutral": 66
+      },
+      {
+        "source": "storyweaver",
+        "female": 199,
+        "male": 199,
+        "neutral": 46
+      },
+      {
+        "source": "tinystories",
+        "female": 9484,
+        "male": 9484,
+        "neutral": 1288
+      }
+    ],
+    "augmented_by_source": {
+      "tinystories": 256,
+      "african_storybook": 73,
+      "storyweaver": 53
+    },
+    "after_counts": {
+      "male": 9868,
+      "female": 9868,
+      "neutral": 1400
+    },
+    "augmented_rows": 382
+  },
+  "readability": {
+    "rows": 4723,
+    "baseline": {
+      "fit": {
+        "slope": -0.12341972864871689,
+        "intercept": 0.21594578342862436
+      },
+      "overall_mae": 0.7076596736569021,
+      "category": [
+        {
+          "sensitive_feature_0": "Info",
+          "excerpts": 2304.0,
+          "mae": 0.7711022205381544,
+          "mean_error": 0.10551332842618029,
+          "teacher_score_mean": -1.2675664926653645
+        },
+        {
+          "sensitive_feature_0": "Lit",
+          "excerpts": 2419.0,
+          "mae": 0.6472332048621913,
+          "mean_error": -0.10049719251505607,
+          "teacher_score_mean": -0.6621025111492352
+        }
+      ],
+      "category_mae_gap": 0.12386901567596309,
+      "era": [
+        {
+          "sensitive_feature_0": "before 1850",
+          "excerpts": 63.0,
+          "mae": 0.7476886671064714,
+          "mean_error": 0.6061409193061571,
+          "teacher_score_mean": -1.842257629079365
+        },
+        {
+          "sensitive_feature_0": "1850\u20131899",
+          "excerpts": 1542.0,
+          "mae": 0.7558224591626796,
+          "mean_error": 0.09959278306563871,
+          "teacher_score_mean": -1.1066844853683526
+        },
+        {
+          "sensitive_feature_0": "1900\u20131949",
+          "excerpts": 1455.0,
+          "mae": 0.6835019653102086,
+          "mean_error": 0.12459677417971324,
+          "teacher_score_mean": -1.0955526496762886
+        },
+        {
+          "sensitive_feature_0": "1950\u20131999",
+          "excerpts": 34.0,
+          "mae": 0.502822024983236,
+          "mean_error": 0.027574654489551462,
+          "teacher_score_mean": -0.8952177886764706
+        },
+        {
+          "sensitive_feature_0": "2000+",
+          "excerpts": 1620.0,
+          "mae": 0.6877748111450429,
+          "mean_error": -0.22855960293553798,
+          "teacher_score_mean": -0.6625482478098765
+        },
+        {
+          "sensitive_feature_0": "unknown",
+          "excerpts": 9.0,
+          "mae": 0.43416868824842253,
+          "mean_error": -0.4131374813399982,
+          "teacher_score_mean": -0.19275499499999998
+        }
+      ],
+      "era_mae_gap": 0.3216537709142571
+    },
+    "strata": {
+      "Info / 1850\u20131899": 583,
+      "Info / 1900\u20131949": 441,
+      "Info / 1950\u20131999": 18,
+      "Info / 2000+": 1248,
+      "Info / before 1850": 10,
+      "Info / unknown": 4,
+      "Lit / 1850\u20131899": 959,
+      "Lit / 1900\u20131949": 1014,
+      "Lit / 1950\u20131999": 16,
+      "Lit / 2000+": 372,
+      "Lit / before 1850": 53,
+      "Lit / unknown": 5
+    }
+  },
+  "picture_books": {
+    "by_source": [
+      {
+        "source": "african_storybook",
+        "books": 367,
+        "pages": 3936,
+        "illustrated_pages": 3741,
+        "words_per_page": 19.0,
+        "share_of_illustrations": 0.5519
+      },
+      {
+        "source": "storyweaver",
+        "books": 391,
+        "pages": 3206,
+        "illustrated_pages": 3037,
+        "words_per_page": 32.0,
+        "share_of_illustrations": 0.4481
+      }
+    ]
+  }
+}
