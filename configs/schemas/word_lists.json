@@ -1,0 +1,111 @@
+{
+  "dataset": "word_lists",
+  "min_rows": 16161,
+  "created_at": "2026-10-28T02:39:09.925731+00:00",
+  "columns": {
+    "record_id": {
+      "kind": "string",
+      "max_null_fraction": 0.0
+    },
+    "source": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "allowed": [
+        "kuperman_aoa",
+        "sight_words"
+      ]
+    },
+    "list_name": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "allowed": [
+        "dolch",
+        "fry",
+        "kuperman_aoa"
+      ]
+    },
+    "word": {
+      "kind": "string",
+      "max_null_fraction": 0.0
+    },
+    "level": {
+      "kind": "string",
+      "max_null_fraction": 1.0,
+      "allowed": [
+        "fry_100",
+        "fry_1000",
+        "fry_200",
+        "fry_300",
+        "fry_400",
+        "fry_500",
+        "fry_600",
+        "fry_700",
+        "fry_800",
+        "fry_900",
+        "grade1",
+        "grade2",
+        "grade3",
+        "pre-primer",
+        "primer"
+      ]
+    },
+    "rank": {
+      "kind": "int",
+      "max_null_fraction": 1.0,
+      "min": 0.0,
+      "max": 1099.9
+    },
+    "age_of_acquisition": {
+      "kind": "float",
+      "max_null_fraction": 0.0877,
+      "min": 0.0,
+      "max": 27.342
+    },
+    "percent_known": {
+      "kind": "float",
+      "max_null_fraction": 0.0877,
+      "min": 0.0,
+      "max": 1.095455
+    },
+    "frequency_per_million": {
+      "kind": "float",
+      "max_null_fraction": 0.1079,
+      "min": 0.0,
+      "max": 46042.829412
+    },
+    "part_of_speech": {
+      "kind": "string",
+      "max_null_fraction": 0.1093
+    },
+    "n_syllables": {
+      "kind": "int",
+      "max_null_fraction": 0.0877,
+      "min": 0.0,
+      "max": 9.9
+    },
+    "license": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "allowed": [
+        "Free for research",
+        "Public-Domain"
+      ]
+    },
+    "attribution": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "allowed": [
+        "Dolch (1936) and Fry (1980) sight-word lists, via the lexicon R package (Rinker)",
+        "Kuperman, Stadthagen-Gonzalez & Brysbaert (2012), file via Brysbaert on OSF (osf.io/j94kb)"
+      ]
+    },
+    "batch_id": {
+      "kind": "string",
+      "max_null_fraction": 0.0
+    },
+    "ingested_at": {
+      "kind": "datetime",
+      "max_null_fraction": 0.0
+    }
+  }
+}

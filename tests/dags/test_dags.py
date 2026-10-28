@@ -51,6 +51,25 @@ def test_summarize_always_runs_after_every_source(dagbag):
     assert summarize.trigger_rule == "all_done"   # writes the report even when a source failed
 
 
+def test_check_data_runs_after_every_source(dagbag):
+    dag = dagbag.get_dag("primer_data_pipeline")
+    check = dag.get_task("check_data")
+    assert check.upstream_task_ids == {f"{key}.preprocess" for key in PIPELINE_SOURCES}
+    assert check.trigger_rule == "all_done"     # profiles what exists even when a source failed
+    assert check.downstream_task_ids == set()   # a leaf: its failure fails the run
+
+
+def test_failures_email_except_the_summary(dagbag):
+    from primer.data import alerts
+
+    for dag_id in ("primer_data_pipeline", "primer_freeze_version"):
+        dag = dagbag.get_dag(dag_id)
+        for t in dag.tasks:
+            callbacks = t.on_failure_callback if isinstance(t.on_failure_callback, list) else [t.on_failure_callback]
+            expected = "log_failure" if t.task_id == "summarize" else alerts.notify_task_failure.__name__
+            assert [c.__name__ for c in callbacks] == [expected], (dag_id, t.task_id)
+
+
 def test_pipeline_params_and_concurrency(dagbag):
     dag = dagbag.get_dag("primer_data_pipeline")
     assert dag.max_active_runs == 1

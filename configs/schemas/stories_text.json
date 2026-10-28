@@ -1,0 +1,78 @@
+{
+  "dataset": "stories_text",
+  "min_rows": 27321,
+  "created_at": "2026-10-28T02:39:01.080514+00:00",
+  "columns": {
+    "record_id": {
+      "kind": "string",
+      "max_null_fraction": 0.0
+    },
+    "source": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "allowed": [
+        "african_storybook",
+        "storyweaver",
+        "tinystories"
+      ]
+    },
+    "source_id": {
+      "kind": "string",
+      "max_null_fraction": 0.0
+    },
+    "title": {
+      "kind": "string",
+      "max_null_fraction": 1.0
+    },
+    "text": {
+      "kind": "string",
+      "max_null_fraction": 0.0
+    },
+    "word_count": {
+      "kind": "int",
+      "max_null_fraction": 0.0,
+      "min": 0.0,
+      "max": 4180.7
+    },
+    "sentence_count": {
+      "kind": "int",
+      "max_null_fraction": 0.0,
+      "min": 0.0,
+      "max": 380.5
+    },
+    "text_hash": {
+      "kind": "string",
+      "max_null_fraction": 0.0
+    },
+    "language": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "allowed": [
+        "en"
+      ]
+    },
+    "license": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "allowed": [
+        "CC BY-NC-SA",
+        "CC-BY",
+        "CC-BY-NC",
+        "CDLA-Sharing-1.0",
+        "Public Domain"
+      ]
+    },
+    "attribution": {
+      "kind": "string",
+      "max_null_fraction": 0.0
+    },
+    "batch_id": {
+      "kind": "string",
+      "max_null_fraction": 0.0
+    },
+    "ingested_at": {
+      "kind": "datetime",
+      "max_null_fraction": 0.0
+    }
+  }
+}

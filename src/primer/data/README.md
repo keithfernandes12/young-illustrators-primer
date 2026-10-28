@@ -45,6 +45,9 @@ primer-data preprocess <source>     # clean a raw batch into processed/
 primer-data version <tag> -m "..."  # freeze all processed datasets as a version
 primer-data versions                # list versions
 primer-data dvc-pointers            # refresh data/*.dvc to the current object versions
+primer-data profile                 # statistics + schema validation + drift for every dataset (reads only)
+primer-data profile --write-schemas # re-infer configs/schemas/*.json from the current data
+primer-data test-alert              # send a test alert email
 ```
 
 The same stages run on a schedule in **Airflow**, one parallel task group per source: see
@@ -89,10 +92,33 @@ processed/<dataset>/source=<source>/batch=<batch_id>.parquet
 metadata/runs/<run_id>.json        one manifest per stage run (read by the dashboard)
 metadata/state/<source>.json       where the next ingest continues / last snapshot hash
 metadata/versions/<tag>.json       a frozen dataset version: every file and its GCS generation
+metadata/profiles/<dataset>/<run_id>.json   statistics per column, one per data check
+metadata/anomalies/<run_id>.json   schema errors and drift warnings from a data check
 dvc/                               DVC remote, for anything DVC needs to push (e.g. models)
 ```
 
 Every processed record keeps its `license` and `attribution`.
+
+## Statistics, schema and anomalies
+
+`profiling.py` checks each processed dataset as a whole (the stage checks above look at one batch):
+
+1. **Statistics.** Per column: null fraction; min, max, mean, std and percentiles for numbers;
+   length, distinct count and category shares for text. Saved to `metadata/profiles/`.
+2. **Schema.** `configs/schemas/<dataset>.json` is the dataset's contract: exact column set,
+   minimum row count, maximum null fraction, numeric ranges and allowed categories. It is inferred
+   from known-good data (`primer-data profile --write-schemas`), reviewed, and committed, so a
+   change to the contract shows up in a pull request. **Great Expectations** validates the data
+   against it; any failure is an **error**.
+3. **Drift.** The new profile is compared with the previous one. Rows falling by over 5%, nulls up
+   by over 5 points, a numeric mean moving by over half a standard deviation, or category shares
+   moving by over 0.15 (total variation) is a **warning**.
+
+In Airflow, `check_data` runs this after every source: errors fail the run, warnings don't. Both are
+emailed (see `alerts.py` and `PRIMER_ALERT_EMAILS` in `.env.example`), as is any failed task.
+
+When a source legitimately changes (a new column, a new source value), re-run
+`primer-data profile --write-schemas`, review the diff, and commit it with the change.
 
 ## Stages
 
