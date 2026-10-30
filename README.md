@@ -11,7 +11,7 @@ This is our MLOps course team project (IE 7374), inspired by Y Combinator's *"Th
 1. [The data pipeline at a glance](#1-the-data-pipeline-at-a-glance)
 2. [Reproduce it on your machine](#2-reproduce-it-on-your-machine) (no cloud account needed)
 3. [Data sources](#3-data-sources)
-4. [Pipeline stages](#4-pipeline-stages): acquisition, validation, preprocessing, schemas
+4. [Pipeline stages](#4-pipeline-stages): acquisition, validation, preprocessing, schemas, statistics and anomalies
 5. [Orchestration with Airflow](#5-orchestration-with-airflow)
 6. [Data versioning with DVC](#6-data-versioning-with-dvc)
 7. [Tracking, logging and error handling](#7-tracking-logging-and-error-handling)
@@ -126,15 +126,22 @@ drawings_v01 = read_dataset("drawings", version="v0.1")  # exactly as frozen in 
 
 **Anomalies the checks have already caught** in real data: a README parsed as a story, back-cover blurbs hiding credits, empty stories in a mirror, a duplicated word in the Fry list, and nine CLEAR excerpts with no publication year. Tests caught two more before they reached real data: Excel turning "900" into "900.0", and same-second batches overwriting each other. Each one now has a regression test.
 
+**Statistics, schema and anomaly detection** ([`profiling.py`](src/primer/data/profiling.py)). The checks above look at one batch; after every run, `check_data` looks at each dataset as a whole:
+
+- **Statistics:** per column, the null fraction, min/max/mean/std/percentiles for numbers, and length, distinct count and category shares for text, saved to `metadata/profiles/<dataset>/<run_id>.json`.
+- **Schema:** [`configs/schemas/<dataset>.json`](configs/schemas/) is each dataset's contract (exact columns, minimum rows, maximum null fraction, numeric ranges, non-empty text, allowed categories). It is inferred from known-good data with `primer-data profile --write-schemas`, reviewed and committed, so changing what counts as valid data goes through a PR. **Great Expectations** validates every dataset against it; a failure is an **error and fails the run**, as is a dataset that lost all its rows or has no schema. Exceeding the top of a numeric range is only a warning, since growing sources legitimately do.
+- **Drift:** each profile is compared with the previous one. Rows down more than 5%, nulls up more than 5 points, a mean moving more than half a standard deviation (or at all, if it was constant), mean text length changing more than 30%, category shares moving more than 0.15 (total variation distance), or a column crossing between categorical and open-ended is a **warning**.
+- Errors, warnings and failed tasks are **emailed** (section 7). `primer-data profile` runs the same check by hand and only reads.
+
 ## 5. Orchestration with Airflow
 
-[`dags/primer_data_pipeline.py`](dags/primer_data_pipeline.py) runs one task group per source, all in **parallel**, then `summarize`:
+[`dags/primer_data_pipeline.py`](dags/primer_data_pipeline.py) runs one task group per source, all in **parallel**, then `summarize` and `check_data`:
 
 ```
 tinystories        ingest → validate → preprocess ─┐
 quickdraw          ingest → validate → preprocess ─┤
 clear_corpus       ingest → validate → preprocess ─┤
-sight_words        ingest → validate → preprocess ─┼──→ summarize
+sight_words        ingest → validate → preprocess ─┼──→ summarize, check_data
 kuperman_aoa       ingest → validate → preprocess ─┤
 storyweaver        ingest → validate → preprocess ─┤
 african_storybook  ingest → validate → preprocess ─┘
@@ -142,6 +149,7 @@ african_storybook  ingest → validate → preprocess ─┘
 
 - **Skips:** a source with nothing new skips its ingest and the rest of its group.
 - **Failures:** a failed validation fails that source; `summarize` still writes the report (each source's outcome and row counts in `metadata/reports/`) and then **fails the run**, naming the failed sources.
+- **Data check:** `check_data` profiles, validates and drift-checks every dataset (section 4); schema errors fail the run.
 - **Retries:** only downloads retry (3×, exponential backoff); validation never retries, because the data won't change.
 - **Safety:** `max_active_runs=1` (incremental positions can't race), `schedule=None` and `catchup=False` (no surprise backfills), new DAGs start paused.
 - **Trigger parameters:** `sources`, `tinystories_batch_size`, `quickdraw_categories`.
@@ -171,6 +179,7 @@ Details: [`src/primer/data/README.md`](src/primer/data/README.md) → Versions.
 - **Run manifests:** every stage run writes `metadata/runs/<run_id>.json` (status, timings, record counts in/out, validation checks, error message). Failures are recorded and re-raised, never swallowed.
 - **Run reports:** `summarize` writes per-run outcomes and row counts to `metadata/reports/`.
 - **Logs:** Python `logging` throughout; Airflow keeps every task's log (UI and `logs/`). A failure callback logs the task, run, try number and exception.
+- **Alerts** ([`alerts.py`](src/primer/data/alerts.py)): a failed task emails `PRIMER_ALERT_EMAILS` with the task, run and error (schema errors include the full anomaly list), and `check_data` emails drift warnings. Plain SMTP configured in `.env`; off until set, and a mail failure is logged rather than failing the task. Test it with `primer-data test-alert`.
 - **Tracker dashboard** ([`dashboards/tracker/`](dashboards/tracker/README.md)): a Streamlit page with a "what's happened" feed of pipeline batches and dataset versions, per-source status and record counts, and open tasks.
 - **Error handling:** retries with backoff on network steps, validation that fails fast, the raw batch written before the source's position advances (so an interrupted download is fetched again rather than skipped), and same-second batch ids made unique so back-to-back runs can't overwrite raw files.
 
@@ -211,12 +220,15 @@ young-illustrators-primer/
 │   ├── orchestration.py        Airflow-free entry points the DAGs call
 │   ├── storage.py              one API for GCS or a local folder
 │   ├── schemas.py              standard columns per dataset
+│   ├── profiling.py            statistics, Great Expectations validation, drift
+│   ├── alerts.py               email alerts
 │   ├── catalog.py              read_dataset(), current or by version
 │   ├── versioning.py           dataset versions + DVC pointers
 │   ├── manifest.py, checks.py, text.py, config.py
 │   └── cli.py                  the primer-data command
 ├── dags/                       Airflow DAGs (+ README)
 ├── configs/sources.yaml        dataset registry
+├── configs/schemas/            per-dataset data contracts (Great Expectations)
 ├── data/*.dvc                  DVC pointers to versioned data (no data in git)
 ├── tests/                      pytest: data/, dags/, agent_hooks/
 ├── dashboards/tracker/         Streamlit tracker
@@ -235,6 +247,7 @@ young-illustrators-primer/
 | Data root | `PRIMER_DATA_URI` env var or `--data-uri` | `.local-data/` in Docker; `gs://young-illustrators-primer-data` for the CLI |
 | Dataset registry | `configs/sources.yaml` (or `PRIMER_SOURCES_FILE`) | — |
 | Airflow user, login | `.env` (from `.env.example`) | `airflow` / `airflow`, local only |
+| Alert emails | `PRIMER_ALERT_EMAILS`, `PRIMER_SMTP_*` in `.env` | off |
 
 **Team members** with access to the `young-illustrators-primer` GCP project write to the bucket instead of the local folder: run `gcloud auth application-default login`, set `GCLOUD_CONFIG_DIR` in `.env`, and start Airflow with `docker compose -f docker-compose.yaml -f docker-compose.gcs.yaml up -d` (or put `COMPOSE_FILE=docker-compose.yaml;docker-compose.gcs.yaml` in `.env`). Credentials are mounted read-only into the scheduler only; no service-account keys are ever created.
 
@@ -242,8 +255,7 @@ young-illustrators-primer/
 
 Being explicit about what isn't done yet:
 
-- **Schema and statistics generation over time**: validation checks run on every batch, but per-run statistics and drift comparison against earlier runs are not generated yet.
-- **Alerts**: failures are logged and recorded; email or Slack notifications are not wired up yet.
+- **Alerts beyond email**: a Slack channel, and alerts for the model and serving side once those exist.
 - **Feature engineering**: rendering Quick, Draw! strokes to images, a safety filter for text, and mapping readability levels onto one scale are next.
 - **Splits**: by-book train/validation/test splits and the golden evaluation set.
 - Follow-ups from code review (tracked on the merged PRs): bind the Airflow UI to localhost only, unique run-manifest ids, and running the DAG tests in CI.

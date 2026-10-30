@@ -1,0 +1,129 @@
+{
+  "dataset": "storybook_pages",
+  "min_rows": 3571,
+  "created_at": "2026-10-30T00:35:01.637798+00:00",
+  "columns": {
+    "record_id": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1
+    },
+    "source": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1,
+      "allowed": [
+        "african_storybook",
+        "storyweaver"
+      ]
+    },
+    "book_id": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1
+    },
+    "title": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1
+    },
+    "page_number": {
+      "kind": "int",
+      "max_null_fraction": 0.0,
+      "min": 0.9,
+      "max": 30.7
+    },
+    "n_pages": {
+      "kind": "int",
+      "max_null_fraction": 0.0,
+      "min": 0.9,
+      "max": 30.7
+    },
+    "text": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1
+    },
+    "word_count": {
+      "kind": "int",
+      "max_null_fraction": 0.0,
+      "min": 0.9,
+      "max": 2289.0
+    },
+    "image_uri": {
+      "kind": "string",
+      "max_null_fraction": 0.101,
+      "min_length": 1
+    },
+    "image_caption": {
+      "kind": "string",
+      "max_null_fraction": 0.6278,
+      "min_length": 1
+    },
+    "image_alignment": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1,
+      "allowed": [
+        "cover+pages",
+        "cover+pages+back",
+        "no_images",
+        "pages",
+        "unaligned"
+      ]
+    },
+    "author": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1
+    },
+    "illustrator": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1
+    },
+    "translator": {
+      "kind": "string",
+      "max_null_fraction": 0.9833,
+      "min_length": 1
+    },
+    "language": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1,
+      "allowed": [
+        "en"
+      ]
+    },
+    "reading_level": {
+      "kind": "string",
+      "max_null_fraction": 1.0,
+      "nulls_unconstrained": true
+    },
+    "license": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1,
+      "allowed": [
+        "CC BY-NC-SA",
+        "CC-BY",
+        "CC-BY-NC",
+        "Public Domain"
+      ]
+    },
+    "attribution": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1
+    },
+    "batch_id": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1
+    },
+    "ingested_at": {
+      "kind": "datetime",
+      "max_null_fraction": 0.0
+    }
+  }
+}
