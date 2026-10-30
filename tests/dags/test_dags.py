@@ -66,8 +66,25 @@ def test_failures_email_except_the_summary(dagbag):
         dag = dagbag.get_dag(dag_id)
         for t in dag.tasks:
             callbacks = t.on_failure_callback if isinstance(t.on_failure_callback, list) else [t.on_failure_callback]
-            expected = "log_failure" if t.task_id == "summarize" else alerts.notify_task_failure.__name__
+            expected = "summarize_failure" if t.task_id == "summarize" else alerts.notify_task_failure.__name__
             assert [c.__name__ for c in callbacks] == [expected], (dag_id, t.task_id)
+
+
+def test_summarize_emails_its_own_failures_but_not_a_source_failure(dagbag, monkeypatch):
+    from types import SimpleNamespace
+
+    from primer.data import alerts
+
+    task = dagbag.get_dag("primer_data_pipeline").get_task("summarize")
+    [callback] = task.on_failure_callback if isinstance(task.on_failure_callback, list) else [task.on_failure_callback]
+    emailed = []
+    monkeypatch.setattr(alerts, "notify_task_failure", emailed.append)
+    ti = SimpleNamespace(dag_id="primer_data_pipeline", task_id="summarize", try_number=1)
+
+    callback({"ti": ti, "run_id": "r", "exception": callback.__globals__["SourcesFailed"]("Sources failed: x")})
+    assert emailed == []                       # the failed source already sent its alert
+    callback({"ti": ti, "run_id": "r", "exception": OSError("store write failed")})
+    assert len(emailed) == 1                   # summarize broke by itself: nobody else will say so
 
 
 def test_pipeline_params_and_concurrency(dagbag):

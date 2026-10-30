@@ -108,7 +108,7 @@ def summarize(run_id: str, outcomes: dict[str, dict[str, str | None]] | None = N
     return report
 
 
-def check_data(run_id: str) -> dict[str, Any]:
+def check_data(run_id: str, store: Store | None = None) -> dict[str, Any]:
     """Statistics, schema validation and drift for every dataset; saves profiles and the anomaly report.
 
     Drift-only results (warnings, no errors) are emailed from here. Schema errors are left to the
@@ -116,7 +116,7 @@ def check_data(run_id: str) -> dict[str, Any]:
     """
     from primer.data import profiling  # Great Expectations loads only for this task
 
-    store = Store()
+    store = store or Store()
     log.info("Checking datasets in %s", store.uri)
     report = profiling.check_datasets(store, run_id=run_id, save=True)
     report["summary"] = profiling.format_anomalies(report)

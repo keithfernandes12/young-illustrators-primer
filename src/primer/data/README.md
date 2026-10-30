@@ -106,13 +106,18 @@ Every processed record keeps its `license` and `attribution`.
 1. **Statistics.** Per column: null fraction; min, max, mean, std and percentiles for numbers;
    length, distinct count and category shares for text. Saved to `metadata/profiles/`.
 2. **Schema.** `configs/schemas/<dataset>.json` is the dataset's contract: exact column set,
-   minimum row count, maximum null fraction, numeric ranges and allowed categories. It is inferred
-   from known-good data (`primer-data profile --write-schemas`), reviewed, and committed, so a
-   change to the contract shows up in a pull request. **Great Expectations** validates the data
-   against it; any failure is an **error**.
+   minimum row count, maximum null fraction (or "not entirely null" for mostly-null columns),
+   numeric ranges, non-empty text and allowed categories. It is inferred from known-good data (`primer-data profile --write-schemas`),
+   reviewed, and committed, so a change to the contract shows up in a pull request.
+   **Great Expectations** validates the data against it; any failure is an **error**. So is a
+   dataset that had rows and now has none, a dataset with no schema, or a dataset that could not be
+   read. The one exception is the top of a numeric range: growing sources (more Quick, Draw!
+   categories, a longer book upstream) legitimately exceed what was seen, so that is a warning.
 3. **Drift.** The new profile is compared with the previous one. Rows falling by over 5%, nulls up
-   by over 5 points, a numeric mean moving by over half a standard deviation, or category shares
-   moving by over 0.15 (total variation) is a **warning**.
+   by over 5 points, a numeric mean moving by over half a standard deviation (or at all, for a
+   column that was constant), mean text length changing by over 30%, category shares moving by
+   over 0.15 (total variation), or a column crossing between categorical and open-ended
+   (25 distinct values) is a **warning**.
 
 In Airflow, `check_data` runs this after every source: errors fail the run, warnings don't. Both are
 emailed (see `alerts.py` and `PRIMER_ALERT_EMAILS` in `.env.example`), as is any failed task.

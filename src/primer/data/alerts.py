@@ -57,33 +57,44 @@ class EmailConfig:
 
 
 def send_alert(subject: str, body: str, config: EmailConfig | None = None) -> bool:
-    """Email ``body`` to the alert recipients. Returns True if it was sent."""
-    config = config or EmailConfig.from_env()
+    """Email ``body`` to the alert recipients. Returns True if it was sent.
+
+    Never raises: bad settings (a non-numeric port, a newline in a header, a non-ASCII password)
+    and mail-server failures are logged together with the alert.
+    """
     subject = f"{SUBJECT_PREFIX} {subject}"
+    try:
+        config = config or EmailConfig.from_env()
+    except Exception:  # logged with the traceback: an alert must never fail the task
+        log.exception("Email alert settings are invalid. Alert: %s\n%s", subject, body)
+        return False
     if not config.enabled:
         log.warning("Email alerts are off (set PRIMER_ALERT_EMAILS and PRIMER_SMTP_USER). Alert: %s\n%s",
                     subject, body)
         return False
 
-    msg = EmailMessage()
-    msg["Subject"], msg["From"], msg["To"] = subject, config.sender, ", ".join(config.recipients)
-    msg.set_content(body)
     try:
+        msg = EmailMessage()
+        msg["Subject"], msg["From"], msg["To"] = subject, config.sender, ", ".join(config.recipients)
+        msg.set_content(body)
         if config.port == 465:
             server: smtplib.SMTP = smtplib.SMTP_SSL(config.host, config.port, timeout=30,
                                                     context=ssl.create_default_context())
         else:
             server = smtplib.SMTP(config.host, config.port, timeout=30)
-            server.starttls(context=ssl.create_default_context())
-        with server:
+        with server:  # entered before STARTTLS, so a failed handshake still closes the connection
+            if config.port != 465:
+                server.starttls(context=ssl.create_default_context())
             if config.user:
                 server.login(config.user, config.password)
-            server.send_message(msg)
-    except (OSError, smtplib.SMTPException) as e:
-        log.error("Could not send alert email via %s:%s (%r). Alert: %s\n%s",
-                  config.host, config.port, e, subject, body)
+            refused = server.send_message(msg)
+    except Exception:  # not just OSError/SMTPException: an alert must never fail the task
+        log.exception("Could not send alert email via %s:%s. Alert: %s\n%s",
+                      config.host, config.port, subject, body)
         return False
-    log.info("Alert emailed to %s: %s", ", ".join(config.recipients), subject)
+    if refused:
+        log.error("Alert email refused for %s: %s", ", ".join(refused), subject)
+    log.info("Alert emailed to %s: %s", ", ".join(r for r in config.recipients if r not in refused), subject)
     return True
 
 
@@ -95,10 +106,12 @@ def task_failure_body(context: dict[str, Any]) -> tuple[str, str]:
         f"Task:   {task}",
         f"Run:    {context.get('run_id')}",
         f"Try:    {getattr(ti, 'try_number', '?')}",
-        f"Error:  {context.get('exception')!r}",
     ]
     if url := getattr(ti, "log_url", None):
         lines.append(f"Logs:   {url}")
+    if (exc := context.get("exception")) is not None:
+        # str(), not repr(): a multi-line message (the anomaly list) must stay readable.
+        lines += ["", f"Error:  {type(exc).__name__}", "", str(exc)]
     return f"Task failed: {task}", "\n".join(lines)
 
 

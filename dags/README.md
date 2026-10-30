@@ -34,8 +34,10 @@ african_storybook  ingest → validate → preprocess ─┘
   with the previous profile. Schema **errors fail the run**; drift is a warning. Results go to
   `metadata/profiles/` and `metadata/anomalies/` (see the [data README](../src/primer/data/README.md#statistics-schema-and-anomalies)).
 - **Alerts:** any failed task emails `PRIMER_ALERT_EMAILS` with the task, run and error (schema
-  errors included); drift warnings are emailed by `check_data`. `summarize` only logs, since the
-  source task that failed has already sent its alert. Alerts are off until set in `.env`.
+  errors included); drift warnings are emailed by `check_data`. When `summarize` fails because a
+  source did, it only logs, since that source task has already sent its alert; when it fails on its
+  own (a store write, an unreadable file), it emails like any other task. Alerts are off until set
+  in `.env`.
 - `max_active_runs=1`: incremental sources keep a position, so two runs at once would race on it.
 
 Trigger parameters (the **Trigger** form in the UI):

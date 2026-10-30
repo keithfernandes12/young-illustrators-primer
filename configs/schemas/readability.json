@@ -1,34 +1,40 @@
 {
   "dataset": "readability",
   "min_rows": 2361,
-  "created_at": "2026-10-28T02:39:09.061153+00:00",
+  "created_at": "2026-10-30T00:35:28.215999+00:00",
   "columns": {
     "record_id": {
       "kind": "string",
-      "max_null_fraction": 0.0
+      "max_null_fraction": 0.0,
+      "min_length": 1
     },
     "source": {
       "kind": "string",
       "max_null_fraction": 0.0,
+      "min_length": 1,
       "allowed": [
         "clear_corpus"
       ]
     },
     "source_id": {
       "kind": "string",
-      "max_null_fraction": 0.0
+      "max_null_fraction": 0.0,
+      "min_length": 1
     },
     "title": {
       "kind": "string",
-      "max_null_fraction": 0.0
+      "max_null_fraction": 0.0,
+      "min_length": 1
     },
     "author": {
       "kind": "string",
-      "max_null_fraction": 0.0
+      "max_null_fraction": 0.0,
+      "min_length": 1
     },
     "text": {
       "kind": "string",
-      "max_null_fraction": 0.0
+      "max_null_fraction": 0.0,
+      "min_length": 1
     },
     "word_count": {
       "kind": "int",
@@ -39,24 +45,25 @@
     "sentence_count": {
       "kind": "int",
       "max_null_fraction": 0.0,
-      "min": 0.0,
+      "min": 0.9,
       "max": 42.8
     },
     "score": {
       "kind": "float",
       "max_null_fraction": 0.0,
-      "min": -4.215034,
-      "max": 2.250156
+      "min": -4.21504,
+      "max": 2.25016
     },
     "score_se": {
       "kind": "float",
       "max_null_fraction": 0.0,
       "min": 0.0,
-      "max": 0.714638
+      "max": 0.714639
     },
     "score_name": {
       "kind": "string",
       "max_null_fraction": 0.0,
+      "min_length": 1,
       "allowed": [
         "BT_easiness"
       ]
@@ -70,6 +77,7 @@
     "lexile_band": {
       "kind": "string",
       "max_null_fraction": 0.0,
+      "min_length": 1,
       "allowed": [
         "100",
         "1100",
@@ -91,6 +99,7 @@
     "category": {
       "kind": "string",
       "max_null_fraction": 0.0,
+      "min_length": 1,
       "allowed": [
         "Info",
         "Lit"
@@ -98,13 +107,14 @@
     },
     "pub_year": {
       "kind": "int",
-      "max_null_fraction": 0.0519,
+      "max_null_fraction": 0.05191,
       "min": 1698.8,
       "max": 2049.2
     },
     "excerpt_license": {
       "kind": "string",
-      "max_null_fraction": 0.7525,
+      "max_null_fraction": 0.7526,
+      "min_length": 1,
       "allowed": [
         "CC BY 3.0",
         "CC BY 4.0",
@@ -126,11 +136,13 @@
     },
     "text_hash": {
       "kind": "string",
-      "max_null_fraction": 0.0
+      "max_null_fraction": 0.0,
+      "min_length": 1
     },
     "license": {
       "kind": "string",
       "max_null_fraction": 0.0,
+      "min_length": 1,
       "allowed": [
         "CC-BY-NC-SA-4.0"
       ]
@@ -138,13 +150,15 @@
     "attribution": {
       "kind": "string",
       "max_null_fraction": 0.0,
+      "min_length": 1,
       "allowed": [
         "CLEAR Corpus, CommonLit & Georgia State University (Crossley et al., 2022)"
       ]
     },
     "batch_id": {
       "kind": "string",
-      "max_null_fraction": 0.0
+      "max_null_fraction": 0.0,
+      "min_length": 1
     },
     "ingested_at": {
       "kind": "datetime",

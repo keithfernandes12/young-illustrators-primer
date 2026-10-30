@@ -1,15 +1,17 @@
 {
   "dataset": "stories_text",
   "min_rows": 27321,
-  "created_at": "2026-10-28T02:39:01.080514+00:00",
+  "created_at": "2026-10-30T00:35:00.773362+00:00",
   "columns": {
     "record_id": {
       "kind": "string",
-      "max_null_fraction": 0.0
+      "max_null_fraction": 0.0,
+      "min_length": 1
     },
     "source": {
       "kind": "string",
       "max_null_fraction": 0.0,
+      "min_length": 1,
       "allowed": [
         "african_storybook",
         "storyweaver",
@@ -18,35 +20,41 @@
     },
     "source_id": {
       "kind": "string",
-      "max_null_fraction": 0.0
+      "max_null_fraction": 0.0,
+      "min_length": 1
     },
     "title": {
       "kind": "string",
-      "max_null_fraction": 1.0
+      "max_null_fraction": 1.0,
+      "not_all_null": true,
+      "min_length": 1
     },
     "text": {
       "kind": "string",
-      "max_null_fraction": 0.0
+      "max_null_fraction": 0.0,
+      "min_length": 1
     },
     "word_count": {
       "kind": "int",
       "max_null_fraction": 0.0,
-      "min": 0.0,
+      "min": 1.0,
       "max": 4180.7
     },
     "sentence_count": {
       "kind": "int",
       "max_null_fraction": 0.0,
-      "min": 0.0,
+      "min": 0.9,
       "max": 380.5
     },
     "text_hash": {
       "kind": "string",
-      "max_null_fraction": 0.0
+      "max_null_fraction": 0.0,
+      "min_length": 1
     },
     "language": {
       "kind": "string",
       "max_null_fraction": 0.0,
+      "min_length": 1,
       "allowed": [
         "en"
       ]
@@ -54,6 +62,7 @@
     "license": {
       "kind": "string",
       "max_null_fraction": 0.0,
+      "min_length": 1,
       "allowed": [
         "CC BY-NC-SA",
         "CC-BY",
@@ -64,11 +73,13 @@
     },
     "attribution": {
       "kind": "string",
-      "max_null_fraction": 0.0
+      "max_null_fraction": 0.0,
+      "min_length": 1
     },
     "batch_id": {
       "kind": "string",
-      "max_null_fraction": 0.0
+      "max_null_fraction": 0.0,
+      "min_length": 1
     },
     "ingested_at": {
       "kind": "datetime",

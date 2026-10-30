@@ -48,11 +48,19 @@ log = logging.getLogger(__name__)
 DEFAULT_SOURCES = list(orchestration.PIPELINE_SOURCES)
 
 
-def log_failure(context) -> None:
-    """Log a failed task without emailing: for tasks that fail only because another one did."""
-    ti = context["ti"]
-    log.error("Task failed: dag=%s task=%s run=%s try=%s error=%r", ti.dag_id, ti.task_id,
-              context.get("run_id"), ti.try_number, context.get("exception"))
+class SourcesFailed(AirflowFailException):
+    """``summarize`` failing the run because a source did; that source has already been emailed."""
+
+
+def summarize_failure(context) -> None:
+    """``summarize``'s failure callback: only log when it failed because a source did (no second
+    email), but email when summarize itself broke (a store write, an unreadable parquet file)."""
+    if isinstance(context.get("exception"), SourcesFailed):
+        ti = context["ti"]
+        log.error("Task failed: dag=%s task=%s run=%s try=%s error=%s", ti.dag_id, ti.task_id,
+                  context.get("run_id"), ti.try_number, context.get("exception"))
+    else:
+        alerts.notify_task_failure(context)
 
 
 @dag(
@@ -113,8 +121,8 @@ def primer_data_pipeline():
         groups.append(source_group())
 
     # Always runs, so every run leaves a report; then fails the run if any source failed.
-    # The failed source task has already sent its alert, so this one only logs.
-    @task(trigger_rule="all_done", on_failure_callback=log_failure)
+    # The failed source task has already sent its alert, so that failure only logs (summarize_failure).
+    @task(trigger_rule="all_done", on_failure_callback=summarize_failure)
     def summarize() -> dict:
         context = get_current_context()
         ti, run_id = context["ti"], context["run_id"]
@@ -122,7 +130,7 @@ def primer_data_pipeline():
         report = orchestration.summarize(run_id, orchestration.source_outcomes(states))
         if report["failed"]:
             failed = ", ".join(f"{k} ({report['sources'][k]['stage'] or 'upstream'})" for k in report["failed"])
-            raise AirflowFailException(f"Sources failed: {failed}. Report: {report['report_uri']}")
+            raise SourcesFailed(f"Sources failed: {failed}. Report: {report['report_uri']}")
         return report
 
     # Profiles and validates whatever data exists, even after a source failed; schema errors fail the run.
@@ -130,7 +138,7 @@ def primer_data_pipeline():
     def check_data() -> dict:
         report = orchestration.check_data(get_current_context()["run_id"])
         if report["errors"]:
-            raise AirflowFailException(f"{report['errors']} schema errors in the data. "
+            raise AirflowFailException(f"{report['errors']} data-check errors. "
                                        f"Report: {report.get('report_uri')}\n\n{report['summary']}")
         return {k: report[k] for k in ("errors", "warnings", "datasets")}
 

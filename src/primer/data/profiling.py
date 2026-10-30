@@ -5,13 +5,17 @@ For every processed dataset, after each pipeline run:
 1. **Statistics** (``profile_frame``): rows, and per column its type, null fraction and either
    numeric statistics, text lengths, or the most common values. Saved to
    ``metadata/profiles/<dataset>/<run_id>.json``, so there is a history over time.
-2. **Schema** (``infer_schema``): the expected columns, types, null limits, value ranges and
-   allowed values, inferred once from good data with ``primer-data profile --write-schemas`` and
-   then reviewed and committed in ``configs/schemas/<dataset>.json`` (like a TFDV schema).
+2. **Schema** (``infer_schema``): the expected columns, types, null limits, value ranges, minimum
+   text lengths and allowed values, inferred once from good data with
+   ``primer-data profile --write-schemas`` and then reviewed and committed in
+   ``configs/schemas/<dataset>.json`` (like a TFDV schema).
 3. **Validation** (``validate``): the schema becomes a Great Expectations suite, run on the
-   current data. A failed expectation is an **error**: the data broke its contract.
+   current data. A failed expectation is an **error**: the data broke its contract. The top of a
+   numeric range is the exception (``range_warnings``): growing sources legitimately go past what
+   was seen when the schema was inferred, so exceeding it is a **warning**.
 4. **Drift** (``drift``): the new profile is compared with the previous one; a large drop in rows,
-   a jump in nulls, a shift in a numeric mean, or a change in category shares is a **warning**.
+   a jump in nulls, a shift in a numeric mean or a text length, a change in category shares, or a
+   column crossing between categorical and open-ended is a **warning**.
 
 ``check_datasets`` runs all four and returns the anomalies. The Airflow DAG fails the run on
 errors and emails the anomalies (see ``alerts.py``).
@@ -21,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -50,10 +55,26 @@ TOP_VALUES = 10
 ROW_DROP = 0.05              # rows fell by more than 5%
 NULL_JUMP = 0.05             # null fraction rose by more than 5 points
 MEAN_SHIFT_SD = 0.5          # numeric mean moved by more than half a standard deviation
+LENGTH_SHIFT = 0.3           # mean text length changed by more than 30%
 SHARE_SHIFT = 0.15           # total variation distance between category shares
 
 
 # ------------------------------------------------------------------ statistics
+
+def _sig(x: float, digits: int = 6, direction: str = "nearest") -> float:
+    """Round to significant figures rather than decimal places, so tiny values (one null in millions
+    of rows, a probability column) don't collapse to 0. "down"/"up" round outward, for bounds that
+    must still contain the value they were inferred from."""
+    if abs(x) < 1e-300 or not math.isfinite(x):   # 10 ** 300+ would overflow
+        return float(x)
+    scale = 10.0 ** (digits - 1 - math.floor(math.log10(abs(x))))
+    scaled = round(x * scale, 6)   # drop float noise first, so 0.15 doesn't ceil to 0.1501
+    if direction == "down":
+        return math.floor(scaled) / scale
+    if direction == "up":
+        return math.ceil(scaled) / scale
+    return round(scaled) / scale
+
 
 def _kind(series: pd.Series) -> str:
     if pd.api.types.is_bool_dtype(series):
@@ -69,7 +90,9 @@ def _kind(series: pd.Series) -> str:
 
 def profile_column(series: pd.Series) -> dict[str, Any]:
     kind = _kind(series)
-    out: dict[str, Any] = {"kind": kind, "null_fraction": round(float(series.isna().mean()), 6)}
+    nf = float(series.isna().mean())
+    # Round toward 0.5, so only exactly none or exactly all null reads as 0 or 1.
+    out: dict[str, Any] = {"kind": kind, "null_fraction": _sig(nf, direction="down" if nf > 0.5 else "up")}
     values = series.dropna()
     if values.empty:
         return out
@@ -84,7 +107,8 @@ def profile_column(series: pd.Series) -> dict[str, Any]:
         out.update(min=str(values.min()), max=str(values.max()))
     else:
         lengths = values.astype(str).str.len()
-        out.update(mean_length=float(lengths.mean()), max_length=int(lengths.max()))
+        out.update(mean_length=float(lengths.mean()), min_length=int(lengths.min()),
+                   max_length=int(lengths.max()))
         if out["mean_length"] <= LONG_TEXT:
             counts = values.astype(str).value_counts()
             out["distinct"] = int(counts.size)
@@ -105,21 +129,47 @@ def profile_frame(df: pd.DataFrame) -> dict[str, Any]:
 def infer_schema(dataset: str, profile: dict[str, Any], min_rows_fraction: float = 0.5) -> dict[str, Any]:
     """Expected contract for a dataset, inferred from one good profile. Review before committing.
 
-    Numeric ranges are the observed range widened by 10% on each side; categorical columns get
-    their observed values as the allowed set (unless the values are too rare to be real
-    categories, like a handful of translator names); ``min_rows`` guards against a dataset shrinking.
+    Numeric ranges are the observed range widened by 10% on each side, except that a non-negative
+    column never gets a negative floor, and gets a floor of 0 only if 0 was observed (so a count
+    collapsing to zero is caught). Text columns that were never empty must stay non-empty.
+    Categorical columns get their observed values as the allowed set (unless the values are too
+    rare to be real categories, like a handful of translator names); ``min_rows`` guards against a
+    dataset shrinking.
+
+    Null limits are the observed fraction plus 5 points. A column too null for that is marked
+    ``not_all_null`` (it must keep at least one value), and one that was entirely null is marked
+    ``nulls_unconstrained``, so "may be all null" is a visible decision, never a side effect.
     """
     columns: dict[str, Any] = {}
     for name, col in profile["columns"].items():
         spec: dict[str, Any] = {"kind": col["kind"]}
-        spec["max_null_fraction"] = 0.0 if col["null_fraction"] == 0 else round(min(1.0, col["null_fraction"] + 0.05), 4)
+        nf = col["null_fraction"]
+        limit = _sig(nf + 0.05, 4, "up")   # 5 points of headroom
+        if nf == 0:
+            spec["max_null_fraction"] = 0.0
+        elif limit < 1:
+            spec["max_null_fraction"] = limit
+        elif nf < 1:
+            # Mostly null, e.g. titles in stories_text, where TinyStories (no titles) grows every run:
+            # any fraction would eventually fail on good data, so only "entirely null" is an error.
+            spec["max_null_fraction"] = 1.0
+            spec["not_all_null"] = True
+        else:
+            spec["max_null_fraction"] = 1.0
+            spec["nulls_unconstrained"] = True
         if col["kind"] in ("int", "float") and "min" in col:
             pad = 0.1 * (col["max"] - col["min"]) or abs(col["max"]) * 0.1 or 1.0
             low = col["min"] - pad
-            if col["min"] >= 0:
-                low = max(0.0, low)  # counts and lengths can't go negative
-            spec["min"], spec["max"] = round(low, 6), round(col["max"] + pad, 6)
-        non_null = profile["rows"] * (1 - col["null_fraction"])
+            if col["min"] >= 0 and low < 0:
+                # Counts and lengths can't go negative, and 0 is allowed only if it was seen. Any
+                # value from 1 up stays valid: growing sources bring smaller counts than seen so far.
+                low = min(col["min"] * 0.9, 1.0)
+            spec["min"], spec["max"] = _sig(low, direction="down"), _sig(col["max"] + pad, direction="up")
+        if col["kind"] == "string" and col.get("min_length", 0) >= 1:
+            # Not empty; not "as long as before", since new books bring shorter pages. Truncated text
+            # is drift (length_shift), not a contract break.
+            spec["min_length"] = 1
+        non_null = profile["rows"] * (1 - nf)
         if "shares" in col and name not in OPEN_COLUMNS and non_null >= MIN_PER_CATEGORY * len(col["shares"]):
             spec["allowed"] = sorted(col["shares"])
         columns[name] = spec
@@ -154,10 +204,16 @@ def build_suite(schema: dict[str, Any]):
     for name, spec in cols.items():
         if spec["max_null_fraction"] < 1.0:
             suite.add_expectation(gx.expectations.ExpectColumnValuesToNotBeNull(
-                column=name, mostly=round(1.0 - spec["max_null_fraction"], 6)))
+                column=name, mostly=_sig(1.0 - spec["max_null_fraction"], direction="down")))
+        elif spec.get("not_all_null"):
+            # mostly > 0: passes with a single value in any realistic table, fails only when all null
+            suite.add_expectation(gx.expectations.ExpectColumnValuesToNotBeNull(column=name, mostly=1e-9))
         if "min" in spec:
-            suite.add_expectation(gx.expectations.ExpectColumnValuesToBeBetween(
-                column=name, min_value=spec["min"], max_value=spec["max"]))
+            # Only the floor is a contract; going above "max" is a warning (see range_warnings).
+            suite.add_expectation(gx.expectations.ExpectColumnValuesToBeBetween(column=name, min_value=spec["min"]))
+        if "min_length" in spec:
+            suite.add_expectation(gx.expectations.ExpectColumnValueLengthsToBeBetween(
+                column=name, min_value=spec["min_length"]))
         if "allowed" in spec:
             suite.add_expectation(gx.expectations.ExpectColumnValuesToBeInSet(column=name, value_set=spec["allowed"]))
     return suite
@@ -185,8 +241,8 @@ def gx_context():
     try:
         from great_expectations.data_context.types.base import ProgressBarsConfig
         context.variables.progress_bars = ProgressBarsConfig(globally=False)
-    except Exception:  # noqa: BLE001, S110 - cosmetic only
-        pass
+    except Exception:  # cosmetic only: progress bars stay on
+        log.debug("Could not turn off Great Expectations progress bars", exc_info=True)
     context.data_sources.add_pandas("primer")
     return context
 
@@ -221,6 +277,22 @@ def validate(df: pd.DataFrame, schema: dict[str, Any], context=None) -> list[Ano
     return anomalies
 
 
+def range_warnings(schema: dict[str, Any], profile: dict[str, Any]) -> list[Anomaly]:
+    """Warnings for numeric columns now above the schema's ``max``.
+
+    The maximum is inferred from the data seen so far, and both incremental sources (more Quick,
+    Draw! categories) and snapshot sources (a longer book upstream) legitimately exceed it, so this
+    is drift, not a broken contract.
+    """
+    out: list[Anomaly] = []
+    for name, spec in schema["columns"].items():
+        col = profile["columns"].get(name, {})
+        if "max" in spec and "max" in col and col["max"] > spec["max"]:
+            out.append(Anomaly(schema["dataset"], "warning", "above_range", name,
+                               f"max {col['max']:.6g} is above the schema's {spec['max']:.6g}"))
+    return out
+
+
 def drift(dataset: str, previous: dict[str, Any], current: dict[str, Any]) -> list[Anomaly]:
     """Warnings for large changes between two profiles of the same dataset."""
     out: list[Anomaly] = []
@@ -234,12 +306,26 @@ def drift(dataset: str, previous: dict[str, Any], current: dict[str, Any]) -> li
         if cur["null_fraction"] - prev["null_fraction"] > NULL_JUMP:
             out.append(Anomaly(dataset, "warning", "null_jump", name,
                                f"nulls {prev['null_fraction']:.1%} → {cur['null_fraction']:.1%}"))
-        if "mean" in cur and "mean" in prev:
-            sd = prev.get("std") or 0.0
+        if "mean" in cur and "mean" in prev and prev.get("std") is not None:
+            sd = prev["std"]
             shift = abs(cur["mean"] - prev["mean"])
             if sd > 0 and shift > MEAN_SHIFT_SD * sd:
                 out.append(Anomaly(dataset, "warning", "mean_shift", name,
                                    f"mean {prev['mean']:.3g} → {cur['mean']:.3g} ({shift / sd:.2f} sd)"))
+            elif sd == 0 and not math.isclose(cur["mean"], prev["mean"], rel_tol=1e-9, abs_tol=1e-12):
+                out.append(Anomaly(dataset, "warning", "mean_shift", name,
+                                   f"mean {prev['mean']:.3g} → {cur['mean']:.3g} (was constant)"))
+        if "mean_length" in cur and "mean_length" in prev and prev["mean_length"] > 0:
+            change = cur["mean_length"] / prev["mean_length"] - 1
+            if abs(change) > LENGTH_SHIFT:
+                out.append(Anomaly(dataset, "warning", "length_shift", name,
+                                   f"mean length {prev['mean_length']:.4g} → {cur['mean_length']:.4g} "
+                                   f"({change:+.0%})"))
+        if (name not in OPEN_COLUMNS and "distinct" in cur and "distinct" in prev
+                and ("shares" in cur) != ("shares" in prev)):
+            # Crossed CATEGORICAL_MAX either way: shares can't be compared, but the jump is the news.
+            out.append(Anomaly(dataset, "warning", "cardinality_shift", name,
+                               f"distinct values {prev['distinct']:,} → {cur['distinct']:,}"))
         if "shares" in cur and "shares" in prev:
             keys = set(cur["shares"]) | set(prev["shares"])
             tvd = 0.5 * sum(abs(cur["shares"].get(k, 0.0) - prev["shares"].get(k, 0.0)) for k in keys)
@@ -256,11 +342,54 @@ def _safe(run_id: str) -> str:
 
 
 def previous_profile(store: Store, dataset: str, exclude: str | None = None) -> dict[str, Any] | None:
-    paths = [p for p in store.glob(f"{PROFILES_DIR}/{dataset}/*.json") if p != exclude]
-    if not paths:
-        return None
-    profiles = [store.read_json(p) for p in paths]
-    return max(profiles, key=lambda p: p.get("created_at", ""))
+    profiles = []
+    for path in store.glob(f"{PROFILES_DIR}/{dataset}/*.json"):
+        if path == exclude:
+            continue
+        try:
+            profile = store.read_json(path)
+        except ValueError:  # truncated by an interrupted write; must not break every later run
+            log.warning("Ignoring unreadable profile %s", path)
+            continue
+        if isinstance(profile, dict):
+            profiles.append(profile)
+    return max(profiles, key=lambda p: p.get("created_at", "")) if profiles else None
+
+
+def _check_dataset(store: Store, dataset: str, run_id: str, created_at: str, save: bool,
+                   schemas_dir: Path, context) -> tuple[dict[str, Any] | None, list[Anomaly], Any]:
+    """Profile, validate and drift-check one dataset.
+
+    Returns its profile (None if it has no rows and was never profiled, e.g. a source not yet run
+    in this data root), its anomalies, and the GX context, created on first use.
+    """
+    df = read_dataset(dataset, store)
+    out_path = f"{PROFILES_DIR}/{dataset}/{_safe(run_id)}.json"
+    prev = previous_profile(store, dataset, exclude=out_path)
+    if df.empty:
+        if not prev:
+            return None, [], context
+        # Not saved as a profile, so the last good one stays the baseline and every empty run errors.
+        return ({"rows": 0, "compared_with": prev.get("run_id")},
+                [Anomaly(dataset, "error", "empty_dataset", None,
+                         f"no rows; the last check with data ({prev.get('run_id')}) had {prev.get('rows', 0):,}")],
+                context)
+    log.info("Checking %s (%s rows)", dataset, f"{len(df):,}")
+    profile = {"dataset": dataset, "run_id": run_id, "created_at": created_at, **profile_frame(df)}
+    schema = load_schema(dataset, schemas_dir)
+    anomalies: list[Anomaly] = []
+    if schema is None:
+        anomalies.append(Anomaly(dataset, "error", "no_schema", None,
+                                 f"no configs/schemas/{dataset}.json, so nothing was validated; "
+                                 "run `primer-data profile --write-schemas` and commit it"))
+    else:
+        context = context or gx_context()
+        anomalies += validate(df, schema, context) + range_warnings(schema, profile)
+    if prev:
+        anomalies += drift(dataset, prev, profile)
+    if save:
+        store.write_json(out_path, profile)
+    return {**profile, "compared_with": prev.get("run_id") if prev else None}, anomalies, context
 
 
 def check_datasets(store: Store | None = None, run_id: str | None = None, save: bool = True,
@@ -273,26 +402,19 @@ def check_datasets(store: Store | None = None, run_id: str | None = None, save: 
                               "data_uri": store.uri, "datasets": {}, "anomalies": []}
     context = None
     for dataset in datasets:
-        df = read_dataset(dataset, store)
-        if df.empty:
+        profile: dict[str, Any] | None
+        try:
+            profile, anomalies, context = _check_dataset(store, dataset, run_id, report["created_at"], save,
+                                                         schemas_dir, context)
+        except Exception as e:  # e.g. a corrupt parquet file: report it, check the rest, write the report
+            log.exception("Checking %s failed", dataset)
+            profile = {"rows": 0, "compared_with": None}
+            anomalies = [Anomaly(dataset, "error", "check_failed", None, f"{type(e).__name__}: {e}")]
+        if profile is None:
             continue
-        log.info("Checking %s (%s rows)", dataset, f"{len(df):,}")
-        profile = {"dataset": dataset, "run_id": run_id, "created_at": report["created_at"], **profile_frame(df)}
-        out_path = f"{PROFILES_DIR}/{dataset}/{_safe(run_id)}.json"
-        prev = previous_profile(store, dataset, exclude=out_path)
-        schema = load_schema(dataset, schemas_dir)
-        if schema and context is None:
-            context = gx_context()
-        anomalies = validate(df, schema, context) if schema else [
-            Anomaly(dataset, "warning", "no_schema", None,
-                    f"no configs/schemas/{dataset}.json yet; run `primer-data profile --write-schemas`")]
-        if prev:
-            anomalies += drift(dataset, prev, profile)
-        if save:
-            store.write_json(out_path, profile)
         report["datasets"][dataset] = {"rows": profile["rows"], "errors": sum(a.severity == "error" for a in anomalies),
                                        "warnings": sum(a.severity == "warning" for a in anomalies),
-                                       "compared_with": prev.get("run_id") if prev else None}
+                                       "compared_with": profile["compared_with"]}
         report["anomalies"] += [asdict(a) for a in anomalies]
         log.info("%-16s %10s rows, %d errors, %d warnings", dataset, f"{profile['rows']:,}",
                  report["datasets"][dataset]["errors"], report["datasets"][dataset]["warnings"])
