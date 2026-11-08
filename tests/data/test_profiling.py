@@ -44,6 +44,17 @@ def test_infer_schema_ranges_nulls_and_allowed_values():
     assert cols["text"]["max_null_fraction"] == 0.0
     assert cols["pub_year"]["max_null_fraction"] == pytest.approx(0.15)
     assert cols["text"]["min_length"] >= 1 and "min_length" not in cols["word_count"]
+
+
+def test_credit_columns_may_be_empty():
+    # The storybook source keeps an untitled book as title "" and an empty credit as "".
+    df = frame()
+    df = df.assign(title=[f"Book {i}" for i in range(len(df))], illustrator=[f"Artist {i}" for i in range(len(df))])
+    schema = profiling.infer_schema("t", profiling.profile_frame(df))
+    assert "min_length" not in schema["columns"]["title"]
+    assert "min_length" not in schema["columns"]["illustrator"]
+    df.loc[0, ["title", "illustrator"]] = ""
+    assert profiling.validate(df, schema) == []
     assert schema["min_rows"] == 100
 
 
@@ -141,6 +152,18 @@ def test_going_above_the_inferred_max_is_a_warning_not_an_error(schema, context)
     assert profiling.validate(df, schema, context) == []
     [warning] = profiling.range_warnings(schema, profiling.profile_frame(df))
     assert (warning.severity, warning.check, warning.column) == ("warning", "above_range", "word_count")
+
+
+def test_above_range_warns_once_per_new_high_not_every_run(schema):
+    high = frame()
+    high.loc[0, "word_count"] = 100_000
+    first = profiling.profile_frame(high)
+    assert len(profiling.range_warnings(schema, first)) == 1                 # first time above max
+    assert profiling.range_warnings(schema, first, previous=first) == []      # same data next run
+    higher = high.copy()
+    higher.loc[1, "word_count"] = 200_000
+    [again] = profiling.range_warnings(schema, profiling.profile_frame(higher), previous=first)
+    assert again.column == "word_count"                                       # a new high warns again
 
 
 # ------------------------------------------------------------------ drift
@@ -280,5 +303,7 @@ def test_committed_schema_matches_the_parquet_schema(dataset):
         # "may be all null" must be an explicit decision, not a side effect of the headroom
         explicit = spec.get("nulls_unconstrained") or spec.get("not_all_null")
         assert (spec["max_null_fraction"] >= 1.0) == bool(explicit), (dataset, name)
+    for name in profiling.CREDIT_COLUMNS & set(committed["columns"]):
+        assert "min_length" not in committed["columns"][name], (dataset, name)
     if dataset == "storybook_pages":
         assert committed["columns"]["page_number"]["min"] > 0      # 1-based (schemas.py), so 0 must fail

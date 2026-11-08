@@ -48,6 +48,9 @@ ANOMALIES_DIR = "metadata/anomalies"
 CATEGORICAL_MAX = 25         # a text column with at most this many distinct values is categorical
 MIN_PER_CATEGORY = 20        # ...and gets an allowed set only if each value appears this often on average
 OPEN_COLUMNS = {"batch_id", "translator"}  # new batches and new names arrive with every ingest
+# Free-text credits a source may legitimately leave empty: a book with no "# " title line, an
+# empty "* Illustration: []" credit, an empty caption cell. Empty there is not missing content.
+CREDIT_COLUMNS = {"title", "author", "illustrator", "translator", "image_caption"}
 LONG_TEXT = 200              # mean length above this: skip distinct counting (stories, strokes)
 TOP_VALUES = 10
 
@@ -165,7 +168,7 @@ def infer_schema(dataset: str, profile: dict[str, Any], min_rows_fraction: float
                 # value from 1 up stays valid: growing sources bring smaller counts than seen so far.
                 low = min(col["min"] * 0.9, 1.0)
             spec["min"], spec["max"] = _sig(low, direction="down"), _sig(col["max"] + pad, direction="up")
-        if col["kind"] == "string" and col.get("min_length", 0) >= 1:
+        if col["kind"] == "string" and col.get("min_length", 0) >= 1 and name not in CREDIT_COLUMNS:
             # Not empty; not "as long as before", since new books bring shorter pages. Truncated text
             # is drift (length_shift), not a contract break.
             spec["min_length"] = 1
@@ -277,17 +280,23 @@ def validate(df: pd.DataFrame, schema: dict[str, Any], context=None) -> list[Ano
     return anomalies
 
 
-def range_warnings(schema: dict[str, Any], profile: dict[str, Any]) -> list[Anomaly]:
-    """Warnings for numeric columns now above the schema's ``max``.
+def range_warnings(schema: dict[str, Any], profile: dict[str, Any],
+                   previous: dict[str, Any] | None = None) -> list[Anomaly]:
+    """Warnings for numeric columns reaching a new high above the schema's ``max``.
 
     The maximum is inferred from the data seen so far, and both incremental sources (more Quick,
     Draw! categories) and snapshot sources (a longer book upstream) legitimately exceed it, so this
-    is drift, not a broken contract.
+    is drift, not a broken contract. It warns once per new high, not on every run until the schema
+    is regenerated: a value already above ``max`` in the previous profile was already reported.
     """
     out: list[Anomaly] = []
+    prev_cols = (previous or {}).get("columns", {})
     for name, spec in schema["columns"].items():
         col = profile["columns"].get(name, {})
-        if "max" in spec and "max" in col and col["max"] > spec["max"]:
+        if "max" not in spec or "max" not in col:
+            continue
+        ceiling = max(spec["max"], prev_cols.get(name, {}).get("max", spec["max"]))
+        if col["max"] > ceiling:
             out.append(Anomaly(schema["dataset"], "warning", "above_range", name,
                                f"max {col['max']:.6g} is above the schema's {spec['max']:.6g}"))
     return out
@@ -384,7 +393,7 @@ def _check_dataset(store: Store, dataset: str, run_id: str, created_at: str, sav
                                  "run `primer-data profile --write-schemas` and commit it"))
     else:
         context = context or gx_context()
-        anomalies += validate(df, schema, context) + range_warnings(schema, profile)
+        anomalies += validate(df, schema, context) + range_warnings(schema, profile, prev)
     if prev:
         anomalies += drift(dataset, prev, profile)
     if save:
