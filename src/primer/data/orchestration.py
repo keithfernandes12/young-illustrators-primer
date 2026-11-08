@@ -11,7 +11,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from primer.data import pipeline
+from primer.data import alerts, pipeline
 from primer.data.catalog import DATASETS, dataset_files
 from primer.data.config import load_sources
 from primer.data.sources import SOURCES, get_source
@@ -105,6 +105,24 @@ def summarize(run_id: str, outcomes: dict[str, dict[str, str | None]] | None = N
     for key, outcome in outcomes.items():
         log.info("%-18s %s%s", key, outcome["status"], f" at {outcome['stage']}" if outcome["stage"] else "")
     report["report_uri"] = store.url(f"{REPORTS_DIR}/{safe_id}.json")
+    return report
+
+
+def check_data(run_id: str, store: Store | None = None) -> dict[str, Any]:
+    """Statistics, schema validation and drift for every dataset; saves profiles and the anomaly report.
+
+    Drift-only results (warnings, no errors) are emailed from here. Schema errors are left to the
+    caller to fail the task, so the failure alert carries them (``report["summary"]``).
+    """
+    from primer.data import profiling  # Great Expectations loads only for this task
+
+    store = store or Store()
+    log.info("Checking datasets in %s", store.uri)
+    report = profiling.check_datasets(store, run_id=run_id, save=True)
+    report["summary"] = profiling.format_anomalies(report)
+    log.info("%s", report["summary"])
+    if report["warnings"] and not report["errors"]:
+        alerts.send_alert(f"Data drift: {report['warnings']} warnings", report["summary"])
     return report
 
 

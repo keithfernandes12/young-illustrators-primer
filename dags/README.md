@@ -12,7 +12,7 @@ which is tested without Airflow (`tests/data/test_orchestration.py`).
 tinystories        ingest → validate → preprocess ─┐
 quickdraw          ingest → validate → preprocess ─┤
 clear_corpus       ingest → validate → preprocess ─┤
-sight_words        ingest → validate → preprocess ─┼──→ summarize
+sight_words        ingest → validate → preprocess ─┼──→ summarize, check_data
 kuperman_aoa       ingest → validate → preprocess ─┤
 storyweaver        ingest → validate → preprocess ─┤
 african_storybook  ingest → validate → preprocess ─┘
@@ -29,6 +29,15 @@ african_storybook  ingest → validate → preprocess ─┘
   (`success`, `skipped`, or `failed` with the stage) and row counts per dataset and source in
   `metadata/reports/<run_id>.json`, then **fails the run** if any source failed, naming which ones.
   So a partial run is red but still leaves a report of what landed.
+- **check_data** also runs once every source has finished. It profiles each processed dataset,
+  validates it against `configs/schemas/<dataset>.json` with Great Expectations, and compares it
+  with the previous profile. Schema **errors fail the run**; drift is a warning. Results go to
+  `metadata/profiles/` and `metadata/anomalies/` (see the [data README](../src/primer/data/README.md#statistics-schema-and-anomalies)).
+- **Alerts:** any failed task emails `PRIMER_ALERT_EMAILS` with the task, run and error (schema
+  errors included); drift warnings are emailed by `check_data`. When `summarize` fails because a
+  source did, it only logs, since that source task has already sent its alert; when it fails on its
+  own (a store write, an unreadable file), it emails like any other task. Alerts are off until set
+  in `.env`.
 - `max_active_runs=1`: incremental sources keep a position, so two runs at once would race on it.
 
 Trigger parameters (the **Trigger** form in the UI):
@@ -91,7 +100,7 @@ docker compose -f docker-compose.yaml -f docker-compose.gcs.yaml up -d
 | `docker-compose.yaml` | Postgres, API server (UI), scheduler (runs the tasks: LocalExecutor), DAG processor, one-off init |
 | `docker-compose.gcs.yaml` | Override: point the scheduler at the bucket and mount your credentials |
 | `infra/airflow/Dockerfile` | `apache/airflow:3.3.2-python3.12` plus the `primer` package (editable) |
-| `.env.example` | Container user and login; copy to `.env` |
+| `.env.example` | Container user and login, alert email settings; copy to `.env` |
 
 `dags/`, `src/` and `configs/` are mounted into the containers, so edits apply without rebuilding.
 Rebuild (`docker compose build`) only after changing dependencies in `pyproject.toml`.

@@ -20,7 +20,7 @@ from datetime import datetime
 
 from airflow.sdk import Param, dag, get_current_context, task
 
-from primer.data import orchestration
+from primer.data import alerts, orchestration
 
 
 @dag(
@@ -32,7 +32,7 @@ from primer.data import orchestration
     max_active_runs=1,
     tags=["primer", "data", "versioning"],
     doc_md=__doc__,
-    default_args={"owner": "data-engineering", "retries": 0},
+    default_args={"owner": "data-engineering", "retries": 0, "on_failure_callback": alerts.notify_task_failure},
     params={
         "tag": Param(type="string", pattern=r"^v[0-9]+(\.[0-9]+)*$", description="Version name, e.g. v1"),
         "message": Param("", type="string", description="What this version contains"),

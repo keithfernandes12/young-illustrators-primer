@@ -70,6 +70,44 @@ def test_summarize_counts_rows_and_saves_report(fake_tinystories):
     assert saved == ["metadata/reports/manual__2026-10-26T00_00_00_00_00.json"]
 
 
+def test_check_data_emails_drift_only_when_there_are_no_errors(store, tmp_path, monkeypatch):
+    import numpy as np
+    import pandas as pd
+
+    from primer.data import alerts, profiling
+
+    def frame(seed, shift=0.0, source="clear_corpus"):
+        rng = np.random.default_rng(seed)
+        return pd.DataFrame({"score": rng.normal(-1.0 + shift, 0.5, 200),
+                             "source": pd.array([source] * 200, dtype="string")})
+
+    def write(df, batch):   # clear_corpus is a snapshot source: the newest batch replaces the others
+        store.write_parquet(f"processed/readability/source=clear_corpus/batch={batch}.parquet", df)
+
+    schemas = tmp_path / "schemas"
+    real_check = profiling.check_datasets
+    monkeypatch.setattr(profiling, "check_datasets", lambda store, **kw: real_check(
+        store, schemas_dir=schemas, datasets=("readability",), **kw))
+    emails = []
+    monkeypatch.setattr(alerts, "send_alert", lambda subject, body: emails.append((subject, body)))
+
+    write(frame(0), "20261001T000000Z")
+    profiling.write_schemas(store, schemas_dir=schemas, datasets=("readability",))
+    clean = orchestration.check_data("run1", store=store)
+    assert (clean["errors"], clean["warnings"], emails) == (0, 0, [])
+
+    write(frame(1, shift=2.0), "20261002T000000Z")            # mean moves 4 sd: drift, contract holds
+    drifted = orchestration.check_data("run2", store=store)
+    assert drifted["errors"] == 0 and drifted["warnings"] > 0
+    [(subject, body)] = emails
+    assert subject == f"Data drift: {drifted['warnings']} warnings" and body == drifted["summary"]
+
+    write(frame(2, source="mystery"), "20261003T000000Z")     # breaks the allowed set: an error
+    broken = orchestration.check_data("run3", store=store)
+    assert broken["errors"] > 0 and len(emails) == 1           # the failing task's alert carries it
+    assert "ERROR readability [source]" in broken["summary"]
+
+
 def test_freeze_version(fake_tinystories):
     batch = orchestration.ingest("tinystories", batch_size=4)
     orchestration.validate("tinystories", batch)

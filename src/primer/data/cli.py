@@ -8,6 +8,9 @@
     primer-data version v1 -m "notes"        freeze all processed datasets as version v1
     primer-data versions                     list dataset versions
     primer-data dvc-pointers                 refresh data/*.dvc to the current object versions
+    primer-data profile                      statistics + schema validation + drift (reads only)
+    primer-data profile --write-schemas      infer configs/schemas/*.json from the current data
+    primer-data test-alert                   send a test alert email (PRIMER_ALERT_EMAILS in .env)
     primer-data bias-report                  slice the datasets for bias; write reports/bias/ (reads only)
 
 Data goes to PRIMER_DATA_URI (default gs://young-illustrators-primer-data);
@@ -46,6 +49,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-dvc", action="store_true", help="Skip refreshing the data/*.dvc pointer files")
     sub.add_parser("versions", help="List dataset versions")
     sub.add_parser("dvc-pointers", help="Refresh data/*.dvc to the current object versions (no download)")
+    p = sub.add_parser("profile", help="Statistics, schema validation (Great Expectations) and drift for every dataset")
+    p.add_argument("--write-schemas", action="store_true",
+                   help="Infer configs/schemas/<dataset>.json from the current data (review, then commit)")
+    p.add_argument("--save", action="store_true",
+                   help="Also write profiles and the anomaly report to the data root (the DAG does this)")
+    sub.add_parser("test-alert", help="Send a test alert email to PRIMER_ALERT_EMAILS")
     p = sub.add_parser("bias-report", help="Slice the datasets for bias and write the report (reads data only)")
     p.add_argument("--out", default=str(REPO_ROOT / "reports" / "bias"),
                    help="Folder for bias_report.md and bias_report.json (default: reports/bias in the repo)")
@@ -92,6 +101,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "bias-report":
         return _bias_report(args, Store(args.data_uri))
 
+    if args.command == "test-alert":
+        from primer.data import alerts
+
+        sent = alerts.send_alert("Test alert", "Alerts from the Young Illustrator's Primer data pipeline work.")
+        return 0 if sent else 1
+
+    if args.command == "profile":
+        return _profile(args, Store(args.data_uri))
+
     if args.command in ("version", "versions"):
         return _versions(args, Store(args.data_uri))
 
@@ -118,6 +136,18 @@ def main(argv: list[str] | None = None) -> int:
     except ValidationFailed:
         return 1
     return 0
+
+
+def _profile(args: argparse.Namespace, store: Store) -> int:
+    from primer.data import profiling  # Great Expectations loads only for this command
+
+    if args.write_schemas:
+        for path in profiling.write_schemas(store):
+            log.info("Wrote %s (review it, then commit)", path)
+        return 0
+    report = profiling.check_datasets(store, save=args.save)
+    print(profiling.format_anomalies(report))
+    return 1 if report["errors"] else 0
 
 
 def _bias_report(args: argparse.Namespace, store: Store) -> int:

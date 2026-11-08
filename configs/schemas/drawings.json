@@ -1,0 +1,86 @@
+{
+  "dataset": "drawings",
+  "min_rows": 316373,
+  "created_at": "2026-10-30T00:35:27.232678+00:00",
+  "columns": {
+    "record_id": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1
+    },
+    "source": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1,
+      "allowed": [
+        "quickdraw"
+      ]
+    },
+    "source_id": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1
+    },
+    "label": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1
+    },
+    "strokes": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1
+    },
+    "n_strokes": {
+      "kind": "int",
+      "max_null_fraction": 0.0,
+      "min": 0.9,
+      "max": 141.8
+    },
+    "n_points": {
+      "kind": "int",
+      "max_null_fraction": 0.0,
+      "min": 1.0,
+      "max": 917.2
+    },
+    "image_uri": {
+      "kind": "string",
+      "max_null_fraction": 1.0,
+      "nulls_unconstrained": true
+    },
+    "country_code": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1
+    },
+    "recognized": {
+      "kind": "bool",
+      "max_null_fraction": 0.0
+    },
+    "license": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1,
+      "allowed": [
+        "CC-BY-4.0"
+      ]
+    },
+    "attribution": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1,
+      "allowed": [
+        "Quick, Draw! Dataset, Google Creative Lab"
+      ]
+    },
+    "batch_id": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1
+    },
+    "ingested_at": {
+      "kind": "datetime",
+      "max_null_fraction": 0.0
+    }
+  }
+}
