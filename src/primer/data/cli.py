@@ -124,7 +124,11 @@ def _bias_report(args: argparse.Namespace, store: Store) -> int:
     from primer.data import bias  # fairlearn/scikit-learn load only for this command
 
     log.info("Reading datasets from %s (read-only)", store.uri)
-    report = bias.build_report(store, max_country_share=args.max_country_share)
+    try:
+        report = bias.build_report(store, max_country_share=args.max_country_share)
+    except ValueError as e:  # e.g. a --max-country-share that can't be met
+        log.error("%s", e)
+        return 2
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     (out / "bias_report.md").write_text(bias.render_markdown(report), encoding="utf-8")

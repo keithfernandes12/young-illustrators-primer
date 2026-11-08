@@ -68,8 +68,10 @@ Sources with a pipeline: `tinystories`, `quickdraw`, `clear_corpus`, `sight_word
 `primer-data bias-report` slices every dataset for bias with Fairlearn and writes
 [`reports/bias/bias_report.md`](../../../reports/bias/bias_report.md) (plus a JSON copy). It only
 reads data, so it is safe to run against the bucket. The slices, findings and mitigations
-(capped country weights, per-source gender-swap augmentation, stratified splits) are in
-`bias.py`; regenerate the report whenever new data lands.
+(capped country weights, per-source gender-swap augmentation, genre × era split keys with small
+strata pooled) are in `bias.py`, and every verdict in the report is derived from the numbers.
+Regenerate the report by hand when new data lands. Applying the mitigations to the training data
+is KAN-80; tying the report to a frozen dataset version is KAN-81.
 
 ## Versions
 

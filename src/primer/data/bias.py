@@ -14,8 +14,10 @@ slices it does have:
 - **Picture books** by origin (African Storybook vs StoryWeaver, India).
 
 Mitigations: capped sample weights for countries, gender-swap augmentation for
-stories, and stratified split keys for readability. ``build_report`` computes all of
-it; ``render_markdown`` writes the report (see ``primer-data bias-report``).
+stories, and pooled genre × era split keys for readability. ``build_report`` computes
+all of it and ``render_markdown`` writes the report (see ``primer-data bias-report``);
+every verdict in the report is derived from the numbers. Applying the mitigations to
+the training data is the training loaders' job (KAN-80).
 """
 
 from __future__ import annotations
@@ -47,21 +49,26 @@ MALE_TO_FEMALE = {
     "uncle": "aunt", "grandpa": "grandma", "grandfather": "grandmother", "son": "daughter",
     "husband": "wife", "mr": "mrs", "sir": "madam", "gentleman": "lady",
 }
-FEMALE_TO_MALE = {v: k for k, v in MALE_TO_FEMALE.items() if k != "his"}  # "her" is handled separately
+# "her" and "his" are handled separately: each maps to two words depending on what follows.
+FEMALE_TO_MALE = {v: k for k, v in MALE_TO_FEMALE.items() if k != "his"} | {"hers": "his", "ms": "mr", "miss": "mr"}
 MALE_NAMES = {"Tom": "Lily", "Ben": "Anna", "Timmy": "Mia", "Tim": "Sue", "Max": "Lucy", "Jack": "Sara",
               "John": "Amy", "Bob": "Jill", "Joe": "Emma", "Billy": "Molly", "Jake": "Zoe", "Leo": "Ella"}
 FEMALE_NAMES = {v: k for k, v in MALE_NAMES.items()}
-MALE_WORDS = set(MALE_TO_FEMALE) | {n.lower() for n in MALE_NAMES}
-FEMALE_WORDS = set(FEMALE_TO_MALE) | {"her", "hers"} | {n.lower() for n in FEMALE_NAMES}
-_WORD = re.compile(r"[A-Za-z']+")
+MALE_WORDS = set(MALE_TO_FEMALE)
+FEMALE_WORDS = set(FEMALE_TO_MALE) | {"her"}
+# Letters only, so "Tom's" is "Tom" + "'s" and "He's" is "He" + "'s": the name or pronoun still
+# swaps and counts. Names are matched case-sensitively ("Lily", not the flower "lily").
+_WORD = re.compile(r"[A-Za-z]+")
 # After "her", these words mean it is an object ("saw her and ...") → "him"; otherwise a possessive → "his".
 _HER_OBJECT_FOLLOWERS = {"and", "or", "but", "to", "with", "for", "a", "an", "the", "that", "up", "down",
                          "back", "again", "too", "so", "very", "in", "on", "at", "of", "from", "as", "if"}
 
 
 def gender_counts(text: str) -> tuple[int, int]:
-    words = [w.lower() for w in _WORD.findall(text)]
-    return sum(w in MALE_WORDS for w in words), sum(w in FEMALE_WORDS for w in words)
+    words = _WORD.findall(text)
+    male = sum(w.lower() in MALE_WORDS or w in MALE_NAMES for w in words)
+    female = sum(w.lower() in FEMALE_WORDS or w in FEMALE_NAMES for w in words)
+    return male, female
 
 
 def lead_gender(text: str) -> str:
@@ -79,22 +86,25 @@ def _match_case(word: str, template: str) -> str:
 def gender_swap(text: str) -> str:
     """Swap gendered words and common names (he↔she, Tom↔Lily, ...), keeping capitalisation.
 
-    "her" is ambiguous (him/his); it becomes "his" before a word that looks like a noun phrase and
-    "him" otherwise. A heuristic: good enough for augmentation, not for publishing.
+    "her" is ambiguous (him/his) and so is "his" (her/hers): before a word that looks like a noun
+    phrase they are possessive determiners ("his"/"her"), otherwise "him"/"hers". A heuristic, good
+    enough for augmentation but not for publishing ("made her happy" still becomes "made his happy").
     """
-    tokens = re.split(r"([A-Za-z']+)", text)
+    tokens = re.split(r"([A-Za-z]+)", text)
     out = []
     for i, tok in enumerate(tokens):
         low = tok.lower()
+        gap = tokens[i + 1] if i + 1 < len(tokens) else ""
+        nxt = tokens[i + 2] if i + 2 < len(tokens) else ""
+        before_noun = gap == " " and bool(_WORD.fullmatch(nxt)) and nxt.lower() not in _HER_OBJECT_FOLLOWERS
         if tok in MALE_NAMES:
             out.append(MALE_NAMES[tok])
         elif tok in FEMALE_NAMES:
             out.append(FEMALE_NAMES[tok])
         elif low == "her":
-            nxt = next((t for t in tokens[i + 1:] if t.strip()), "")
-            gap = tokens[i + 1] if i + 1 < len(tokens) else ""
-            possessive = bool(_WORD.fullmatch(nxt)) and gap == " " and nxt.lower() not in _HER_OBJECT_FOLLOWERS
-            out.append(_match_case("his" if possessive else "him", tok))
+            out.append(_match_case("his" if before_noun else "him", tok))
+        elif low == "his":
+            out.append(_match_case("her" if before_noun else "hers", tok))
         elif low in MALE_TO_FEMALE:
             out.append(_match_case(MALE_TO_FEMALE[low], tok))
         elif low in FEMALE_TO_MALE:
@@ -124,7 +134,8 @@ def recognition_by_country(drawings: pd.DataFrame, top: int = 15) -> dict[str, A
     """The game recognizer's hit rate per country (Fairlearn MetricFrame).
 
     ``drawings`` needs ``country_code`` and ``recognized``. Countries outside the ``top`` largest
-    are pooled as "Other" so every slice is large enough to compare.
+    are pooled as "Other" so every slice is large enough to compare; the pooled group is shown but
+    doesn't decide the best, the worst or the gap.
     """
     recognized = drawings["recognized"].astype(int).to_numpy()
     countries = group_top(drawings["country_code"], top)
@@ -132,17 +143,25 @@ def recognition_by_country(drawings: pd.DataFrame, top: int = 15) -> dict[str, A
                      y_true=recognized, y_pred=recognized, sensitive_features=countries.to_numpy())
     by_group = mf.by_group.sort_values("drawings", ascending=False)
     rates = by_group["recognition_rate"]
+    named = rates.drop("Other", errors="ignore")
+    named = named if not named.empty else rates
     return {
         "by_country": by_group,
+        "top": top,
         "overall_rate": float(mf.overall["recognition_rate"]),
-        "gap": float(mf.difference()["recognition_rate"]),
-        "worst": (str(rates.idxmin()), float(rates.min())),
-        "best": (str(rates.idxmax()), float(rates.max())),
+        "gap": float(named.max() - named.min()),
+        "worst": (str(named.idxmin()), float(named.min())),
+        "best": (str(named.idxmax()), float(named.max())),
     }
 
 
 ERA_ORDER = ["before 1850", "1850–1899", "1900–1949", "1950–1999", "2000+", "unknown"]
 SMALL_SLICE = 100  # slices with fewer rows are reported but flagged as too small to judge
+# Thresholds that turn numbers into verdicts in the report, so a finding only appears when it holds.
+RECOGNITION_GAP = 0.02      # best vs worst country recognition rate
+MEAN_ERROR_FLAG = 0.05      # baseline mean error (teacher-score units) worth calling out
+ORIGIN_TOLERANCE = 0.10     # largest picture-book origin share above an even split
+ORIGIN = {"african_storybook": "African (African Storybook)", "storyweaver": "Indian (StoryWeaver)"}
 
 
 def era(years: pd.Series) -> pd.Series:
@@ -161,7 +180,9 @@ def readability_baseline_by_slice(clear: pd.DataFrame) -> dict[str, Any]:
 
     FK grade is mapped onto the teacher score with a straight-line fit over all excerpts; per slice
     we report the mean absolute error and the mean error (positive = the baseline says the slice is
-    easier than teachers do).
+    easier than teachers do). ``<name>_mae_gap`` compares only slices with at least ``SMALL_SLICE``
+    excerpts (None if fewer than two), so a handful of excerpts can't inflate it;
+    ``<name>_mae_gap_all_slices`` is the raw difference.
     """
     data = clear.dropna(subset=["score", "flesch_kincaid_grade"]).copy()
     slope, intercept = np.polyfit(data["flesch_kincaid_grade"], data["score"], 1)
@@ -178,7 +199,9 @@ def readability_baseline_by_slice(clear: pd.DataFrame) -> dict[str, Any]:
         if name == "era":
             table = table.reindex([e for e in ERA_ORDER if e in table.index])
         out[name] = table
-        out[f"{name}_mae_gap"] = float(mf.difference()["mae"])
+        judged = table[table["excerpts"] >= SMALL_SLICE]
+        out[f"{name}_mae_gap"] = float(judged["mae"].max() - judged["mae"].min()) if len(judged) >= 2 else None
+        out[f"{name}_mae_gap_all_slices"] = float(mf.difference()["mae"])
     return out
 
 
@@ -188,11 +211,22 @@ def capped_weights(groups: pd.Series, max_share: float) -> pd.Series:
     """Per-row sample weights so no group holds more than ``max_share`` of the total weight.
 
     Groups under the cap keep weight 1, so no data is thrown away and small groups aren't inflated;
-    only over-represented groups are down-weighted.
+    only over-represented groups are down-weighted. Missing groups count as "unknown". Raises
+    ``ValueError`` when the cap can't be met (shares must add up to 100%, so ``max_share`` times the
+    number of groups must be at least 1).
     """
+    if not 0 < max_share <= 1:
+        raise ValueError(f"max_share must be in (0, 1], got {max_share}")
+    groups = groups.fillna("unknown")
     counts = groups.value_counts().astype(float)
+    if max_share * len(counts) < 1 - 1e-12:
+        raise ValueError(f"can't cap {len(counts)} groups at {max_share:.0%} each: the shares must add up to "
+                         f"100%, so the cap must be at least {1 / len(counts):.1%}")
     capped: set = set()
     while True:
+        if len(capped) == len(counts) or 1 - max_share * len(capped) <= 1e-12:
+            # Every group at the cap: equal shares.
+            return groups.map({g: counts.sum() / (len(counts) * c) for g, c in counts.items()}).astype(float)
         free = counts.drop(list(capped)).sum()
         total = free / (1 - max_share * len(capped)) if capped else counts.sum()
         over = {g for g, c in counts.items() if g not in capped and c / total > max_share + 1e-12}
@@ -213,9 +247,12 @@ def balance_by_swap(stories: pd.DataFrame, by: str | None = "source", seed: int 
     """Add gender-swapped copies of majority-lead stories until male and female leads are equal.
 
     Balanced within each ``by`` group (default: per source), so a large balanced source can't hide a
-    skewed small one. Copies are marked ``augmented=True``; originals are never changed.
+    skewed small one; ``by=None`` balances overall. Copies are marked ``augmented=True``; originals are
+    never changed. A swap the heuristic gets wrong can leave a group short of parity; that is logged.
     """
-    groups = [stories] if by is None or by not in stories else [g for _, g in stories.groupby(by, sort=False)]
+    if by is not None and by not in stories:
+        raise KeyError(f"balance_by_swap: no column {by!r} to balance by (pass by=None to balance overall)")
+    groups = [stories] if by is None else [g for _, g in stories.groupby(by, sort=False, dropna=False)]
     extras = []
     for group in groups:
         leads = group["text"].map(lead_gender)
@@ -229,12 +266,49 @@ def balance_by_swap(stories: pd.DataFrame, by: str | None = "source", seed: int 
     original = stories.assign(augmented=False)
     out = pd.concat([original] + [e.assign(augmented=True) for e in extras], ignore_index=True)
     out["lead"] = out["text"].map(lead_gender)
+    for key, group in ([(None, out)] if by is None else out.groupby(by, sort=False, dropna=False)):
+        n_male, n_female = int((group["lead"] == "male").sum()), int((group["lead"] == "female").sum())
+        if n_male != n_female:
+            log.warning("Gender balance short of parity%s: %d male vs %d female leads after swapping",
+                        "" if key is None else f" for {key}", n_male, n_female)
     return out
 
 
 def stratify_key(df: pd.DataFrame, columns: Iterable[str]) -> pd.Series:
-    """One string per row combining ``columns``, for stratified train/val/test splits."""
-    return df[list(columns)].astype(str).agg(" / ".join, axis=1)
+    """One string per row combining ``columns``, for stratified train/val/test splits. Missing values
+    become "unknown" (the same label the readability baseline uses)."""
+    cols = df[list(columns)]
+    return cols.astype(object).where(cols.notna(), "unknown").astype(str).agg(" / ".join, axis=1)
+
+
+def split_strata(category: pd.Series, eras: pd.Series, min_size: int = SMALL_SLICE) -> pd.Series:
+    """Genre × era split keys, with strata under ``min_size`` pooled so every stratum can be split.
+
+    A small era joins the nearest era of the same genre that is big enough (ties go to the earlier
+    era); a small "unknown" era joins the genre's largest era; a genre with no era big enough becomes
+    one stratum ("all eras").
+    """
+    category = category.astype(object).where(category.notna(), "unknown").astype(str)
+    eras = eras.astype(object).where(eras.notna(), "unknown").astype(str)
+    dated = [e for e in ERA_ORDER if e != "unknown"]
+    pooled = eras.copy()
+    for cat in category.unique():
+        in_cat = category == cat
+        sizes = eras[in_cat].value_counts()
+        big = [e for e in dated if sizes.get(e, 0) >= min_size]
+        if not big:
+            pooled[in_cat] = "all eras"
+            continue
+        for e, n in sizes.items():
+            if n >= min_size:
+                continue
+            if e in dated:
+                at = dated.index(str(e))
+                target = min(big, key=lambda b: abs(dated.index(b) - at))
+            else:
+                target = max(big, key=lambda b: sizes[b])
+            pooled[in_cat & (eras == e)] = target
+    return stratify_key(pd.DataFrame({"category": category, "era": pooled}), ["category", "era"])
 
 
 # ------------------------------------------------------------------ report
@@ -297,9 +371,12 @@ def build_report(store: Store | None = None, max_country_share: float = 0.20, se
     clear = read_dataset("readability", store)
     if not clear.empty:
         baseline = readability_baseline_by_slice(clear)
-        keys = stratify_key(clear.assign(era=era(clear["pub_year"])), ["category", "era"])
+        eras = era(clear["pub_year"])
+        unpooled = stratify_key(pd.DataFrame({"category": clear["category"], "era": eras}), ["category", "era"])
+        keys = split_strata(clear["category"], eras)
         report["readability"] = {"rows": len(clear), "baseline": baseline,
-                                 "strata": keys.value_counts().sort_index()}
+                                 "strata": keys.value_counts().sort_index(),
+                                 "pooled_rows": int((keys != unpooled).sum())}
 
     pages = read_dataset("storybook_pages", store)
     if not pages.empty:
@@ -327,27 +404,77 @@ def _pct(x: float) -> str:
     return f"{x:.1%}"
 
 
+def _slice_verdict(table: pd.DataFrame, noun: str) -> str | None:
+    """"rates X easier ... and Y harder", from the slices big enough to judge; None if none is off by
+    at least ``MEAN_ERROR_FLAG``. Mean error > 0 means the formula rates the slice too easy."""
+    judged = table[table["excerpts"] >= SMALL_SLICE]["mean_error"]
+    if len(judged) < 2:
+        return None
+    parts = []
+    if judged.max() >= MEAN_ERROR_FLAG:
+        parts.append(f"**{judged.idxmax()}** {noun} easier than teachers do ({judged.max():+.3f})")
+    if judged.min() <= -MEAN_ERROR_FLAG:
+        parts.append(f"**{judged.idxmin()}** {noun} harder ({judged.min():+.3f})")
+    return " and ".join(parts) or None
+
+
 def _readability_findings(b: dict[str, Any]) -> list[str]:
-    """Plain-language findings computed from the baseline tables (mean error > 0 = rated too easy)."""
-    era_t = b["era"][b["era"]["excerpts"] >= SMALL_SLICE]
+    """Plain-language findings computed from the baseline tables."""
     lines = []
-    if not era_t.empty:
-        easy, hard = era_t["mean_error"].idxmax(), era_t["mean_error"].idxmin()
-        mae_gap = era_t["mae"].max() - era_t["mae"].min()  # only slices big enough to judge
-        lines.append(f"- By era, the formula rates **{easy}** texts easier than teachers do "
-                     f"({era_t.loc[easy, 'mean_error']:+.3f}) and **{hard}** texts harder "
-                     f"({era_t.loc[hard, 'mean_error']:+.3f}); MAE differs by {mae_gap:.3f} across those eras.")
-    cat = b["category"]
-    if len(cat) > 1:
-        easy = cat["mean_error"].idxmax()
-        lines.append(f"- By genre, it rates **{easy}** easier than teachers do "
-                     f"({cat.loc[easy, 'mean_error']:+.3f}); MAE differs by {b['category_mae_gap']:.3f}.")
+    for key, label, noun in (("era", "By era", "texts"), ("category", "By genre", "texts")):
+        verdict = _slice_verdict(b[key], noun)
+        if verdict:
+            lines.append(f"- {label}, the formula rates {verdict}; MAE differs by {b[f'{key}_mae_gap']:.3f} "
+                         f"across slices with at least {SMALL_SLICE} excerpts.")
+    flagged = bool(lines)
     small = [str(e) for e in b["era"].index if b["era"].loc[e, "excerpts"] < SMALL_SLICE]
     if small:
         lines.append(f"- Too small to judge (under {SMALL_SLICE} excerpts): {', '.join(small)}.")
-    lines.append("- So a scorer trained on a random split could learn era and genre quirks instead of "
-                 "difficulty, and a single overall score would hide it.")
+    if flagged:
+        lines.append("- So a scorer trained on a random split could learn era and genre quirks instead of "
+                     "difficulty, and a single overall score would hide it.")
+    else:
+        lines.append(f"- No genre or era large enough to judge is off by {MEAN_ERROR_FLAG} or more: the baseline "
+                     "treats them alike.")
     return lines
+
+
+def _drawing_findings(report: dict[str, Any], d: dict[str, Any]) -> list[str]:
+    cap = report["max_country_share"]
+    top, top_share = str(d["shares_before"].index[0]), float(d["shares_before"].iloc[0])
+    lines = []
+    if top_share > cap:
+        lines.append(f"- **Representation bias:** {top} alone is {_pct(top_share)} of drawings, above the "
+                     f"{_pct(cap)} cap. A recognizer trained on this learns mostly how people in {top} draw a "
+                     "cat or a house.")
+    else:
+        lines.append(f"- **Representation:** no country is above the {_pct(cap)} cap; the largest, {top}, is "
+                     f"{_pct(top_share)}.")
+    rec = d["recognition"]
+    if rec and rec["gap"] >= RECOGNITION_GAP:
+        lines.append(f"- **Performance gap:** the game's own model recognizes drawings from {rec['worst'][0]} "
+                     f"({_pct(rec['worst'][1])}) less often than from {rec['best'][0]} ({_pct(rec['best'][1])}). "
+                     "Part of that is drawing style, which is exactly what our recognizer must handle for "
+                     "children everywhere.")
+    elif rec:
+        lines.append(f"- **Recognition is even across countries:** a {rec['gap'] * 100:.1f}-point gap between the "
+                     "best and the worst.")
+    return lines
+
+
+def _origin_finding(by_source: pd.DataFrame) -> str:
+    shares = by_source["share_of_illustrations"]
+    names = {src: ORIGIN.get(str(src), str(src)) for src in shares.index}
+    if len(shares) < 2:
+        return (f"Only {', '.join(names.values()) or 'no source'} contributes illustrations, so the illustration "
+                "style model would see one tradition only.")
+    listed = ", ".join(f"{names[s]} {_pct(v)}" for s, v in shares.items())
+    if shares.max() - 1 / len(shares) <= ORIGIN_TOLERANCE:
+        return (f"Illustrations come in similar proportions ({listed}), so the illustration style model sees "
+                "every tradition. No re-weighting is needed; the balance is re-checked whenever this report "
+                "is regenerated.")
+    return (f"Illustrations skew toward {names[shares.idxmax()]} ({listed}): re-weight illustrations by origin "
+            "when training the illustration style model.")
 
 
 def render_markdown(report: dict[str, Any]) -> str:
@@ -359,24 +486,23 @@ def render_markdown(report: dict[str, Any]) -> str:
     d = report.get("drawings")
     if d:
         rec = d["recognition"]
-        us_before = float(d["shares_before"].get("US", 0.0))
-        us_after = float(d["shares_after"].get("US", 0.0))
+        top = str(d["shares_before"].index[0])
+        top_before = float(d["shares_before"].iloc[0])
+        top_after = float(d["shares_after"].get(top, 0.0))
         out += ["## 1. Drawings by country (Quick, Draw!)", "",
                 f"{d['rows']:,} drawings from {d['countries']} countries.", "",
                 "**Who drew them**", "",
                 _md_table(d["representation"], "country", {"count": ",.0f", "share": ".1%"}), ""]
         if rec:
             out += [("**How often the game's recognizer understood them** (Fairlearn `MetricFrame`, "
-                    f"{d['raw_rows']:,} raw drawings, top 15 countries, rest pooled as Other)"), "",
+                    f"{d['raw_rows']:,} raw drawings, top {rec['top']} countries, rest pooled as Other). "
+                    "These come from `raw/`, because processed data keeps only recognized drawings, so the "
+                    "count differs from the table above."), "",
                     _md_table(rec["by_country"], "country", {"drawings": ",.0f", "recognition_rate": ".1%"}), "",
                     (f"Overall {_pct(rec['overall_rate'])}; best {rec['best'][0]} {_pct(rec['best'][1])}, "
-                    f"worst {rec['worst'][0]} {_pct(rec['worst'][1])}: a **{rec['gap'] * 100:.1f}-point gap**."), ""]
-        out += ["**Findings**", "",
-                (f"- **Representation bias:** the US alone is {_pct(us_before)} of drawings. A recognizer trained "
-                "on this learns mostly how Americans draw a cat or a house."),
-                ("- **Performance gap:** drawings from some countries are recognized less often by the game's "
-                "own model. Part of that is drawing style, which is exactly what our recognizer must handle for "
-                "children everywhere."), "",
+                    f"worst {rec['worst'][0]} {_pct(rec['worst'][1])} (Other not counted): a "
+                    f"**{rec['gap'] * 100:.1f}-point gap**."), ""]
+        out += ["**Findings**", "", *_drawing_findings(report, d), "",
                 "**Mitigation: capped sample weights** (`capped_weights`)", "",
                 (f"No country may hold more than {_pct(report['max_country_share'])} of the training weight. "
                 "Over-represented countries are down-weighted; every other drawing keeps weight 1, so no data is "
@@ -384,9 +510,9 @@ def render_markdown(report: dict[str, Any]) -> str:
                 _md_table(pd.DataFrame({"before": d["shares_before"], "after": d["shares_after"]}).fillna(0)
                           .sort_values("after", ascending=False).head(10), "country",
                           {"before": ".1%", "after": ".1%"}), "",
-                (f"US share of the training signal: {_pct(us_before)} → {_pct(us_after)}. The recognizer team "
-                "passes these weights to the loss (or sampler) and re-measures the per-country recognition gap "
-                "on the trained model with the same `MetricFrame` slices."), "",
+                (f"{top} share of the training signal: {_pct(top_before)} → {_pct(top_after)}. The recognizer "
+                "team passes these weights to the loss (or sampler) and re-measures the per-country recognition "
+                "gap on the trained model with the same `MetricFrame` slices (KAN-80)."), "",
                 ("**Trade-off:** the effective training set shrinks (the down-weighted rows count for less), so "
                 "overall accuracy may dip slightly in exchange for more even per-country accuracy."), ""]
 
@@ -405,15 +531,23 @@ def render_markdown(report: dict[str, Any]) -> str:
             verdict = ("roughly balanced" if abs(gap) < 0.05
                        else f"skews **{'male' if gap > 0 else 'female'}** by {abs(gap) * 100:.0f} points")
             out.append(f"- `{source}`: {_pct(male)} male vs {_pct(female)} female leads, {verdict}.")
-        after = s["after_by_source"].assign(added=pd.Series(s["augmented_by_source"])).fillna(0)
+        after_table = s["after_by_source"]
+        after = after_table.assign(added=pd.Series(s["augmented_by_source"])).fillna(0)
+        short = [str(src) for src, row in after_table.iterrows()
+                 if row.get("male", 0) != row.get("female", 0)]
+        parity = ("Male and female leads are equal in every source after swapping." if not short else
+                  f"Parity is not reached for {', '.join(short)}: some swapped copies come out neutral or "
+                  "unchanged (the swap is a heuristic).")
         out += ["", "**Mitigation: gender-swap augmentation, per source** (`gender_swap`, `balance_by_swap`)", "",
-                (f"{s['augmented_rows']:,} gender-swapped copies of majority-lead stories are added, balanced "
+                (f"{s['augmented_rows']:,} gender-swapped copies of majority-lead stories are computed, balanced "
                  "within each source so a large balanced source can't hide a skewed small one:"), "",
                 _md_table(after, "source", dict.fromkeys(after.columns, ",.0f")), "",
-                "The story LLM then sees each kind of plot with a male and a female lead equally often.", "",
-                ("**Trade-off / limits:** the swap is word-based (\"her\" → him/his is a heuristic) and only knows "
-                 "common names, so a few swapped stories read awkwardly. They are marked `augmented=True`, and the "
-                 "golden evaluation set uses only original stories."), ""]
+                parity, ("Once the copies are added to the training data (KAN-80), the story LLM sees male and "
+                         "female leads equally often within each source."), "",
+                ("**Trade-off / limits:** the swap is word-based (\"her\" → him/his and \"his\" → her/hers are "
+                 "heuristics) and only knows common names, so a few swapped stories read awkwardly. Copies are "
+                 "marked `augmented=True` so they can be kept out of evaluation and in the same split as their "
+                 "original (KAN-80)."), ""]
 
     r = report.get("readability")
     if r:
@@ -427,23 +561,27 @@ def render_markdown(report: dict[str, Any]) -> str:
                 "**By publication era**", "", _md_table(b["era"], "era", fmt), "",
                 "**Findings** (mean error > 0 means the formula rates the slice easier than teachers do)", "",
                 *_readability_findings(b), "",
-                ("**Mitigation: stratified splits** (`stratify_key`): train/validation/test are split by "
+                ("**Mitigation: stratified splits** (`split_strata`): train/validation/test are split by "
                 "genre × era so every slice appears in each split in the same proportion, and the scorer is "
                 "evaluated per slice with the same `MetricFrame`, not just overall."), "",
-                _md_table(r["strata"].to_frame("excerpts"), "genre / era", {"excerpts": ",.0f"}), "",
-                (f"Strata with fewer than {SMALL_SLICE} excerpts are too small to judge on their own; for "
-                 "splitting they are pooled with the neighbouring era."), ""]
+                (f"Strata with fewer than {SMALL_SLICE} excerpts are pooled into the nearest era of the same genre "
+                 f"(excerpts without a year into the genre's largest era); {r['pooled_rows']:,} excerpts were "
+                 "moved. The split keys after pooling:"), "",
+                _md_table(r["strata"].to_frame("excerpts"), "genre / era", {"excerpts": ",.0f"}), ""]
 
     p = report.get("picture_books")
     if p:
         out += ["## 4. Picture books by origin", "",
                 _md_table(p["by_source"], "source", {"books": ",.0f", "pages": ",.0f", "illustrated_pages": ",.0f",
                                                      "share_of_illustrations": ".1%", "words_per_page": ".0f"}), "",
-                ("African and Indian picture books contribute illustrations in similar proportions, so the "
-                "illustration style model sees both traditions. No re-weighting is needed now; the balance is "
-                "re-checked here whenever the books are re-ingested."), ""]
+                _origin_finding(p["by_source"]), ""]
 
     out += ["## What this does not cover yet", "",
+            ("- The mitigations are computed and checked here, but not yet applied to the training data: "
+             "the weights column, the augmented stories and the split assignment come with the training "
+             "loaders (KAN-80)."),
+            ("- This report reads the current processed data; tying it to a frozen dataset version is "
+             "KAN-81."),
             ("- Our own models are not trained yet. Once they are, the same slices are reused to measure them "
             "(recognizer per country, readability scorer per genre/era, story LLM output per lead gender)."),
             ("- Country is the only demographic-like field; there is no age, gender or location of the people "

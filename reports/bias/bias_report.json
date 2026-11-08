@@ -1,5 +1,5 @@
 {
-  "created_at": "2026-10-27T01:09:41.420463+00:00",
+  "created_at": "2026-11-08T11:01:14.989899+00:00",
   "data_uri": "gs://young-illustrators-primer-data",
   "max_country_share": 0.2,
   "drawings": {
@@ -145,6 +145,7 @@
           "recognition_rate": 0.8948432760364005
         }
       ],
+      "top": 15,
       "overall_rate": 0.9170231884057971,
       "gap": 0.05981181320624307,
       "worst": [
@@ -188,59 +189,59 @@
     "lead_by_source": [
       {
         "source": "african_storybook",
-        "female": 0.3085,
+        "female": 0.3168,
         "male": 0.5096,
-        "neutral": 0.1818
+        "neutral": 0.1736
       },
       {
         "source": "storyweaver",
         "female": 0.3734,
-        "male": 0.509,
-        "neutral": 0.1176
+        "male": 0.5115,
+        "neutral": 0.1151
       },
       {
         "source": "tinystories",
-        "female": 0.4614,
-        "male": 0.4742,
-        "neutral": 0.0644
+        "female": 0.4624,
+        "male": 0.4741,
+        "neutral": 0.0636
       }
     ],
     "lead_counts": {
-      "male": 9868,
-      "female": 9486,
-      "neutral": 1400
+      "male": 9867,
+      "female": 9508,
+      "neutral": 1379
     },
     "after_by_source": [
       {
         "source": "african_storybook",
         "female": 185,
         "male": 185,
-        "neutral": 66
+        "neutral": 63
       },
       {
         "source": "storyweaver",
-        "female": 199,
-        "male": 199,
-        "neutral": 46
+        "female": 200,
+        "male": 200,
+        "neutral": 45
       },
       {
         "source": "tinystories",
-        "female": 9484,
-        "male": 9484,
-        "neutral": 1288
+        "female": 9482,
+        "male": 9482,
+        "neutral": 1271
       }
     ],
     "augmented_by_source": {
-      "tinystories": 256,
-      "african_storybook": 73,
-      "storyweaver": 53
+      "tinystories": 235,
+      "african_storybook": 70,
+      "storyweaver": 54
     },
     "after_counts": {
-      "male": 9868,
-      "female": 9868,
-      "neutral": 1400
+      "male": 9867,
+      "female": 9867,
+      "neutral": 1379
     },
-    "augmented_rows": 382
+    "augmented_rows": 359
   },
   "readability": {
     "rows": 4723,
@@ -267,6 +268,7 @@
         }
       ],
       "category_mae_gap": 0.12386901567596309,
+      "category_mae_gap_all_slices": 0.12386901567596309,
       "era": [
         {
           "sensitive_feature_0": "before 1850",
@@ -311,22 +313,18 @@
           "teacher_score_mean": -0.19275499499999998
         }
       ],
-      "era_mae_gap": 0.3216537709142571
+      "era_mae_gap": 0.07232049385247108,
+      "era_mae_gap_all_slices": 0.3216537709142571
     },
     "strata": {
-      "Info / 1850\u20131899": 583,
-      "Info / 1900\u20131949": 441,
-      "Info / 1950\u20131999": 18,
-      "Info / 2000+": 1248,
-      "Info / before 1850": 10,
-      "Info / unknown": 4,
-      "Lit / 1850\u20131899": 959,
-      "Lit / 1900\u20131949": 1014,
-      "Lit / 1950\u20131999": 16,
-      "Lit / 2000+": 372,
-      "Lit / before 1850": 53,
-      "Lit / unknown": 5
-    }
+      "Info / 1850\u20131899": 593,
+      "Info / 1900\u20131949": 459,
+      "Info / 2000+": 1252,
+      "Lit / 1850\u20131899": 1012,
+      "Lit / 1900\u20131949": 1035,
+      "Lit / 2000+": 372
+    },
+    "pooled_rows": 106
   },
   "picture_books": {
     "by_source": [
