@@ -24,17 +24,24 @@ import sys
 TERRAFORM_PROD = re.compile(r"\bterraform\b.*(workspace\s+select\s+prod\b|-var-file[= ]\S*prod)")
 
 
+# PowerShell form: $env:YIP_DEPLOY_ENV = "prod"
+POWERSHELL_PROD_ENV = re.compile(r"\$env:YIP_DEPLOY_ENV\s*=\s*['\"]?prod\b", re.IGNORECASE)
+
+
 def check(command: str, environ: dict[str, str]) -> str | None:
     if environ.get("YIP_ALLOW_PROD") == "1" or not command:
         return None
     prod = environ.get("YIP_PROD_PROJECT", "").strip()
     if prod and re.search(rf"(^|[^A-Za-z0-9-]){re.escape(prod)}($|[^A-Za-z0-9-])", command):
         return f"this command names the production project {prod!r}."
-    if re.search(r"(^|\s)YIP_DEPLOY_ENV=prod\b", command):
+    if re.search(r"(^|\s)YIP_DEPLOY_ENV=prod\b", command) or POWERSHELL_PROD_ENV.search(command):
         return "this command sets YIP_DEPLOY_ENV=prod."
     if TERRAFORM_PROD.search(command):
         return "this terraform command selects the prod workspace or a prod var file."
     return None
+
+
+SHELL_TOOLS = {"Bash", "PowerShell"}
 
 
 def main() -> int:
@@ -42,7 +49,8 @@ def main() -> int:
         payload = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
         return 0
-    if payload.get("tool_name") != "Bash":
+    # On Windows the PowerShell tool is the primary shell for claude.ai accounts, so both are checked.
+    if payload.get("tool_name") not in SHELL_TOOLS:
         return 0
     command = (payload.get("tool_input") or {}).get("command") or ""
     reason = check(command, dict(os.environ))

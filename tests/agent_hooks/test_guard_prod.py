@@ -63,3 +63,21 @@ def test_refusal_exits_2():
     )
     assert result.returncode == 2
     assert "guard_prod.py" in result.stderr
+
+
+def test_powershell_env_form_refused():
+    assert guard_prod.check('$env:YIP_DEPLOY_ENV = "prod"; bash .claude/skills/deploy-cloud-run/scripts/promote.sh x', ENV)
+    assert guard_prod.check('$env:YIP_DEPLOY_ENV = "staging"', ENV) is None
+
+
+def test_powershell_tool_is_checked():
+    payload = {"tool_name": "PowerShell", "tool_input": {"command": "gcloud run deploy x --project yip-prod-123"}}
+    result = subprocess.run(
+        [sys.executable, str(HOOK)],
+        input=json.dumps(payload),
+        env={"YIP_PROD_PROJECT": "yip-prod-123", "PATH": ""},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
