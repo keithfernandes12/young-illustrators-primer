@@ -36,6 +36,7 @@ ruff check .                                 # lint (line length 110)
 ruff format .                                # format
 mypy src                                     # type-check
 python scripts/check_docs.py                 # docs frontmatter (also runs inside pytest)
+python .claude/skills/verify/scripts/verify.py   # everything CI runs, plus privacy lint; one PASS/FAIL line
 primer-data --data-uri .local-data run <source> --batch-size 2   # pipeline, locally
 pip install -e ".[dashboard]" && streamlit run dashboards/tracker/app.py
 ```
@@ -162,6 +163,16 @@ PR, review yourself with `review-pr`, then open the PR. Before asking for review
 | `freeze-dataset-version` | prepare and finish a dataset version (a person runs the bucket write) |
 | `planning-poker` | size Jira issues as a team |
 | `refine-comments` | clean up code comments and docstrings without changing logic |
+| `verify` | run every CI check plus the privacy and infra gates; ends `VERIFY_RESULT: PASS/FAIL` |
+| `golden-gate` | compare golden-set metrics with the §7 targets; ends `GATE_RESULT: PASS/FAIL` |
+| `privacy-guard` | lint for child PII in logs, URLs, object names and stored audio |
+| `loop-worker` | run one unattended engineering-loop iteration on a plan (for `/goal`, `/loop`, Ralph) |
+| `train-vertex` | launch and track a Vertex AI training job, then run the golden gate |
+| `deploy-cloud-run` | canary, smoke-test, promote or roll back a Cloud Run service in staging |
+
+Loop prompts for `/goal`, `/loop` and Ralph live in `.claude/loops/`; a bare `/loop` reads
+`.claude/loop.md`. Unattended work follows `docs/plans/autonomous-loops.md`. Agents never act on
+production: `.claude/hooks/guard_prod.py` refuses commands naming `$YIP_PROD_PROJECT`.
 
 ## Tracking and communication
 
