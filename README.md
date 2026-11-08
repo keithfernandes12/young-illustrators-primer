@@ -41,7 +41,7 @@ flowchart LR
     Sources --> I
     P --> S[summarize<br/>run report]
     P --> D[(DVC versions<br/>data-v0.1)]
-    P --> B[bias report]
+    P -.-> B[bias report<br/>run by hand]
     S --> T[tracker dashboard]
 ```
 
@@ -181,11 +181,11 @@ Details: [`src/primer/data/README.md`](src/primer/data/README.md) → Versions.
 | Slice | Finding | Mitigation |
 |---|---|---|
 | Drawings by **country** | the US is 44.9% of drawings; the game's own recognizer ranges from 89.5% (Thailand) to 95.5% (Brazil) | capped sample weights: no country above 20% of training weight, no data dropped |
-| Stories by **lead-character gender** | picture books skew male (African Storybook +20 points, StoryWeaver +14); TinyStories is balanced | gender-swap augmentation, balanced per source |
+| Stories by **lead-character gender** | picture books skew male (African Storybook +19 points, StoryWeaver +14); TinyStories is balanced | gender-swap augmentation, balanced per source |
 | Readability by **genre and era** | the Flesch-Kincaid baseline rates 1900–1949 texts too easy and modern texts too hard | splits stratified by genre × era, evaluated per slice |
-| Picture books by **origin** | illustrations 55% African / 45% Indian | none needed; re-checked on every run |
+| Picture books by **origin** | illustrations 55% African / 45% Indian | none needed; re-checked each time the report is regenerated |
 
-The report explains each finding, the mitigation and its trade-offs, and is regenerated from code whenever data changes.
+Every verdict in the report is derived from the numbers, so it stays true when regenerated; the report explains each finding, the mitigation and its trade-offs. It is run by hand for now (`primer-data bias-report`, reads only); tying it to a frozen dataset version is KAN-81, and applying the mitigations in the training loaders is KAN-80.
 
 ## 9. Tests and CI
 
@@ -213,6 +213,7 @@ young-illustrators-primer/
 │   ├── schemas.py              standard columns per dataset
 │   ├── catalog.py              read_dataset(), current or by version
 │   ├── versioning.py           dataset versions + DVC pointers
+│   ├── bias.py                 bias slicing (Fairlearn) and mitigations
 │   ├── manifest.py, checks.py, text.py, config.py
 │   └── cli.py                  the primer-data command
 ├── dags/                       Airflow DAGs (+ README)
