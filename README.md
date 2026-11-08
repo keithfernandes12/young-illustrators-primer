@@ -79,13 +79,14 @@ docker compose down                  # stop (add -v to also delete the Airflow d
 **Without Docker** (Python 3.11+), for the CLI and tests:
 
 ```bash
-pip install -e ".[dev,dvc]"
+pip install -r requirements.txt && pip install -e . --no-deps   # exact pinned versions
+# or: pip install -e ".[dev,dvc]"                               # latest versions pyproject.toml allows
 pytest                                                  # the test suite
 primer-data --data-uri .local-data sources              # list sources
 primer-data --data-uri .local-data run clear_corpus     # ingest + validate + preprocess one source
 ```
 
-Dependencies are declared in [`pyproject.toml`](pyproject.toml) (extras: `dev`, `dvc`, `dashboard`). The Airflow image pins `apache-airflow==3.3.2` in [`infra/airflow/Dockerfile`](infra/airflow/Dockerfile).
+Dependencies are declared in [`pyproject.toml`](pyproject.toml) (extras: `dev`, `dvc`, `dashboard`). [`requirements.txt`](requirements.txt) pins every package (those dependencies plus the `dev` and `dvc` extras) to exact versions for Python 3.11+ on Linux, macOS and Windows, so another machine gets the same environment. A test fails if it falls out of step with `pyproject.toml`, and its header gives the command to regenerate it. The Airflow image pins `apache-airflow==3.3.2` in [`infra/airflow/Dockerfile`](infra/airflow/Dockerfile).
 
 ## 3. Data sources
 
@@ -236,6 +237,8 @@ young-illustrators-primer/
 ├── infra/airflow/Dockerfile    Airflow image with the package installed
 ├── docker-compose.yaml         Airflow (local data by default)
 ├── docker-compose.gcs.yaml     override: write to the shared bucket
+├── pyproject.toml              the package and its dependencies (source of truth)
+├── requirements.txt            the same dependencies pinned to exact versions
 ├── reports/bias/               generated bias report
 ├── docs/                       scoping, engineering process, plans
 └── src/primer/{drawing,story,readability,illustration,speech,safety,serving}/   model packages (next)
