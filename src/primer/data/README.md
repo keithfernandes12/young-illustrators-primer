@@ -48,6 +48,7 @@ primer-data dvc-pointers            # refresh data/*.dvc to the current object v
 primer-data profile                 # statistics + schema validation + drift for every dataset (reads only)
 primer-data profile --write-schemas # re-infer configs/schemas/*.json from the current data
 primer-data test-alert              # send a test alert email
+primer-data bias-report             # slice the datasets for bias -> reports/bias/ (reads data only)
 ```
 
 The same stages run on a schedule in **Airflow**, one parallel task group per source: see
@@ -64,6 +65,16 @@ Sources with a pipeline: `tinystories`, `quickdraw`, `clear_corpus`, `sight_word
 - **Snapshot** (CLEAR, sight words, Kuperman, StoryWeaver, African Storybook): the source is a fixed file or repo. `run` downloads it and makes a new batch only if the file changed, otherwise it reports "nothing new". The latest batch is the whole dataset.
 
 `read_dataset` handles both.
+
+## Bias report
+
+`primer-data bias-report` slices every dataset for bias with Fairlearn and writes
+[`reports/bias/bias_report.md`](../../../reports/bias/bias_report.md) (plus a JSON copy). It only
+reads data, so it is safe to run against the bucket. The slices, findings and mitigations
+(capped country weights, per-source gender-swap augmentation, genre × era split keys with small
+strata pooled) are in `bias.py`, and every verdict in the report is derived from the numbers.
+Regenerate the report by hand when new data lands. Applying the mitigations to the training data
+is KAN-80; tying the report to a frozen dataset version is KAN-81.
 
 ## Versions
 
