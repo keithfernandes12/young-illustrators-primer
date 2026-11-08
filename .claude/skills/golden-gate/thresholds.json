@@ -1,0 +1,15 @@
+{
+  "_source": "Young Illustrator's Primer scoping doc, Section 7 (Key Metrics). Edit only with explicit human approval.",
+  "metrics": [
+    {"key": "drawing_top5_acc",         "group": "drawing",      "op": ">=", "value": 0.85},
+    {"key": "target_word_inclusion",    "group": "story",        "op": ">=", "value": 0.95},
+    {"key": "story_quality_mean",       "group": "story",        "op": ">=", "value": 4.0},
+    {"key": "reading_level_within1",    "group": "readability",  "op": ">=", "value": 0.85},
+    {"key": "readability_rmse",         "group": "readability",  "op": "<",  "ref": "fk_baseline_rmse"},
+    {"key": "safety_violations_golden", "group": "safety",       "op": "==", "value": 0},
+    {"key": "clip_consistency",         "group": "illustration", "op": ">=", "value": null},
+    {"key": "p95_first_page_s",         "group": "system",       "op": "<=", "value": 20},
+    {"key": "p95_full_book_s",          "group": "system",       "op": "<=", "value": 120},
+    {"key": "cost_per_book_usd",        "group": "system",       "op": "<=", "value": 0.25}
+  ]
+}
