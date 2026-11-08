@@ -17,7 +17,24 @@
       "Bash(gh pr diff:*)",
       "Bash(gh pr checks:*)",
       "Bash(primer-data sources:*)",
-      "Bash(primer-data versions:*)"
+      "Bash(primer-data versions:*)",
+      "Bash(python .claude/skills/verify/scripts/verify.py:*)",
+      "Bash(python .claude/skills/golden-gate/scripts/check_gate.py:*)",
+      "Bash(python .claude/skills/privacy-guard/scripts/privacy_lint.py:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)",
+      "Bash(gcloud config list:*)",
+      "Bash(gcloud run services describe:*)",
+      "Bash(gcloud run services list:*)",
+      "Bash(gcloud run revisions list:*)",
+      "Bash(gcloud logging read:*)",
+      "Bash(gcloud ai custom-jobs list:*)",
+      "Bash(gcloud ai custom-jobs describe:*)",
+      "Bash(gcloud ai custom-jobs stream-logs:*)",
+      "Bash(terraform -chdir=infra fmt:*)",
+      "Bash(terraform -chdir=infra validate:*)",
+      "Bash(terraform -chdir=infra plan:*)"
     ],
     "ask": [
       "Bash(gh pr review:*)",
@@ -30,7 +47,18 @@
       "mcp__atlassian__createIssueLink",
       "mcp__atlassian__addWorklogToJiraIssue",
       "mcp__atlassian__createConfluencePage",
-      "mcp__atlassian__updateConfluencePage"
+      "mcp__atlassian__updateConfluencePage",
+      "Bash(gcloud builds submit:*)",
+      "Bash(gcloud run deploy:*)",
+      "Bash(gcloud run services update-traffic:*)",
+      "Bash(gcloud run jobs execute:*)",
+      "Bash(gcloud ai custom-jobs create:*)",
+      "Bash(gcloud ai custom-jobs cancel:*)",
+      "Bash(bash .claude/skills/deploy-cloud-run/scripts/deploy_canary.sh:*)",
+      "Bash(bash .claude/skills/deploy-cloud-run/scripts/promote.sh:*)",
+      "Bash(bash .claude/skills/deploy-cloud-run/scripts/rollback.sh:*)",
+      "Bash(terraform -chdir=infra apply:*)",
+      "Bash(terraform -chdir=infra init:*)"
     ],
     "deny": [
       "Bash(gh pr merge:*)",
@@ -38,7 +66,14 @@
       "Bash(git push -f:*)",
       "Bash(gcloud auth:*)",
       "Bash(dvc push:*)",
-      "Bash(dvc gc:*)"
+      "Bash(dvc gc:*)",
+      "Bash(terraform destroy:*)",
+      "Bash(terraform -chdir=infra destroy:*)",
+      "Bash(gcloud iam service-accounts keys create:*)",
+      "Bash(gcloud projects add-iam-policy-binding:*)",
+      "Read(.env)",
+      "Read(**/*service-account*.json)",
+      "Read(**/*credentials*.json)"
     ]
   },
   "hooks": {
@@ -59,6 +94,10 @@
           {
             "type": "command",
             "command": "P=python3; $P -c \"\" 2>/dev/null || P=python; exec \"$P\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_bash.py\""
+          },
+          {
+            "type": "command",
+            "command": "P=python3; $P -c \"\" 2>/dev/null || P=python; exec \"$P\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_prod.py\""
           }
         ]
       }
