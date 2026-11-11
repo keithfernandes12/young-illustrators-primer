@@ -5,6 +5,11 @@ description: Model-quality release gate for Young Illustrator's Primer. Use afte
 
 # Golden gate
 
+> **Blocked.** This gate reads metrics produced by `primer.evaluation`, which does not exist
+> yet, and there is no golden set in the repository. Until both land, `check_gate.py` reports
+> `GATE_RESULT: SKIP` rather than failing, and `goal-golden-gate.md` cannot succeed. See the
+> parked work in `docs/plans/autonomous-loops.md`.
+
 The golden set (about 100 hand-written parent-setting scenarios, held out permanently;
 `docs/project_scoping.md` §7 and §8)
 is the single yardstick for every model version. This skill turns its metrics into a

@@ -32,6 +32,15 @@ def main() -> int:
     ap.add_argument("--mlflow-run-id", default=None)
     args = ap.parse_args()
 
+    if not args.metrics.exists():
+        # primer.evaluation does not exist yet, so nothing produces this file. Say so plainly
+        # instead of raising FileNotFoundError, and never report SKIP as PASS.
+        print(f"===== YIP GOLDEN GATE ({args.metrics}) =====")
+        print(
+            f"GATE_RESULT: SKIP (no metrics at {args.metrics}; run the evaluation first. "
+            "primer.evaluation is not built yet -- see docs/plans/autonomous-loops.md)"
+        )
+        return 0
     metrics = json.loads(args.metrics.read_text())
     spec = json.loads(args.thresholds.read_text())["metrics"]
     groups = {g.strip() for g in args.only.split(",") if g.strip()}

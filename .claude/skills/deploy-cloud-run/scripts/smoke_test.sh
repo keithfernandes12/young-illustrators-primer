@@ -12,9 +12,10 @@ echo "GET /healthz -> $code"; [[ "$code" == "200" ]] || ok=0
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 FIXTURE="$ROOT/tests/fixtures/smoke_book_request.json"
 if [[ "$SERVICE" == "yip-api" && -f "$FIXTURE" ]]; then
-  code=$(curl -s -o /tmp/yip_smoke.json -w '%{http_code}' "${AUTH[@]}" -H 'Content-Type: application/json' \
+  BODY="$STATE_DIR/$SERVICE.smoke.json"   # per-service, inside the repo, not a shared /tmp name
+  code=$(curl -s -o "$BODY" -w '%{http_code}' "${AUTH[@]}" -H 'Content-Type: application/json' \
          -X POST --data @"$FIXTURE" "$URL/v1/books:dryRun" || echo 000)
-  echo "POST /v1/books:dryRun -> $code"; head -c 400 /tmp/yip_smoke.json; echo
+  echo "POST /v1/books:dryRun -> $code"; head -c 400 "$BODY"; echo
   [[ "$code" == "200" ]] || ok=0
 fi
 if [[ $ok -eq 1 ]]; then echo "SMOKE_RESULT: PASS"; else echo "SMOKE_RESULT: FAIL"; exit 1; fi
