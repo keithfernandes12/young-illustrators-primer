@@ -1,0 +1,16 @@
+md5: 4692708bfdcb050dddec96a4d98230c2
+frozen: true
+deps:
+- hash: md5
+  path: gs://young-illustrators-primer-data/processed/character_drawings
+  fs_config:
+    version_aware: true
+  files:
+  - relpath: source=amateur_drawings/batch=20261110T055432Z.parquet
+    etag: 08c8be92bcd3fe97031001
+    size: 131533420
+    version_id: '1794356663328584'
+outs:
+- hash: md5
+  path: character_drawings
+  push: false
