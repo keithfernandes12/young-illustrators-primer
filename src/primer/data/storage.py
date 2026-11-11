@@ -114,6 +114,14 @@ class Store:
         data = self.fs.cat([self.path(r) for r in rels])
         return {self._rel(path): content for path, content in data.items()}
 
+    def read_heads(self, rels: list[str], n: int) -> list[bytes | None]:
+        """The first ``n`` bytes of each file, in order (concurrent on GCS); None where unreadable."""
+        if not rels:
+            return []
+        out = self.fs.cat_ranges([self.path(r) for r in rels], [0] * len(rels), [n] * len(rels),
+                                 on_error="return")
+        return [None if isinstance(o, BaseException) else o for o in out]
+
     # -- json
 
     def write_json(self, rel: str, obj: Any) -> None:

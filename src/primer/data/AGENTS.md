@@ -5,7 +5,9 @@ layout, versions, source notes); read it before changing anything here. These ar
 are easiest to break, and why:
 
 - **`raw/` is never modified.** Picture-book `image_uri`s in every dataset version point into `raw/`;
-  changing it breaks old versions.
+  changing it breaks old versions. The one exception: a person may delete a *partial* batch that
+  never validated (an interrupted Amateur Drawings upload, see `docs/runbooks/full-ingest.md`), since
+  no processed rows or versions point at it. Agents never delete anything in the bucket.
 - **Versions are permanent.** `metadata/versions/<tag>.json` records exact GCS object generations;
   a tag can never be overwritten. Use the `freeze-dataset-version` skill — a person runs the
   `version` command.

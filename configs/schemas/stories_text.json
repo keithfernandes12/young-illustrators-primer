@@ -1,7 +1,7 @@
 {
   "dataset": "stories_text",
-  "min_rows": 27321,
-  "created_at": "2026-10-30T00:35:00.773362+00:00",
+  "min_rows": 899995,
+  "created_at": "2026-11-11T00:25:28.921616+00:00",
   "columns": {
     "record_id": {
       "kind": "string",

@@ -21,7 +21,7 @@ pages = read_dataset("storybook_pages")                    # picture-book pages 
 drawings = read_dataset("drawings")                        # Quick, Draw!
 readability = read_dataset("readability")                  # CLEAR
 words = read_dataset("word_lists", sources=["sight_words"])
-drawings_v01 = read_dataset("drawings", version="v0.1")   # exactly as frozen in a version
+drawings_v11 = read_dataset("drawings", version="v1.1")   # exactly as frozen in a version (current)
 ```
 
 Train on a named version (see [Versions](#versions)) so results are reproducible.
@@ -31,6 +31,7 @@ Train on a named version (see [Versions](#versions)) so results are reproducible
 | `stories_text` | TinyStories, StoryWeaver, African Storybook | `STORIES_TEXT`: one row per story |
 | `storybook_pages` | StoryWeaver, African Storybook | `STORYBOOK_PAGES`: page text, `image_uri` (GCS), caption, alignment |
 | `drawings` | Quick, Draw! | `DRAWINGS`: strokes as JSON on a 0–255 grid, label, recognized |
+| `character_drawings` | Amateur Drawings | `CHARACTER_DRAWINGS`: `image_uri` (GCS), PNG size and uploaded size, bounding box, 17 joints and segmentation polygon (COCO) |
 | `readability` | CLEAR | `READABILITY`: text, `score` (BT_easiness, higher = easier), Flesch-Kincaid grade baseline |
 | `word_lists` | Dolch, Fry, Kuperman | `WORD_LISTS`: `list_name`, word, level/rank, age of acquisition |
 
@@ -54,7 +55,7 @@ primer-data bias-report             # slice the datasets for bias -> reports/bia
 The same stages run on a schedule in **Airflow**, one parallel task group per source: see
 [`dags/README.md`](../../../dags/README.md). The DAG tasks call `orchestration.py`.
 
-Sources with a pipeline: `tinystories`, `quickdraw`, `clear_corpus`, `sight_words`, `kuperman_aoa`, `storyweaver`, `african_storybook`.
+Sources with a pipeline: `tinystories`, `quickdraw`, `clear_corpus`, `sight_words`, `kuperman_aoa`, `storyweaver`, `african_storybook`, `amateur_drawings`. All but `amateur_drawings` also run in Airflow; its first ingest is a ~48 GB download, so it runs once by hand from the CLI (see Source notes).
 
 - `--batch-size N` sets the batch size: records for TinyStories, categories for Quick, Draw! (defaults in `configs/sources.yaml`).
 - `--data-uri <folder>` writes somewhere else, such as a local folder for testing.
@@ -78,19 +79,19 @@ is KAN-80; tying the report to a frozen dataset version is KAN-81.
 
 ## Versions
 
-`primer-data version v1 -m "what changed"` freezes everything in `processed/` as a named version:
+`primer-data version v1.2 -m "what changed"` (the next unused tag; `v1.1` is current) freezes everything in `processed/` as a named version:
 
-1. Every file in each dataset is recorded with its exact GCS object generation in `metadata/versions/v1.json`. The bucket has object versioning on, so a version reads back identically even if files are later replaced or re-processed. `read_dataset(..., version="v1")` reads those exact objects.
+1. Every file in each dataset is recorded with its exact GCS object generation in `metadata/versions/v1.2.json`. The bucket has object versioning on, so a version reads back identically even if files are later replaced or re-processed. `read_dataset(..., version="v1.2")` reads those exact objects.
 2. A `version` run manifest is written per source, so the dashboard shows which version each source is in.
 3. DVC pointer files `data/<dataset>.dvc` are refreshed with `dvc import-url --version-aware --no-download`. They record the same object versions **without downloading or copying any data**. Commit them and tag the commit:
 
 ```bash
 git add data/*.dvc
-git commit -m "chore(data): data version v1 (KAN-<n>)"
-git tag data-v1
+git commit -m "chore(data): data version v1.2 (KAN-<n>)"
+git tag data-v1.2
 ```
 
-To get a version's files onto a machine that needs local copies (e.g. a training VM): `git checkout data-v1 && dvc pull data/drawings.dvc`.
+To get a version's files onto a machine that needs local copies (e.g. a training VM): `git checkout data-v1.1 && dvc pull data/drawings.dvc`.
 
 Versions can't be overwritten. Picture-book `image_uri`s point into `raw/`, which is never modified, so they stay valid for every version. Old copies of `metadata/` files are deleted after 30 days; old copies of datasets are kept.
 
@@ -154,6 +155,13 @@ When a source legitimately changes (a new column, a new source value), re-run
   - Pratham's image bank describes every illustration; those descriptions become `image_caption` (useful for the illustration style model).
   - Neither mirror has reading levels, so `reading_level` is empty until the readability scorer fills it.
 - **Kuperman** comes from Brysbaert's 51,715-word file on OSF; only the ~31,000 words with a Kuperman rating are kept.
+- **Amateur Drawings** (Meta FAIR) is over 178,000 drawings of human figures with a bounding box, segmentation polygon and 17 joints each (COCO keypoints), published as a ~290 MB annotations file and a ~48 GB gzipped tar of PNGs.
+  - A new batch is made only when either file's ETag changes (size and Last-Modified date if the server sends no ETag; with none of them ingest stops rather than download again), which a HEAD request checks without downloading.
+  - If validation fails, the batch stays in `raw/` and `run` won't download it again; fix the cause and run `validate` and `preprocess` on it.
+  - The archive is streamed image by image into `raw/amateur_drawings/<batch>/amateur_drawings/<x>/<uuid>.png` (the annotations' own paths), with `_files.jsonl.gz` listing each image's size and SHA-256. Rows point at those PNGs through `image_uri`.
+  - Meta's PNGs are resized to 512 px on the long side, and the boxes, joints and polygons are in that resized frame, while the annotations' `width`/`height` are the uploaded size. So each PNG's real size is read from its header (recorded in `_files.jsonl.gz` at ingest; batches ingested before that read it back from the bucket, ~5 minutes per stage) and becomes `width`/`height`; the uploaded size is kept as `original_width`/`original_height`. Validation checks boxes against the PNG.
+  - Validation requires one annotation per image and unique annotation ids (`record_id` comes from them). Preprocessing drops images missing from the archive, files that aren't readable PNGs, empty or malformed bounding boxes, malformed keypoints and byte-identical duplicates, using the same tests as validation, whose limits stop a batch where too many would go. The first batch lost 3 zero-height boxes and 3,182 duplicates, leaving 174,981 rows. The archive also holds 3,966 PNGs with no annotation; they stay in `raw/` but get no row.
+  - Download both files first (`curl -C -` resumes a dropped download) and set `PRIMER_AMATEUR_DRAWINGS_DIR` to their folder; the source then reads them from there instead of the network, so a failed upload doesn't mean downloading 48 GB again. Steps: [`docs/runbooks/full-ingest.md`](../../../docs/runbooks/full-ingest.md).
 
 ## Adding a source
 
