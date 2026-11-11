@@ -4,7 +4,7 @@ A child draws characters and scenes. The Primer turns those drawings into a pers
 
 This is our MLOps course team project (IE 7374), inspired by Y Combinator's *"The Primer"* request for an adaptive AI reading tutor for kids.
 
-> **Status:** the **data pipeline** is built and running: seven open datasets are downloaded, validated, cleaned, versioned with DVC and orchestrated with Airflow. Model training starts next. This README documents the data pipeline end to end.
+> **Status:** the **data pipeline** is built and running: eight open datasets are downloaded, validated, cleaned and versioned with DVC (all frozen as data version `v1`), seven of them orchestrated with Airflow (Amateur Drawings, a 48 GB archive, runs once by hand from the CLI). Model training starts next. This README documents the data pipeline end to end.
 
 ## Contents
 
@@ -28,9 +28,10 @@ This is our MLOps course team project (IE 7374), inspired by Y Combinator's *"Th
 
 ```mermaid
 flowchart LR
-    subgraph Sources["7 open sources"]
+    subgraph Sources["8 open sources"]
         TS[TinyStories]
         QD[Quick, Draw!]
+        AD[Amateur Drawings<br/>CLI only]
         CL[CLEAR]
         WL[Dolch / Fry / Kuperman]
         PB[StoryWeaver +<br/>African Storybook]
@@ -45,10 +46,11 @@ flowchart LR
     S --> T[tracker dashboard]
 ```
 
-| Dataset (`processed/`) | Rows today | Used by |
+| Dataset (`processed/`) | Rows in `v1` | Used by |
 |---|---|---|
+| `stories_text` | 1,799,990 | story LLM |
 | `drawings` | 632,746 | drawing recognizer |
-| `stories_text` | 54,642 | story LLM |
+| `character_drawings` | 174,983 | drawing understanding, character sheet |
 | `word_lists` | 32,323 | target-word selection |
 | `storybook_pages` | 7,142 pages (with illustrations) | illustration style, readability |
 | `readability` | 4,723 | readability scorer |
@@ -101,6 +103,7 @@ Only open datasets, downloaded by code (no manual steps). Each processed record 
 | **Kuperman AoA** norms | age of acquisition for ~31k words | Brysbaert's OSF file | snapshot |
 | **StoryWeaver** (Pratham Books) | 391 illustrated books, page text + images + captions | Global Storybooks GitHub mirror | snapshot |
 | **African Storybook** | 363 illustrated books, page text + images | Global Storybooks GitHub mirror | snapshot |
+| **Amateur Drawings** (Meta FAIR) | 178k+ drawings of human figures with box, joints and mask | Meta's download server, ~48 GB archive streamed into the bucket (CLI only, not in the Airflow DAG) | snapshot |
 
 - **Incremental** sources continue where the last run stopped (position saved in `metadata/state/<source>.json`).
 - **Snapshot** sources re-download a fixed file or repo and make a new batch only when it changed; otherwise the run reports "nothing new" and skips.
@@ -117,7 +120,7 @@ Every source implements the same three stages ([`src/primer/data/sources/base.py
 | **validate** | Source-specific checks: record counts, required fields, unique ids, empty or malformed records, value ranges, image coverage and page/image alignment. **Any failed check fails the run** before anything reaches `processed/` | checks recorded in the run manifest |
 | **preprocess** | Clean and transform into one schema per dataset type: Unicode/whitespace normalization, length filters, exact-duplicate removal (within the batch and against earlier batches), stroke and image metadata, page/illustration alignment, label normalization | `processed/<dataset>/source=<source>/batch=<id>.parquet` |
 
-Schemas are defined once in [`src/primer/data/schemas.py`](src/primer/data/schemas.py) (`STORIES_TEXT`, `DRAWINGS`, `READABILITY`, `WORD_LISTS`, `STORYBOOK_PAGES`) and every source is forced into them, so model code reads all sources of a dataset together:
+Schemas are defined once in [`src/primer/data/schemas.py`](src/primer/data/schemas.py) (`STORIES_TEXT`, `DRAWINGS`, `CHARACTER_DRAWINGS`, `READABILITY`, `WORD_LISTS`, `STORYBOOK_PAGES`) and every source is forced into them, so model code reads all sources of a dataset together:
 
 ```python
 from primer.data.catalog import read_dataset

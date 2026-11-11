@@ -1,0 +1,130 @@
+{
+  "dataset": "character_drawings",
+  "min_rows": 87491,
+  "created_at": "2026-11-11T00:25:40.121166+00:00",
+  "columns": {
+    "record_id": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1
+    },
+    "source": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1,
+      "allowed": [
+        "amateur_drawings"
+      ]
+    },
+    "source_id": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1
+    },
+    "image_uri": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1
+    },
+    "image_sha256": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1
+    },
+    "width": {
+      "kind": "int",
+      "max_null_fraction": 0.0,
+      "min": 41.2,
+      "max": 554.8
+    },
+    "height": {
+      "kind": "int",
+      "max_null_fraction": 0.0,
+      "min": 45.6,
+      "max": 554.4
+    },
+    "original_width": {
+      "kind": "int",
+      "max_null_fraction": 0.0,
+      "min": 1.0,
+      "max": 9890.9
+    },
+    "original_height": {
+      "kind": "int",
+      "max_null_fraction": 0.0,
+      "min": 1.0,
+      "max": 13188.0
+    },
+    "bbox_x": {
+      "kind": "float",
+      "max_null_fraction": 0.0,
+      "min": 0.0,
+      "max": 497.988
+    },
+    "bbox_y": {
+      "kind": "float",
+      "max_null_fraction": 0.0,
+      "min": 0.0,
+      "max": 563.2
+    },
+    "bbox_width": {
+      "kind": "float",
+      "max_null_fraction": 0.0,
+      "min": 1.0,
+      "max": 561.179
+    },
+    "bbox_height": {
+      "kind": "float",
+      "max_null_fraction": 0.0,
+      "min": 0.0,
+      "max": 563.2
+    },
+    "area": {
+      "kind": "float",
+      "max_null_fraction": 0.0,
+      "min": 0.0,
+      "max": 284430.0
+    },
+    "keypoints": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1
+    },
+    "n_keypoints": {
+      "kind": "int",
+      "max_null_fraction": 0.0,
+      "min": 15.3,
+      "max": 18.7
+    },
+    "segmentation": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1
+    },
+    "license": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1,
+      "allowed": [
+        "CC-BY-NC-4.0"
+      ]
+    },
+    "attribution": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1,
+      "allowed": [
+        "Amateur Drawings Dataset, Meta AI (Smith et al., 2023)"
+      ]
+    },
+    "batch_id": {
+      "kind": "string",
+      "max_null_fraction": 0.0,
+      "min_length": 1
+    },
+    "ingested_at": {
+      "kind": "datetime",
+      "max_null_fraction": 0.0
+    }
+  }
+}

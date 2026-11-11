@@ -31,6 +31,7 @@ Train on a named version (see [Versions](#versions)) so results are reproducible
 | `stories_text` | TinyStories, StoryWeaver, African Storybook | `STORIES_TEXT`: one row per story |
 | `storybook_pages` | StoryWeaver, African Storybook | `STORYBOOK_PAGES`: page text, `image_uri` (GCS), caption, alignment |
 | `drawings` | Quick, Draw! | `DRAWINGS`: strokes as JSON on a 0–255 grid, label, recognized |
+| `character_drawings` | Amateur Drawings | `CHARACTER_DRAWINGS`: `image_uri` (GCS), PNG size and uploaded size, bounding box, 17 joints and segmentation polygon (COCO) |
 | `readability` | CLEAR | `READABILITY`: text, `score` (BT_easiness, higher = easier), Flesch-Kincaid grade baseline |
 | `word_lists` | Dolch, Fry, Kuperman | `WORD_LISTS`: `list_name`, word, level/rank, age of acquisition |
 
@@ -54,7 +55,7 @@ primer-data bias-report             # slice the datasets for bias -> reports/bia
 The same stages run on a schedule in **Airflow**, one parallel task group per source: see
 [`dags/README.md`](../../../dags/README.md). The DAG tasks call `orchestration.py`.
 
-Sources with a pipeline: `tinystories`, `quickdraw`, `clear_corpus`, `sight_words`, `kuperman_aoa`, `storyweaver`, `african_storybook`.
+Sources with a pipeline: `tinystories`, `quickdraw`, `clear_corpus`, `sight_words`, `kuperman_aoa`, `storyweaver`, `african_storybook`, `amateur_drawings`. All but `amateur_drawings` also run in Airflow; its first ingest is a ~48 GB download, so it runs once by hand from the CLI (see Source notes).
 
 - `--batch-size N` sets the batch size: records for TinyStories, categories for Quick, Draw! (defaults in `configs/sources.yaml`).
 - `--data-uri <folder>` writes somewhere else, such as a local folder for testing.
@@ -154,6 +155,12 @@ When a source legitimately changes (a new column, a new source value), re-run
   - Pratham's image bank describes every illustration; those descriptions become `image_caption` (useful for the illustration style model).
   - Neither mirror has reading levels, so `reading_level` is empty until the readability scorer fills it.
 - **Kuperman** comes from Brysbaert's 51,715-word file on OSF; only the ~31,000 words with a Kuperman rating are kept.
+- **Amateur Drawings** (Meta FAIR) is over 178,000 drawings of human figures with a bounding box, segmentation polygon and 17 joints each (COCO keypoints), published as a ~290 MB annotations file and a ~48 GB gzipped tar of PNGs.
+  - A new batch is made only when either file's ETag changes, which a HEAD request checks without downloading.
+  - The archive is streamed image by image into `raw/amateur_drawings/<batch>/amateur_drawings/<x>/<uuid>.png` (the annotations' own paths), with `_files.jsonl.gz` listing each image's size and SHA-256. Rows point at those PNGs through `image_uri`.
+  - Meta's PNGs are resized to 512 px on the long side, and the boxes, joints and polygons are in that resized frame, while the annotations' `width`/`height` are the uploaded size. So each PNG's real size is read from its header (recorded in `_files.jsonl.gz` at ingest; batches ingested before that read it back from the bucket, ~5 minutes per stage) and becomes `width`/`height`; the uploaded size is kept as `original_width`/`original_height`. Validation checks boxes against the PNG.
+  - Images missing from the archive, files that aren't readable PNGs and byte-identical duplicates are dropped in preprocessing (the first batch: 3,183 duplicates, leaving 174,983 rows). The archive also holds 3,966 PNGs with no annotation; they stay in `raw/` but get no row.
+  - Download both files first (`curl -C -` resumes a dropped download) and set `PRIMER_AMATEUR_DRAWINGS_DIR` to their folder; the source then reads them from there instead of the network, so a failed upload doesn't mean downloading 48 GB again. Steps: [`docs/runbooks/full-ingest.md`](../../../docs/runbooks/full-ingest.md).
 
 ## Adding a source
 

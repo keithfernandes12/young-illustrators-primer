@@ -19,6 +19,10 @@ african_storybook  ingest → validate → preprocess ─┘
 ```
 
 - The seven source groups run **in parallel**; inside a group the stages run in order.
+- Amateur Drawings is not in the DAG: its first ingest is a ~48 GB download, so it runs once from
+  the CLI (`primer-data run amateur_drawings`, see the
+  [data README](../src/primer/data/README.md#source-notes)). `check_data` still validates its
+  `character_drawings` dataset.
 - **ingest** fetches the next batch into `raw/`. When a source has nothing new (an unchanged
   snapshot, or an incremental source that is fully ingested) the task is **skipped**, and so are the
   rest of that source's tasks. Downloads retry 3 times with exponential backoff.
