@@ -4,7 +4,7 @@ A child draws characters and scenes. The Primer turns those drawings into a pers
 
 This is our MLOps course team project (IE 7374), inspired by Y Combinator's *"The Primer"* request for an adaptive AI reading tutor for kids.
 
-> **Status:** the **data pipeline** is built and running: eight open datasets are downloaded, validated, cleaned and versioned with DVC (all frozen as data version `v1`), seven of them orchestrated with Airflow (Amateur Drawings, a 48 GB archive, runs once by hand from the CLI). Model training starts next. This README documents the data pipeline end to end.
+> **Status:** the **data pipeline** is built and running: eight open sources are downloaded, validated, cleaned into six datasets and versioned with DVC; seven sources are orchestrated with Airflow (Amateur Drawings, a 48 GB archive, runs once by hand from the CLI). Model training starts next. This README documents the data pipeline end to end.
 
 ## Contents
 
@@ -46,11 +46,11 @@ flowchart LR
     S --> T[tracker dashboard]
 ```
 
-| Dataset (`processed/`) | Rows in `v1` | Used by |
+| Dataset (`processed/`) | Rows in `v1.1` | Used by |
 |---|---|---|
 | `stories_text` | 1,799,990 | story LLM |
 | `drawings` | 632,746 | drawing recognizer |
-| `character_drawings` | 174,983 | drawing understanding, character sheet |
+| `character_drawings` | 174,981 | drawing understanding, character sheet |
 | `word_lists` | 32,323 | target-word selection |
 | `storybook_pages` | 7,142 pages (with illustrations) | illustration style, readability |
 | `readability` | 4,723 | readability scorer |
@@ -92,7 +92,7 @@ Dependencies are declared in [`pyproject.toml`](pyproject.toml) (extras: `dev`, 
 
 ## 3. Data sources
 
-Only open datasets, downloaded by code (no manual steps). Each processed record keeps its `license` and `attribution`.
+Only open datasets, downloaded by code. Seven sources need no manual steps; Amateur Drawings' 48 GB archive is downloaded by a person first and then ingested from the CLI ([runbook](docs/runbooks/full-ingest.md)). Each processed record keeps its `license` and `attribution`.
 
 | Source | What it gives us | How it's fetched | Kind |
 |---|---|---|---|

@@ -3,6 +3,7 @@
 import gzip
 import io
 import json
+import logging
 import struct
 import tarfile
 
@@ -62,7 +63,12 @@ def default_files():
             "amateur_drawings/0/2.png": png(body=b"zero"), "../escape.png": b"nope"}
 
 
-def make_source(store, annotations=None, files=None, max_missing=0.3, fail_after=None):
+def all_files(n=4):
+    """A distinct 50x100 PNG for every annotated image."""
+    return {f"amateur_drawings/{i % 2}/{i}.png": png(body=bytes([i])) for i in range(n)}
+
+
+def make_source(store, annotations=None, files=None, max_missing=0.3, fail_after=None, min_images=2):
     remote = {ANN_URL: {"etag": "a1", "bytes": 1}, ARC_URL: {"etag": "t1", "bytes": 1}}
     blobs = {ANN_URL: json.dumps(annotations or coco()).encode(),
              ARC_URL: tar_gz(default_files() if files is None else files)}
@@ -78,7 +84,7 @@ def make_source(store, annotations=None, files=None, max_missing=0.3, fail_after
 
     cfg = SourceConfig(key="amateur_drawings", name="Amateur Drawings", license="CC-BY-NC-4.0",
                        attribution="AD", ingest={"annotations_url": ANN_URL, "archive_url": ARC_URL,
-                                                 "min_images": 2, "max_missing": max_missing})
+                                                 "min_images": min_images, "max_missing": max_missing})
     return AmateurDrawings(cfg, store, head=head, opener=opener), remote
 
 
@@ -162,6 +168,7 @@ def test_png_size_reads_the_header_and_rejects_other_files():
     assert png_size(png(384, 512, b"rest")) == (384, 512)
     assert png_size(b"GIF89a" + bytes(30)) is None
     assert png_size(png()[:20]) is None
+    assert png_size(png(0, 100)) is None                     # a zero size is not a usable size
 
 
 def test_sizes_are_read_from_the_bucket_for_batches_ingested_without_them(store, batch_ids):
@@ -187,3 +194,91 @@ def test_images_that_are_not_pngs_fail_validation_and_are_dropped(store, batch_i
         pipeline.validate(source, batch)
     pipeline.preprocess(source, batch)
     assert read_dataset("character_drawings", store)["source_id"].tolist() == ["0", "1", "2"]
+
+
+def test_images_are_uploaded_in_chunks(store, batch_ids, monkeypatch):
+    monkeypatch.setattr(amateur_drawings, "WRITE_CHUNK", 2)
+    sizes = []
+    write_many = store.write_many
+    monkeypatch.setattr(store, "write_many", lambda files: (sizes.append(len(files)), write_many(files)))
+    files = all_files(5)
+    source, _ = make_source(store, annotations=coco(5), files=files)
+    batch = pipeline.ingest(source)
+    assert sizes == [2, 2, 1]                                  # streamed: never the whole archive at once
+    for name, data in files.items():
+        assert store.read_bytes(f"raw/amateur_drawings/{batch}/{name}") == data
+
+
+def test_a_clean_batch_passes_including_a_box_within_the_rounding_slack(store, batch_ids):
+    data = coco(4)
+    data["annotations"][0]["bbox"] = [0, 0, 51, 100]           # 1 px past a 50 px PNG: within slack
+    source, _ = make_source(store, annotations=data, files=all_files())
+    pipeline.validate(source, pipeline.ingest(source))
+
+
+@pytest.mark.parametrize(("check", "mutate", "options"), [
+    ("images", lambda c: None, {"min_images": 5}),
+    ("image_fields", lambda c: c["images"][0].pop("width"), {}),
+    ("annotation_fields", lambda c: c["annotations"][0].pop("id"), {}),
+    ("annotation_fields", lambda c: c["annotations"][0].pop("area"), {}),
+    ("unique_image_id", lambda c: c["images"][1].update(id=0), {}),
+    ("unique_annotation_id", lambda c: c["annotations"][1].update(id=0), {}),
+    ("one_annotation_per_image", lambda c: c["annotations"].append({**c["annotations"][0], "id": 50}), {}),
+    ("keypoints_not_17", lambda c: c["annotations"][0].update(keypoints=keypoints()[:-1]), {}),
+    ("bbox_malformed_or_empty", lambda c: c["annotations"][0].update(bbox=[1, 2, 30, 0]), {}),
+    ("bbox_outside_image", lambda c: c["annotations"][0].update(bbox=[0, 0, 53, 100]), {}),
+])
+def test_each_validation_check_catches_its_problem(store, batch_ids, check, mutate, options):
+    data = coco(4)
+    mutate(data)
+    source, _ = make_source(store, annotations=data, files=all_files(), **options)
+    batch = pipeline.ingest(source)
+    with pytest.raises(ValidationFailed, match=check):
+        pipeline.validate(source, batch)
+
+
+def test_validation_fails_on_empty_image_files(store, batch_ids):
+    files = all_files()
+    files["amateur_drawings/0/0.png"] = b""
+    source, _ = make_source(store, files=files)
+    batch = pipeline.ingest(source)
+    with pytest.raises(ValidationFailed, match="empty_image_file"):
+        pipeline.validate(source, batch)
+
+
+def test_preprocess_drops_empty_boxes_and_malformed_annotations_instead_of_crashing(store, batch_ids):
+    data = coco(4)
+    data["annotations"][0]["bbox"] = [1, 2, 30, 0]            # zero height, like 3 boxes in Meta's data
+    data["annotations"][1]["bbox"] = [1, 2, 30]               # wrong length
+    data["annotations"][2]["keypoints"] = keypoints()[:-1]    # 50 numbers, not 51
+    source, _ = make_source(store, annotations=data, files=all_files())
+    pipeline.preprocess(source, pipeline.ingest(source))
+    assert read_dataset("character_drawings", store)["source_id"].tolist() == ["3"]
+
+
+def test_a_failed_validation_points_at_validate_instead_of_reingesting(store, batch_ids, caplog):
+    source, _ = make_source(store, max_missing=0.005)
+    batch = pipeline.ingest(source)
+    with pytest.raises(ValidationFailed):
+        pipeline.validate(source, batch)
+    with caplog.at_level(logging.WARNING):
+        assert pipeline.ingest(source) is None                # same files upstream: no re-download
+    assert f"Batch {batch} was ingested but never preprocessed" in caplog.text
+
+
+def test_without_etags_size_and_date_identify_the_version(store, batch_ids):
+    source, remote = make_source(store)
+    for url in remote:
+        remote[url] = {"etag": "", "bytes": 10, "last_modified": "Mon, 01 Jan 2024 00:00:00 GMT"}
+    assert pipeline.ingest(source) is not None
+    assert pipeline.ingest(source) is None                    # same size and date: unchanged
+    remote[ARC_URL] = {"etag": "", "bytes": 11, "last_modified": "Tue, 02 Jan 2024 00:00:00 GMT"}
+    assert pipeline.ingest(source) is not None
+
+
+def test_with_no_way_to_tell_the_version_ingest_fails_instead_of_downloading(store, batch_ids):
+    source, remote = make_source(store)
+    remote[ARC_URL] = {"etag": "", "bytes": 0}
+    with pytest.raises(RuntimeError, match="Can't tell whether"):
+        pipeline.ingest(source)
+    assert not store.glob("raw/amateur_drawings/*")

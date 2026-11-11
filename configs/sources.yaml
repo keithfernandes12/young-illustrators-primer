@@ -122,7 +122,7 @@ sources:
     mvp: true
     format: PNG images (gzipped tar) + COCO keypoint annotations (JSON)
     url: https://github.com/facebookresearch/AnimatedDrawings
-    license: CC-BY-NC-4.0               # as the annotations file states for every image
+    license: CC-BY-NC-4.0               # Meta's stated licence for the dataset; metadata, not checked
     attribution: "Amateur Drawings Dataset, Meta AI (Smith et al., 2023)"
     ingest:
       annotations_url: https://dl.fbaipublicfiles.com/amateur_drawings/amateur_drawings_annotations.json

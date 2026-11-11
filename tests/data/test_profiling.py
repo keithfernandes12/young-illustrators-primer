@@ -209,6 +209,21 @@ def _write(store, df, batch):
     store.write_parquet(f"processed/readability/source=clear_corpus/batch={batch}.parquet", df)
 
 
+def test_write_schemas_keeps_the_date_of_an_unchanged_contract(store, tmp_path):
+    schemas = tmp_path / "schemas"
+    _write(store, frame(), "20261001T000000Z")
+    path = profiling.write_schemas(store, schemas_dir=schemas, datasets=("readability",))[0]
+    first = path.read_bytes()
+    assert b"\r\n" not in first                                   # LF, as git stores it
+
+    profiling.write_schemas(store, schemas_dir=schemas, datasets=("readability",))
+    assert path.read_bytes() == first                             # nothing changed: no diff at all
+
+    _write(store, frame(seed=3), "20261002T000000Z")              # new data, new contract and date
+    profiling.write_schemas(store, schemas_dir=schemas, datasets=("readability",))
+    assert json.loads(path.read_text())["created_at"] != json.loads(first)["created_at"]
+
+
 def test_check_datasets_saves_profiles_and_reports_errors_and_drift(store, tmp_path):
     schemas = tmp_path / "schemas"
     _write(store, frame(), "20261001T000000Z")

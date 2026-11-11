@@ -1,7 +1,7 @@
 {
   "dataset": "word_lists",
   "min_rows": 16161,
-  "created_at": "2026-11-11T00:25:41.974444+00:00",
+  "created_at": "2026-10-30T00:35:29.058370+00:00",
   "columns": {
     "record_id": {
       "kind": "string",

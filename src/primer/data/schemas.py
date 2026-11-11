@@ -86,7 +86,8 @@ CHARACTER_DRAWINGS = {
     "bbox_height": "float64",
     "area": "float64",              # segmentation area in pixels
     "keypoints": "string",          # JSON: 17 [x, y, visibility] joints in COCO order (nose, eyes, ears, ...)
-    "n_keypoints": "int32",         # joints with visibility > 0
+    "n_keypoints": "int32",         # joints with visibility > 0 (17 for every Amateur Drawings row today;
+                                    # kept for sources or releases with hidden joints)
     "segmentation": "string",       # JSON: COCO polygons [[x1, y1, x2, y2, ...], ...]
     "license": "string",
     "attribution": "string",
