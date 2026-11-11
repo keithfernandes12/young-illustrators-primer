@@ -41,7 +41,7 @@ flowchart LR
     end
     Sources --> I
     P --> S[summarize<br/>run report]
-    P --> D[(DVC versions<br/>data-v0.1)]
+    P --> D[(DVC versions<br/>data-v1.1)]
     P -.-> B[bias report<br/>run by hand]
     S --> T[tracker dashboard]
 ```
@@ -125,7 +125,7 @@ Schemas are defined once in [`src/primer/data/schemas.py`](src/primer/data/schem
 ```python
 from primer.data.catalog import read_dataset
 drawings = read_dataset("drawings")                    # current data
-drawings_v01 = read_dataset("drawings", version="v0.1")  # exactly as frozen in a version
+drawings_v11 = read_dataset("drawings", version="v1.1")  # exactly as frozen in a version
 ```
 
 **Anomalies the checks have already caught** in real data: a README parsed as a story, back-cover blurbs hiding credits, empty stories in a mirror, a duplicated word in the Fry list, and nine CLEAR excerpts with no publication year. Tests caught two more before they reached real data: Excel turning "900" into "900.0", and same-second batches overwriting each other. Each one now has a regression test.
@@ -167,14 +167,21 @@ african_storybook  ingest → validate → preprocess ─┘
 The bucket has **object versioning** on, so a replaced file keeps its old copy. A dataset version records the exact GCS object generation of every processed file:
 
 ```bash
-primer-data version v0.2 -m "what changed"   # freeze; writes metadata/versions/v0.2.json
+primer-data version v1.2 -m "what changed"   # freeze; writes metadata/versions/v1.2.json
 primer-data dvc-pointers                     # refresh data/*.dvc (no data downloaded or copied)
-git add data/*.dvc && git commit -m "chore(data): data version v0.2 (KAN-<n>)" && git tag data-v0.2
+git add data/*.dvc && git commit -m "chore(data): data version v1.2 (KAN-<n>)" && git tag data-v1.2
 ```
 
 - [`data/*.dvc`](data/) are DVC `import-url --version-aware` pointers: they record the same object versions **without storing any data in git or the DVC cache**.
-- Versions are permanent (a tag can't be overwritten). The first one, **`data-v0.1`**, is tagged in git.
-- Get a version back: `git checkout data-v0.1 && dvc pull data/drawings.dvc`, or in Python `read_dataset(..., version="v0.1")`.
+- Versions are permanent (a tag can't be overwritten), so a fix means a new version:
+
+  | Version | Git tag | What it holds |
+  |---|---|---|
+  | `v0.1` | `data-v0.1` | the first freeze: 2,754 stories, no Amateur Drawings |
+  | `v1` | none | all sources; **superseded** by `v1.1` (it kept 3 zero-height Amateur Drawings boxes, found in review) |
+  | **`v1.1`** | **`data-v1.1`** | **current**: all eight sources, 2.65M rows, the one to train on |
+
+- Get a version back: `git checkout data-v1.1 && dvc pull data/drawings.dvc`, or in Python `read_dataset(..., version="v1.1")`.
 
 Details: [`src/primer/data/README.md`](src/primer/data/README.md) → Versions.
 

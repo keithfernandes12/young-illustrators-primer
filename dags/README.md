@@ -54,14 +54,14 @@ Trigger parameters (the **Trigger** form in the UI):
 
 ### `primer_freeze_version`
 
-Freezes the current processed data as a named version (`tag`, e.g. `v1`) in
+Freezes the current processed data as a named version (`tag`, the next unused one, e.g. `v1.2`) in
 `metadata/versions/<tag>.json`. Airflow has no git clone, so afterwards a person refreshes the DVC
 pointer files and tags the commit:
 
 ```bash
 primer-data dvc-pointers
-git add data/*.dvc && git commit -m "chore(data): data version v1 (KAN-<n>)"
-git tag data-v1
+git add data/*.dvc && git commit -m "chore(data): data version v1.2 (KAN-<n>)"
+git tag data-v1.2
 ```
 
 ## Run it

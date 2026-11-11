@@ -1,5 +1,5 @@
 {
-  "created_at": "2026-11-08T11:01:14.989899+00:00",
+  "created_at": "2026-11-11T09:28:55.356050+00:00",
   "data_uri": "gs://young-illustrators-primer-data",
   "max_country_share": 0.2,
   "drawings": {
@@ -184,7 +184,7 @@
     }
   },
   "stories": {
-    "rows": 54642,
+    "rows": 1799990,
     "analysed": 20754,
     "lead_by_source": [
       {
@@ -201,15 +201,15 @@
       },
       {
         "source": "tinystories",
-        "female": 0.4624,
+        "female": 0.4639,
         "male": 0.4741,
-        "neutral": 0.0636
+        "neutral": 0.062
       }
     ],
     "lead_counts": {
       "male": 9867,
-      "female": 9508,
-      "neutral": 1379
+      "female": 9539,
+      "neutral": 1348
     },
     "after_by_source": [
       {
@@ -228,20 +228,20 @@
         "source": "tinystories",
         "female": 9482,
         "male": 9482,
-        "neutral": 1271
+        "neutral": 1240
       }
     ],
     "augmented_by_source": {
-      "tinystories": 235,
+      "tinystories": 204,
       "african_storybook": 70,
       "storyweaver": 54
     },
     "after_counts": {
       "male": 9867,
       "female": 9867,
-      "neutral": 1379
+      "neutral": 1348
     },
-    "augmented_rows": 359
+    "augmented_rows": 328
   },
   "readability": {
     "rows": 4723,

@@ -21,7 +21,7 @@ pages = read_dataset("storybook_pages")                    # picture-book pages 
 drawings = read_dataset("drawings")                        # Quick, Draw!
 readability = read_dataset("readability")                  # CLEAR
 words = read_dataset("word_lists", sources=["sight_words"])
-drawings_v01 = read_dataset("drawings", version="v0.1")   # exactly as frozen in a version
+drawings_v11 = read_dataset("drawings", version="v1.1")   # exactly as frozen in a version (current)
 ```
 
 Train on a named version (see [Versions](#versions)) so results are reproducible.
@@ -79,19 +79,19 @@ is KAN-80; tying the report to a frozen dataset version is KAN-81.
 
 ## Versions
 
-`primer-data version v1 -m "what changed"` freezes everything in `processed/` as a named version:
+`primer-data version v1.2 -m "what changed"` (the next unused tag; `v1.1` is current) freezes everything in `processed/` as a named version:
 
-1. Every file in each dataset is recorded with its exact GCS object generation in `metadata/versions/v1.json`. The bucket has object versioning on, so a version reads back identically even if files are later replaced or re-processed. `read_dataset(..., version="v1")` reads those exact objects.
+1. Every file in each dataset is recorded with its exact GCS object generation in `metadata/versions/v1.2.json`. The bucket has object versioning on, so a version reads back identically even if files are later replaced or re-processed. `read_dataset(..., version="v1.2")` reads those exact objects.
 2. A `version` run manifest is written per source, so the dashboard shows which version each source is in.
 3. DVC pointer files `data/<dataset>.dvc` are refreshed with `dvc import-url --version-aware --no-download`. They record the same object versions **without downloading or copying any data**. Commit them and tag the commit:
 
 ```bash
 git add data/*.dvc
-git commit -m "chore(data): data version v1 (KAN-<n>)"
-git tag data-v1
+git commit -m "chore(data): data version v1.2 (KAN-<n>)"
+git tag data-v1.2
 ```
 
-To get a version's files onto a machine that needs local copies (e.g. a training VM): `git checkout data-v1 && dvc pull data/drawings.dvc`.
+To get a version's files onto a machine that needs local copies (e.g. a training VM): `git checkout data-v1.1 && dvc pull data/drawings.dvc`.
 
 Versions can't be overwritten. Picture-book `image_uri`s point into `raw/`, which is never modified, so they stay valid for every version. Old copies of `metadata/` files are deleted after 30 days; old copies of datasets are kept.
 
