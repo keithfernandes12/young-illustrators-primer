@@ -22,6 +22,12 @@ positive by appending `# privacy: ok <reason>` to that line (reviewers will chec
 
 - Logging/printing/tracing of fields such as `child_name`, `first_name`, `email`, `phone`,
   `address`, `birthdate`/`dob`, `age` with a name, raw `audio`, raw `drawing`/image bytes, `transcript`.
+
+  In Python this is decided from the parsed syntax tree, so only values that actually reach the
+  sink count. `log.info("page for %s", child_name)` is a finding; `log.warning("Email alerts are
+  off")` is not, because the privacy word is in the message rather than the data. A keyed sink such
+  as `span.set_attribute("child_name", v)` or `mlflow.log_param(...)` is judged on its field name
+  too. Other languages still use a line-level regex, which is blunter.
 - PII placed in URLs, query strings, Pub/Sub attributes, or GCS object names.
 - Audio written to GCS/disk without checking a parent opt-in flag on the same code path.
 - Hard-coded secrets (API keys, private keys).
