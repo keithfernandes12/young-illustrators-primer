@@ -17,7 +17,7 @@ The AI coding framework (`ai-coding-framework`, KAN-19) makes a single supervise
 plan adds what an unattended session needs: one command that proves a change (`verify`), quality and
 privacy gates (`golden-gate`, `privacy-guard`), a wrapper that runs exactly one slice per iteration
 (`loop-worker`), Google Cloud skills (`deploy-cloud-run`, `train-vertex`), a second guard hook that
-keeps agents out of production (`guard_prod.py`), and loop prompts in `.claude/loops/`. The how-to is
+keeps agents off the live serving path (`guard_cloud.py`), and loop prompts in `.claude/loops/`. The how-to is
 the team tutorial that ships with this kit.
 
 ## Sources read
@@ -36,8 +36,9 @@ the team tutorial that ships with this kit.
 - **Patterns to follow** — hooks in Python with the `python3`-then-`python` launcher; scripts outside the
   package loaded by file path in tests; skills directly in `.claude/skills/`.
 - **Boundaries** — the new hook runs after `guard_bash.py` and never replaces it.
-- **Test plan** — `tests/agent_hooks/test_guard_prod.py`; the existing settings-command tests still read the
-  first PreToolUse hook (`guard_bash.py`).
+- **Test plan** — `tests/agent_hooks/test_guard_cloud.py`, which pins the repository-name collision
+  (the project id is also the repo name) and the single-project configuration; the existing
+  settings-command tests still read the first PreToolUse hook (`guard_bash.py`).
 
 ## Slices
 
@@ -46,13 +47,14 @@ the team tutorial that ships with this kit.
 *size: medium*
 
 Adds `.claude/skills/{verify,golden-gate,privacy-guard,loop-worker,deploy-cloud-run,train-vertex}`,
-`.claude/hooks/guard_prod.py` and its test, `.claude/loop.md`, `.claude/loops/`, the permission
+`.claude/hooks/guard_cloud.py` and its test, `.claude/loop.md`, `.claude/loops/`, the permission
 additions in `.claude/settings.json`, this plan and `mvp-cloud-deploy`, and a Skills row per new skill
 in `AGENTS.md`.
 
-- **Acceptance** — `pytest`, `ruff check .`, `mypy src` pass; `guard_prod.py` refuses a command naming
-  `$YIP_PROD_PROJECT`; `verify.py` prints `VERIFY_RESULT: PASS` on `main`.
-- **Depends on** — nothing. **Jira** — KAN-19 (or a new child issue).
+- **Acceptance** — `pytest`, `ruff check .`, `mypy src` pass; `guard_cloud.py` refuses a traffic
+  change, a delete and a foreign `--project` while allowing a `--no-traffic` canary and a `cd` into
+  the repository; `verify.py` prints `VERIFY_RESULT: PASS`.
+- **Depends on** — nothing. **Jira** — KAN-89.
 
 ### S2 · Per-person setup
 

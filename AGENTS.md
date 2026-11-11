@@ -164,15 +164,17 @@ PR, review yourself with `review-pr`, then open the PR. Before asking for review
 | `planning-poker` | size Jira issues as a team |
 | `refine-comments` | clean up code comments and docstrings without changing logic |
 | `verify` | run every CI check plus the privacy and infra gates; ends `VERIFY_RESULT: PASS/FAIL` |
-| `golden-gate` | compare golden-set metrics with the §7 targets; ends `GATE_RESULT: PASS/FAIL` |
+| `golden-gate` | compare golden-set metrics with the §7 targets; needs `primer.evaluation`, which does not exist yet, so it reports `GATE_RESULT: SKIP` |
 | `privacy-guard` | lint for child PII in logs, URLs, object names and stored audio |
 | `loop-worker` | run one unattended engineering-loop iteration on a plan (for `/goal`, `/loop`, Ralph) |
-| `train-vertex` | launch and track a Vertex AI training job, then run the golden gate |
-| `deploy-cloud-run` | canary, smoke-test, promote or roll back a Cloud Run service in staging |
+| `train-vertex` | launch and track a Vertex AI training job |
+| `deploy-cloud-run` | canary, smoke-test or roll back a Cloud Run service; a person promotes |
 
 Loop prompts for `/goal`, `/loop` and Ralph live in `.claude/loops/`; a bare `/loop` reads
-`.claude/loop.md`. Unattended work follows `docs/plans/autonomous-loops.md`. Agents never act on
-production: `.claude/hooks/guard_prod.py` refuses commands naming `$YIP_PROD_PROJECT`.
+`.claude/loop.md`. Unattended work follows `docs/plans/autonomous-loops.md`. There is one Google
+Cloud project, so `.claude/hooks/guard_cloud.py` guards the live serving path rather than a
+project name: agents may read cloud state and deploy canaries with `--no-traffic`, while traffic
+changes, deletes and IAM edits are left to a person.
 
 ## Tracking and communication
 

@@ -108,7 +108,7 @@
           },
           {
             "type": "command",
-            "command": "P=python3; $P -c \"\" 2>/dev/null || P=python; exec \"$P\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_prod.py\""
+            "command": "P=python3; $P -c \"\" 2>/dev/null || P=python; exec \"$P\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_cloud.py\""
           }
         ]
       }

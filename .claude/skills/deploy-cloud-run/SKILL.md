@@ -11,10 +11,14 @@ with `gcloud help <command>` before running it), `cloud-run-basics`,
 
 ## Environments
 
-| Env | Project (env var) | Who may deploy |
-|---|---|---|
-| staging | `$YIP_STAGING_PROJECT` | Claude, autonomously, through the scripts below |
-| prod | `$YIP_PROD_PROJECT` | Only after a human writes "deploy to prod approved" in this conversation. The `guard_prod.py` hook blocks prod commands otherwise. |
+There is one Google Cloud project (`$YIP_PROJECT`, also read as `$YIP_STAGING_PROJECT`), so the
+boundary is traffic, not a project id.
+
+| Action | Who may do it |
+|---|---|
+| Deploy a canary revision with `--no-traffic --tag` | Claude, autonomously, through the scripts below |
+| Smoke-test a canary by its tag URL | Claude, autonomously |
+| Send traffic to a revision, delete a service, change IAM | A person, in their own terminal. `guard_cloud.py` refuses these whatever the project. |
 
 Default region is `$YIP_REGION` (fallback `us-central1`, which has both L4 and
 RTX PRO 6000 GPUs on Cloud Run).
@@ -40,7 +44,8 @@ into the image.
 
 1. **Pre-flight**: `python .claude/skills/verify/scripts/verify.py` must end in
    `VERIFY_RESULT: PASS`. For model changes, `golden-gate` must end in
-   `GATE_RESULT: PASS`.
+   `GATE_RESULT: PASS` -- which needs `primer.evaluation`, so model deploys are blocked until
+   that lands (see docs/plans/autonomous-loops.md).
 2. **Build** with Cloud Build into Artifact Registry (tag = short git SHA):
    ```bash
    gcloud builds submit --project "$YIP_STAGING_PROJECT" \
