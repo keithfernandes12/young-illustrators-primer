@@ -14,8 +14,10 @@ Pairs with vendored skills: `trl-training` (LoRA/SFT recipes), `huggingface-visi
 1. `python .claude/skills/verify/scripts/verify.py` passes.
 2. Run a CPU smoke test with a tiny model and about 20 examples
    (`python -m primer.story.train --config configs/story_lora.yaml --smoke`). This is a
-   seconds-long import-and-one-step check, not training: `AGENTS.md` forbids local model
-   training. A job that crashes in step 1 on a GPU costs real credits.
+   seconds-long import-and-one-step check, not training. It is the only thing an agent session
+   may run here: `docs/adrs/where-model-training-happens.md` says agents never train, while a
+   member may train freely on their own machine. A job that crashes in step 1 on a GPU costs
+   real credits.
 3. The training data is a frozen dataset version (`primer-data versions`; freezing is the
    `freeze-dataset-version` skill and a person runs the bucket write). Never train on unfrozen data.
 4. Write the hypothesis for this run in the model's plan under "Verified facts" once it is checked.
@@ -62,6 +64,11 @@ gcloud run jobs execute yip-eval --project "$YIP_COMPUTE_PROJECT" --region "${YI
   The job's service account writes; the agent session does not.
 - Finish with `golden-gate` on the golden split. Only a `GATE_RESULT: PASS` run may be
   registered as `candidate` in MLflow / Vertex Model Registry.
+- A registration also has to be reproducible, per
+  `docs/adrs/where-model-training-happens.md`: the run came from this area's container, on
+  Vertex AI, against the frozen data version, logged to the shared MLflow with the tags above.
+  A laptop run can motivate a registration; it cannot be one. **Launching the job is a person's
+  action** — an agent prepares the config and stops.
 - Record the result (run id, metrics, cost estimate, pass/fail, next idea) as a dated Verified fact in the plan.
 
 ## Loop budget rules
