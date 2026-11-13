@@ -5,10 +5,18 @@ description: Model-quality release gate for Young Illustrator's Primer. Use afte
 
 # Golden gate
 
-> **Blocked.** This gate reads metrics produced by `primer.evaluation`, which does not exist
-> yet, and there is no golden set in the repository. Until both land, `check_gate.py` reports
-> `GATE_RESULT: SKIP` rather than failing, and `goal-golden-gate.md` cannot succeed. See the
-> parked work in `docs/plans/autonomous-loops.md`.
+Produce the metrics file first, then check it:
+
+```bash
+python -m primer.evaluation.golden --split golden --fake-models \
+  --out .local-data/eval/golden_metrics.json
+python .claude/skills/golden-gate/scripts/check_gate.py \
+  --metrics .local-data/eval/golden_metrics.json
+```
+
+`--fake-models` is required until the model areas are implemented, and is what CI uses -- the
+real stages need GPUs. A `GATE_RESULT: SKIP` now means only one thing: the metrics file is
+missing. It is never a pass.
 
 The golden set (about 100 hand-written parent-setting scenarios, held out permanently;
 `docs/project_scoping.md` §7 and §8)

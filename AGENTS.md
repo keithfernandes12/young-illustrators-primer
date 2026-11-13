@@ -164,7 +164,7 @@ PR, review yourself with `review-pr`, then open the PR. Before asking for review
 | `planning-poker` | size Jira issues as a team |
 | `refine-comments` | clean up code comments and docstrings without changing logic |
 | `verify` | run every CI check plus the privacy and infra gates; ends `VERIFY_RESULT: PASS/FAIL` |
-| `golden-gate` | compare golden-set metrics with the §7 targets; needs `primer.evaluation`, which does not exist yet, so it reports `GATE_RESULT: SKIP` |
+| `golden-gate` | compare golden-set metrics with the §7 targets; ends `GATE_RESULT: PASS/FAIL` |
 | `privacy-guard` | lint for child PII in logs, URLs, object names and stored audio |
 | `loop-worker` | run one unattended engineering-loop iteration on a plan (for `/goal`, `/loop`, Ralph) |
 | `train-vertex` | launch and track a Vertex AI training job |

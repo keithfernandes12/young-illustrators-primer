@@ -33,13 +33,13 @@ the team tutorial that ships with this kit.
   touched the shared bucket, `main`, or production.
 - **Not doing** — routines that merge, deploy to prod, or write to Jira; Superpowers' planning skills
   (they write plans to `docs/superpowers/`, a second plan location, which `docs/plans/AGENTS.md` forbids).
-- **Parked, and why** — the `golden-gate` skill ships but cannot run: it reads metrics from
-  `primer.evaluation`, which does not exist, and there is no golden set, so `check_gate.py`
-  reports `GATE_RESULT: SKIP` and `goal-golden-gate.md` cannot succeed yet. The nightly
-  workflow that would call it is left out for the same reason — its metrics step is not
-  `continue-on-error`, so it would fail every night. The `claude.yml` workflow that answers
-  `@claude` on pull requests is also left out: it needs Vertex AI or an API key, and this team
-  signs in with an Enterprise seat. Each needs its own issue once evaluation exists.
+- **Parked, and why** — the nightly golden-gate workflow is left out: its metrics step is not
+  `continue-on-error`, so a bad night would fail the whole job rather than warn. The
+  `claude.yml` workflow that answers `@claude` on pull requests is also left out: it needs
+  Vertex AI or an API key, and this team signs in with an Enterprise seat. Each needs its own
+  issue. `golden-gate` itself is no longer parked — `src/primer/evaluation/` and
+  `configs/golden/scenarios.jsonl` landed with it, so the gate returns PASS or FAIL and SKIP
+  now means only that the metrics file is missing.
 - **Patterns to follow** — hooks in Python with the `python3`-then-`python` launcher; scripts outside the
   package loaded by file path in tests; skills directly in `.claude/skills/`.
 - **Boundaries** — the new hook runs after `guard_bash.py` and never replaces it.
