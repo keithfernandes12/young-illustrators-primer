@@ -74,7 +74,13 @@ def test_executable_files_have_a_shebang():
 # (docs/engineering/model-containers-on-windows.md). Two mistakes would each work on one person's
 # machine and nowhere else, so they are checked here rather than found by the next person.
 
-SKILL_SCRIPTS = sorted((REPO_ROOT / ".claude" / "skills").glob("*/scripts/*"))
+#: Files only, and only the two kinds we lint. The glob also matches `__pycache__`, which appears as
+#: soon as anything imports one of these modules -- CI hit that before this filter existed.
+SKILL_SCRIPTS = sorted(
+    path
+    for path in (REPO_ROOT / ".claude" / "skills").glob("*/scripts/*")
+    if path.is_file() and path.suffix in {".py", ".sh"}
+)
 
 #: An absolute path baked into a script. `/c/...` is the Git Bash form, `C:\...` the Windows one.
 ABSOLUTE_PATH = re.compile(r"""(?:^|[\s"'=(])(?:/[a-zA-Z]/[\w.-]|[a-zA-Z]:[\\/])""")
