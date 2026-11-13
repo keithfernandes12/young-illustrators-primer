@@ -5,9 +5,12 @@ description: Deploy Young Illustrator's Primer services to Google Cloud Run with
 
 # Deploy to Cloud Run
 
-Pairs with the Google Cloud skills (user-level install, see the tutorial): follow `gcloud` (validate every leaf command
-with `gcloud help <command>` before running it), `cloud-run-basics`,
-`google-cloud-recipe-auth`, and `cloud-run-alert-configuration`.
+Repo skills: `verify`, `golden-gate`.
+
+The Google Cloud skills (`gcloud`, `cloud-run-basics`, `google-cloud-recipe-auth`,
+`cloud-run-alert-configuration`) are optional user-level installs from the loop kit's tutorial and
+are **not in this repository**. Do not assume they are loaded. The habit that matters from them is
+inlined: run `gcloud help <command>` on every leaf command before running it for real.
 
 ## Environments
 

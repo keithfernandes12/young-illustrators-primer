@@ -33,13 +33,18 @@ the team tutorial that ships with this kit.
   touched the shared bucket, `main`, or production.
 - **Not doing** — routines that merge, deploy to prod, or write to Jira; Superpowers' planning skills
   (they write plans to `docs/superpowers/`, a second plan location, which `docs/plans/AGENTS.md` forbids).
-- **Parked, and why** — the nightly golden-gate workflow is left out: its metrics step is not
-  `continue-on-error`, so a bad night would fail the whole job rather than warn. The
-  `claude.yml` workflow that answers `@claude` on pull requests is also left out: it needs
-  Vertex AI or an API key, and this team signs in with an Enterprise seat. Each needs its own
-  issue. `golden-gate` itself is no longer parked — `src/primer/evaluation/` and
-  `configs/golden/scenarios.jsonl` landed with it, so the gate returns PASS or FAIL and SKIP
-  now means only that the metrics file is missing.
+- **Parked, and what would unpark each** — `golden-gate` itself is no longer parked:
+  `src/primer/evaluation/` and `configs/golden/scenarios.jsonl` landed with it, so the gate
+  returns PASS or FAIL and SKIP now means only that the metrics file is missing. Two workflows
+  stay out, each with the condition that would bring it in:
+
+  | Parked | Why | Unpark when |
+  |---|---|---|
+  | `.github/workflows/nightly-golden-gate.yml` | Its metrics step is not `continue-on-error`, so one bad night fails the job instead of warning. | The metrics step is `continue-on-error` too, or the run is proven green for a week on a branch. Then add it as warn-only, per `docs/engineering/ci.md`. |
+  | `.github/workflows/claude.yml` (`@claude` on PRs) | Needs Claude on Vertex AI or an API key; an Enterprise seat is not meant for CI. | The team has a Vertex project with Workload Identity Federation, or an API key the org is willing to bill. Until then it is a cost decision, not an engineering one. |
+
+  Neither has a Jira issue: this whole branch is KAN-89, and these are recorded here rather
+  than split into tickets nobody has scheduled.
 - **Patterns to follow** — hooks in Python with the `python3`-then-`python` launcher; scripts outside the
   package loaded by file path in tests; skills directly in `.claude/skills/`.
 - **Boundaries** — the new hook runs after `guard_bash.py` and never replaces it.

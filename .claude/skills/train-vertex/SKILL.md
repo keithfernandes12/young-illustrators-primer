@@ -5,9 +5,23 @@ description: Launch, monitor, and evaluate training/fine-tuning jobs for Young I
 
 # Train on Vertex AI
 
-Pairs with vendored skills: `trl-training` (LoRA/SFT recipes), `huggingface-vision-trainer`
-(drawing recognizer), `mlflow-onboarding`, `mlflow-trace-instrumentation`,
-`agent-platform-model-registry`, `gcloud`.
+Repo skills: `verify`, `golden-gate`, `freeze-dataset-version`.
+
+Nothing else is vendored here. Six skills were previously named as vendored -- `trl-training`,
+`huggingface-vision-trainer`, `mlflow-onboarding`, `mlflow-trace-instrumentation`,
+`agent-platform-model-registry` and `gcloud` -- and they are **not in this repository**. They are
+optional user-level installs from the loop kit's tutorial; treat them as absent. What this skill
+actually needs from them is inlined:
+
+- **Validate before you run.** `gcloud help <command>` on every leaf command first. Flag names on
+  the AI and Run surfaces change between releases, and a wrong flag on a GPU job costs credits.
+- **LoRA/SFT shape.** 1-3B LoRA with 4-bit or bf16 plus gradient checkpointing; see the machine
+  guidance below for what that fits on.
+- **MLflow.** The tags, params and artifacts every run must log are listed under *Every run must*
+  in this file, and in `docs/engineering/model-development.md`. That is the whole contract.
+- **Registry.** Aliases are `candidate`, `production` and `rollback`; `register.py` in each area
+  writes them. Only a gate-passing, reproducible run may be registered
+  (`docs/adrs/where-model-training-happens.md`).
 
 ## Before launching anything
 
