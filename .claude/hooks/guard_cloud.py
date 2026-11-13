@@ -4,18 +4,25 @@
 Claude Code runs this after guard_bash.py, before every Bash or PowerShell tool call
 (see .claude/settings.json).
 
-This project has ONE Google Cloud project, used for development and deployment alike, so there is
-no staging/production split to guard. "Production" here is the live serving path, not a project id:
-the risky act is sending traffic to a revision, deleting something, or touching IAM.
+There is no staging/production split to guard. "Production" here is the live serving path, not a
+project id: the risky act is sending traffic to a revision, deleting something, or touching IAM.
+
+Six members build six model areas in parallel, so a session may legitimately name two projects
+(docs/engineering/model-development.md section 6):
+
+- ``YIP_SHARED_PROJECT`` -- the team project. Durable state only: the data bucket, Artifact
+  Registry, the models bucket and the MLflow server. Builds push here.
+- ``YIP_COMPUTE_PROJECT`` -- this member's own project. Compute only: Vertex AI custom jobs and
+  Cloud Run GPU jobs, burning that member's own credits. No durable state.
 
 Two rules, in order:
 
-1. The project must be the one we own. Only the *value* of ``--project`` / ``--project=``,
-   ``gcloud config set project`` and ``CLOUDSDK_CORE_PROJECT`` is compared -- never the command
-   text. Our project id is also the repository name, so a substring match would refuse
-   ``cd .../young-illustrators-primer`` and ``cat young-illustrators-primer/AGENTS.md``.
-   Set the id in .claude/settings.local.json as YIP_PROJECT (YIP_STAGING_PROJECT is also read, so
-   the deploy scripts keep working).
+1. Every project the command names must be one of ours. Only the *value* of ``--project`` /
+   ``--project=``, ``gcloud config set project`` and ``CLOUDSDK_CORE_PROJECT`` is compared -- never
+   the command text. The shared project id is also the repository name, so a substring match would
+   refuse ``cd .../young-illustrators-primer`` and ``cat young-illustrators-primer/AGENTS.md``.
+   Set both in .claude/settings.local.json. ``YIP_PROJECT`` (or the older
+   ``YIP_STAGING_PROJECT``) still works on its own for a single-project setup.
 
 2. Some operations are refused whatever the project: sending 100% of traffic to a revision,
    deploying without ``--no-traffic``, deletes, service-account keys and IAM policy changes.
@@ -131,6 +138,21 @@ def is_read_only(tokens: list[str]) -> bool:
     return any(token.lstrip("-") in READ_ONLY_VERBS for token in tokens)
 
 
+#: In precedence order, the variables that name a project this session may touch. The compute and
+#: shared pair is the normal setup; YIP_PROJECT alone still works for a single-project checkout.
+PROJECT_VARS: tuple[str, ...] = (
+    "YIP_COMPUTE_PROJECT",
+    "YIP_SHARED_PROJECT",
+    "YIP_PROJECT",
+    "YIP_STAGING_PROJECT",
+)
+
+
+def allowed_projects(environ: dict[str, str]) -> set[str]:
+    """Every project id this session is configured for. Empty means nothing is configured."""
+    return {value.strip() for var in PROJECT_VARS if (value := environ.get(var, "")).strip()}
+
+
 def check(command: str, environ: dict[str, str]) -> str | None:
     """Return why `command` must be refused, or None to allow it."""
     if environ.get("YIP_ALLOW_PROD") == "1" or not command.strip():
@@ -143,14 +165,15 @@ def check(command: str, environ: dict[str, str]) -> str | None:
         # out of the guard entirely.
         return None
 
-    allowed = (environ.get("YIP_PROJECT") or environ.get("YIP_STAGING_PROJECT") or "").strip()
+    allowed = allowed_projects(environ)
     named = named_projects(command, tokens)
 
-    foreign = sorted(p for p in named if p != allowed)
+    foreign = sorted(p for p in named if p not in allowed)
     if allowed and foreign:
+        ours = ", ".join(sorted(allowed))
         return (
-            f"this command names the Google Cloud project {foreign[0]!r}, which is not this "
-            f"project's ({allowed!r})."
+            f"this command names the Google Cloud project {foreign[0]!r}, which is not one of "
+            f"ours ({ours})."
         )
 
     for pattern, why in RISKY:
@@ -163,7 +186,7 @@ def check(command: str, environ: dict[str, str]) -> str | None:
     if not allowed and not is_read_only(tokens):
         return (
             "no Google Cloud project is configured, so this command cannot be checked. Set "
-            "YIP_PROJECT in .claude/settings.local.json."
+            "YIP_COMPUTE_PROJECT and YIP_SHARED_PROJECT in .claude/settings.local.json."
         )
 
     return None

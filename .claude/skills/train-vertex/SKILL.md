@@ -20,6 +20,11 @@ Pairs with vendored skills: `trl-training` (LoRA/SFT recipes), `huggingface-visi
    `freeze-dataset-version` skill and a person runs the bucket write). Never train on unfrozen data.
 4. Write the hypothesis for this run in the model's plan under "Verified facts" once it is checked.
 
+Jobs run in **your own** project, `$YIP_COMPUTE_PROJECT`, burning your own credits. Everything
+durable -- the data bucket, Artifact Registry, the models bucket and MLflow -- is in the shared
+team project, `$YIP_SHARED_PROJECT` (`docs/engineering/model-development.md` section 6). Keeping
+compute personal is what makes consolidation a one-line change later.
+
 ## Option A: Vertex AI custom job (preferred for training)
 
 Write `infra/vertex/<run>.yaml` (template in `job_template.yaml` next to this file), then:
@@ -27,11 +32,11 @@ Write `infra/vertex/<run>.yaml` (template in `job_template.yaml` next to this fi
 ```bash
 gcloud help ai custom-jobs create        # validate flags first, per the gcloud skill
 gcloud ai custom-jobs create \
-  --project "$YIP_STAGING_PROJECT" --region "${YIP_REGION:-us-central1}" \
+  --project "$YIP_COMPUTE_PROJECT" --region "${YIP_REGION:-us-central1}" \
   --display-name "story-lora-$(git rev-parse --short HEAD)" \
   --config infra/vertex/<run>.yaml
-gcloud ai custom-jobs list --project "$YIP_STAGING_PROJECT" --region "${YIP_REGION:-us-central1}" --limit 5
-gcloud ai custom-jobs stream-logs <JOB_ID> --project "$YIP_STAGING_PROJECT" --region "${YIP_REGION:-us-central1}"
+gcloud ai custom-jobs list --project "$YIP_COMPUTE_PROJECT" --region "${YIP_REGION:-us-central1}" --limit 5
+gcloud ai custom-jobs stream-logs <JOB_ID> --project "$YIP_COMPUTE_PROJECT" --region "${YIP_REGION:-us-central1}"
 ```
 
 Machine guidance: 1–3B LoRA fits on `g2-standard-8` + 1x `NVIDIA_L4` (24 GB) with 4-bit or
@@ -42,10 +47,10 @@ and the Vertex docs before relying on it. Check GPU quota in the region first.
 ## Option B: Cloud Run GPU job (short evals, batch illustration, small fine-tunes)
 
 ```bash
-gcloud run jobs create yip-eval --project "$YIP_STAGING_PROJECT" --region "${YIP_REGION:-us-central1}" \
+gcloud run jobs create yip-eval --project "$YIP_COMPUTE_PROJECT" --region "${YIP_REGION:-us-central1}" \
   --image "$IMAGE" --gpu 1 --gpu-type nvidia-l4 --cpu 8 --memory 32Gi \
   --no-gpu-zonal-redundancy --task-timeout 3600 --max-retries 0
-gcloud run jobs execute yip-eval --project "$YIP_STAGING_PROJECT" --region "${YIP_REGION:-us-central1}" --wait
+gcloud run jobs execute yip-eval --project "$YIP_COMPUTE_PROJECT" --region "${YIP_REGION:-us-central1}" --wait
 ```
 
 ## Every run must

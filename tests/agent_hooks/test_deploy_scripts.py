@@ -65,8 +65,9 @@ def test_common_defines_an_interpreter_fallback():
 
 def test_common_uses_the_single_project_variable():
     text = COMMON.read_text(encoding="utf-8")
-    assert "YIP_PROJECT" in text
-    # The staging/prod split is gone: there is one project.
+    assert "YIP_SHARED_PROJECT" in text, "the served service lives in the shared team project"
+    assert "YIP_PROJECT" in text, "the single-project fallback must keep working"
+    # The staging/prod split is gone; there was never a prod project.
     assert "YIP_PROD_PROJECT" not in text
 
 
@@ -81,7 +82,7 @@ def test_common_refuses_to_run_without_a_project(tmp_path):
         check=False,
     )
     assert result.returncode != 0
-    assert "YIP_PROJECT" in result.stderr
+    assert "YIP_SHARED_PROJECT" in result.stderr
 
 
 @bash_required
@@ -96,6 +97,27 @@ def test_common_reports_the_project_it_will_use(tmp_path):
     )
     assert "project=young-illustrators-primer" in result.stderr
     assert result.returncode == 0
+
+
+@bash_required
+def test_shared_project_is_preferred_over_the_fallbacks(tmp_path):
+    """With both set, the deploy scripts must target the shared project, not the compute one."""
+    result = subprocess.run(
+        [BASH, str(COMMON)],
+        cwd=tmp_path,
+        env={
+            "PATH": BASH_PATH,
+            "YIP_SHARED_PROJECT": "young-illustrators-primer",
+            "YIP_COMPUTE_PROJECT": "member-dev",
+            "YIP_PROJECT": "should-not-win",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert "project=young-illustrators-primer" in result.stderr, result.stderr
+    assert "member-dev" not in result.stderr
+    assert "should-not-win" not in result.stderr
 
 
 @bash_required

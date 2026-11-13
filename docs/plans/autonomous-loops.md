@@ -67,8 +67,9 @@ in `AGENTS.md`.
 
 *size: small · person-only*
 
-Each teammate installs the user-level plugins and skills from the tutorial, sets `YIP_STAGING_PROJECT`
-and `YIP_PROD_PROJECT` in `.claude/settings.local.json`, and runs one supervised `/goal` on a small slice.
+Each teammate installs the user-level plugins and skills from the tutorial, sets
+`YIP_COMPUTE_PROJECT` (their own project) and `YIP_SHARED_PROJECT` (the team project) in
+`.claude/settings.local.json`, and runs one supervised `/goal` on a small slice.
 
 - **Acceptance** — each person records their check under Verified facts (one line each).
 

@@ -23,6 +23,10 @@ spec.loader.exec_module(guard_cloud)
 PROJECT = "young-illustrators-primer"
 ENV = {"YIP_PROJECT": PROJECT}
 
+# The normal six-member setup: durable state in the team project, this member's compute in theirs.
+COMPUTE = "member-dev"
+SPLIT_ENV = {"YIP_COMPUTE_PROJECT": COMPUTE, "YIP_SHARED_PROJECT": PROJECT}
+
 
 @pytest.mark.parametrize(
     "command",
@@ -68,7 +72,7 @@ def test_allowed_on_our_project(command):
 )
 def test_refuses_a_project_that_is_not_ours(command):
     reason = guard_cloud.check(command, ENV)
-    assert reason and "not this project" in reason
+    assert reason and "not one of ours" in reason
 
 
 @pytest.mark.parametrize(
@@ -113,6 +117,70 @@ def test_staging_variable_is_still_honoured():
     env = {"YIP_STAGING_PROJECT": PROJECT}
     assert guard_cloud.check(f"gcloud run services list --project {PROJECT}", env) is None
     assert guard_cloud.check("gcloud run services list --project other-project", env)
+
+
+# --------------------------------------------------------- compute project + shared project
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Builds and the registry live in the shared team project.
+        f"gcloud builds submit --project {PROJECT} --tag {PROJECT}/yip/story:abc123 .",
+        f"gcloud storage ls gs://yip-models --project {PROJECT}",
+        # Training burns this member's own credits, in their own project.
+        f"gcloud ai custom-jobs create --project {COMPUTE} --region us-central1 --config job.yaml",
+        f"gcloud ai custom-jobs stream-logs 42 --project={COMPUTE} --region us-central1",
+    ],
+)
+def test_both_of_our_projects_are_allowed(command):
+    assert guard_cloud.check(command, SPLIT_ENV) is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "gcloud ai custom-jobs create --project someone-elses-project --region us-central1",
+        "gcloud builds submit --project another-team-prod .",
+        "gcloud config set project someone-elses-project",
+    ],
+)
+def test_a_third_project_is_still_refused(command):
+    reason = guard_cloud.check(command, SPLIT_ENV)
+    assert reason and "not one of ours" in reason
+
+
+@pytest.mark.parametrize("project", [PROJECT, COMPUTE])
+@pytest.mark.parametrize(
+    "template",
+    [
+        "gcloud run services update-traffic yip-api --project {p} --to-latest",
+        "gcloud run services delete yip-api --project {p}",
+        "gcloud projects add-iam-policy-binding {p} --member user:a@b --role roles/owner",
+        "gcloud iam service-accounts keys create k.json --project {p} --iam-account a@b",
+    ],
+)
+def test_risky_verbs_are_refused_in_both_projects(template, project):
+    """Splitting the projects must not open a door in either of them."""
+    assert guard_cloud.check(template.format(p=project), SPLIT_ENV)
+
+
+def test_repo_name_collision_does_not_return_with_two_projects():
+    """The shared project id is still the repository name; that must stay harmless."""
+    assert guard_cloud.check("cd /c/dev/young-illustrators-primer && pytest -q", SPLIT_ENV) is None
+    assert guard_cloud.check("cat young-illustrators-primer/AGENTS.md", SPLIT_ENV) is None
+
+
+def test_neither_configured_and_not_read_only_is_refused():
+    reason = guard_cloud.check("gcloud ai custom-jobs create --region us-central1", {})
+    assert reason and "no Google Cloud project is configured" in reason
+
+
+def test_compute_project_alone_is_enough():
+    """A member who has only been given their own project is still guarded, not locked out."""
+    env = {"YIP_COMPUTE_PROJECT": COMPUTE}
+    assert guard_cloud.check(f"gcloud ai custom-jobs list --project {COMPUTE}", env) is None
+    assert guard_cloud.check(f"gcloud builds submit --project {PROJECT} .", env)
 
 
 def test_override_allows_everything():

@@ -11,8 +11,11 @@ with `gcloud help <command>` before running it), `cloud-run-basics`,
 
 ## Environments
 
-There is one Google Cloud project (`$YIP_PROJECT`, also read as `$YIP_STAGING_PROJECT`), so the
-boundary is traffic, not a project id.
+This skill works in the **shared** team project, `$YIP_SHARED_PROJECT`: the served service and
+Artifact Registry are durable state, which never lives in a member's own project
+(`docs/engineering/model-development.md` section 6). Training compute goes to
+`$YIP_COMPUTE_PROJECT` instead -- see `train-vertex`. `$YIP_PROJECT` still works on its own for a
+single-project checkout. Either way the boundary is traffic, not a project id.
 
 | Action | Who may do it |
 |---|---|
@@ -44,12 +47,12 @@ into the image.
 
 1. **Pre-flight**: `python .claude/skills/verify/scripts/verify.py` must end in
    `VERIFY_RESULT: PASS`. For model changes, `golden-gate` must end in
-   `GATE_RESULT: PASS` -- which needs `primer.evaluation`, so model deploys are blocked until
-   that lands (see docs/plans/autonomous-loops.md).
+   `GATE_RESULT: PASS`. Produce the metrics first with
+   `python -m primer.evaluation.golden --split golden --fake-models --out <path>`.
 2. **Build** with Cloud Build into Artifact Registry (tag = short git SHA):
    ```bash
-   gcloud builds submit --project "$YIP_STAGING_PROJECT" \
-     --tag "$YIP_REGION-docker.pkg.dev/$YIP_STAGING_PROJECT/yip/<service>:$(git rev-parse --short HEAD)" <context-dir>
+   gcloud builds submit --project "$YIP_SHARED_PROJECT" \
+     --tag "$YIP_REGION-docker.pkg.dev/$YIP_SHARED_PROJECT/yip/<service>:$(git rev-parse --short HEAD)" <context-dir>
    ```
 3. **Canary** (new revision, 0% traffic, tagged URL, then 10%):
    ```bash

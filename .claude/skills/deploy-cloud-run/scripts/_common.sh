@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Shared settings for YIP deploy scripts.
 #
-# There is one Google Cloud project, so there is nothing to select: $YIP_PROJECT is it
-# ($YIP_STAGING_PROJECT is accepted as the older name). The boundary agents must not cross is
-# traffic, not a project, and .claude/hooks/guard_cloud.py enforces that separately.
+# The served Cloud Run service and Artifact Registry are durable state, so they live in the
+# SHARED team project, not a member's compute project (model-development.md section 6).
+# $YIP_PROJECT and the older $YIP_STAGING_PROJECT still work for a single-project checkout.
+# The boundary agents must not cross is traffic, not a project; guard_cloud.py enforces that.
 set -euo pipefail
 
-PROJECT="${YIP_PROJECT:-${YIP_STAGING_PROJECT:-}}"
-: "${PROJECT:?set YIP_PROJECT in .claude/settings.local.json}"
+PROJECT="${YIP_SHARED_PROJECT:-${YIP_PROJECT:-${YIP_STAGING_PROJECT:-}}}"
+: "${PROJECT:?set YIP_SHARED_PROJECT in .claude/settings.local.json}"
 REGION="${YIP_REGION:-us-central1}"
 
 # Pick an interpreter the way the repo's hooks do: on Windows `python3` is the Microsoft Store
