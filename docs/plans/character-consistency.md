@@ -6,7 +6,7 @@ status: active
 author: rutvijsurti
 jira: [KAN-48, KAN-103, KAN-104, KAN-105, KAN-42]
 tags: [models, illustration, consistency, clip, evaluation]
-related: [mvp-cloud-deploy, where-model-training-happens]
+related: [model-development, model-stages-and-data-coverage, mvp-cloud-deploy, where-model-training-happens]
 ---
 
 # Character consistency (stage 6) with a pretrained CLIP score
@@ -25,7 +25,7 @@ where the score is called).
 
 - `AGENTS.md`, `docs/plans/AGENTS.md`, `docs/adrs/where-model-training-happens.md`.
 - KAN-42, KAN-38, KAN-48 and KAN-94 in Jira (read 2026-11-14).
-- On `chore/KAN-89-agent-loop-kit`: `src/primer/illustration/*`, `src/primer/drawing/interface.py`,
+- On `main` (KAN-89 merged 2026-11-14): `src/primer/illustration/*`, `src/primer/drawing/interface.py`,
   `src/primer/evaluation/contract.py`, `configs/golden/README.md`.
 - On `docs/model-development-blueprint` (KAN-93, unmerged): `docs/engineering/model-development.md`,
   §2 (contract), §3 (steps and the illustration numbers) and §4 (ownership).
@@ -77,7 +77,7 @@ L/14 and DINOv2 from Hugging Face, loaded lazily), `experiment.py`, `configs/con
 - **Testing**: each acceptance line has a test. Weighting cohesion alone (`identity_weight=0`) fails the
   wrong-character test. Selecting on `test`, or letting a tie replace the baseline, fails the selection
   tests.
-- **Depends on**: KAN-89 (the illustration area and the contract), which is not merged yet.
+- **Depends on**: KAN-89 (the illustration area and the contract), merged 2026-11-14.
 - **Jira**: KAN-103 (sub-task of KAN-48).
 
 ### S2 · Run the experiment and propose the threshold
@@ -115,7 +115,7 @@ re-set from the spread of real generated books, not picture books.
 
 | Slice | State | PR | Notes |
 |---|---|---|---|
-| S1 | built, not committed | | KAN-103; branch `feat/KAN-103-clip-consistency`, stacked on `chore/KAN-89-agent-loop-kit` |
+| S1 | in review | [#24](https://github.com/keithfernandes12/young-illustrators-primer/pull/24) | KAN-103; draft, needs a reviewer |
 | S2 | not started | | KAN-104; a person runs it |
 | S3 | not started | | KAN-105; blocked on KAN-42 pages and KAN-38 references |
 
@@ -149,10 +149,15 @@ handles. Checked with a scratch script; synthetic images, not the dataset.
 **2026-11-14**: `storybook_pages.image_uri` is a full URI (`Store.url(...)` in
 `src/primer/data/sources/storybooks.py`), and `book_id` is only unique within a `source`.
 
+**2026-11-14**: The reference question is settled on `main`. The `Illustrator` docstring in
+`src/primer/illustration/interface.py` now says to condition IP-Adapter on `reference_image_ref` (the
+parent-approved storybook render), after checking `has_approved_reference`. It says not to use
+`crop_ref` (raw crayon) or `embedding` (a cache key in a different space from this score). The same
+image is the scorer's reference. `Illustration.character_embedding` became `identity` (an opaque key);
+this package never read it. Checked by reading the diff when `main` was merged in (`8e49be5`).
+
 ## Open questions
 
-- Which image is the reference: the approved storybook-style reference (recommended, KAN-38/KAN-42) or
-  the child's raw drawing? The KAN-42 and KAN-38 owners decide.
 - Does `Illustration` carry page image bytes or only `image_ref`? The scorer needs bytes, so serving
   resolves the ref. Recommended: the illustrator resolves it, since it wrote the image. The KAN-42
   owner decides.
