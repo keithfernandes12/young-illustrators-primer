@@ -2,6 +2,7 @@
 title: MVP on Google Cloud — models v0, serving, deploy, gates and monitoring
 type: plan
 created: 2026-11-07
+updated: 2026-11-14
 status: draft
 author: rishiparekh
 tags: [mvp, gcp, serving, models, deploy, loops]
@@ -128,15 +129,42 @@ the frozen QuickDraw version on Vertex AI (`train-vertex`), plus the parent-labe
 - **Acceptance** — golden `drawing_top5_acc` for baseline and fine-tune, against the 0.85 target.
 - **Depends on** — S2. **Jira** — to create.
 
-### S7 · Illustration worker v0
+### S7a · Illustration model, pretrained baseline
+
+*size: small*
+
+`src/primer/illustration/model.py` and `sketch.py`: `IllustratorModel` behind the merged
+`Illustrator` contract. Each page loads the child's sketch (the in-memory bytes, or re-read from a
+`gs://` or `file://` `drawing_ref`), turns it into a white-on-black square control image, and runs
+SD 1.5 + ControlNet-Scribble v1.1 at the pinned revisions and settings in
+`configs/illustration_baseline.yaml`. The page is written to a local folder under a random name and
+returned as a `file://` `image_ref`. The diffusion stack is the `illustration` extra; CI does not
+install it, and the tests use a recording fake pipeline.
+
+- **Why separate** — the model can be built and proved locally now; S7b needs S1's bucket and GPU
+  quota, which are person-only and not in place.
+- **Acceptance** — the tests in `tests/illustration/` pass with no weights or network; `python -m
+  primer.illustration.smoke` produces one 512×512 page from a synthetic sketch with the cached weights.
+- **Not in this slice** — IP-Adapter on `characters` (pages return `identity=None`), the style LoRA,
+  reposing, the consistency score (`consistency()` raises), GCS output, the GPU container, the first
+  storybook reference image (open with KAN-38), and the generated-image safety check (KAN-94).
+- **Depends on** — nothing. **Jira** — KAN-42.
+
+### S7b · Illustration worker on Cloud Run
 
 *size: medium*
 
-`src/primer/illustration/`: Stable Diffusion + ControlNet-Scribble conditioned on the child's drawing,
-one image per page, written to GCS; container for Cloud Run with an L4 GPU.
+S7a's model behind a GPU worker: pages written to GCS, a container for Cloud Run with an L4 GPU.
+
+**Before `build_book` can use `IllustratorModel`, `consistency()` must work.** `build_book` calls it on
+every book, and in S7a it raises `NotImplementedError`, so wiring the model in now would fail every
+book even though `isinstance(model, Illustrator)` passes. The real score is stage 6. If S7b lands first,
+it needs an agreed interim score instead, and that score must be labelled so the gate cannot mistake it
+for a measurement.
 
 - **Acceptance** — `clip_consistency` reported; p95 time per page measured on staging.
-- **Depends on** — S1. **Jira** — to create.
+- **Depends on** — S1, S7a, a working `consistency()` (above), and KAN-94 before any real child's
+  drawing is illustrated. **Jira** — KAN-42.
 
 ### S8 · Narration v0
 
@@ -157,7 +185,7 @@ one image per page, written to GCS; container for Cloud Run with an L4 GPU.
 `ai-coding-framework`.
 
 - **Acceptance** — the dry-run endpoint returns a complete fake book in tests; `privacy-guard` passes.
-- **Depends on** — S5, S8 (fakes are fine for S6, S7). **Jira** — to create.
+- **Depends on** — S5, S8 (fakes are fine for S6, S7a, S7b). **Jira** — to create.
 
 ### S10 · Build and canary deploy
 
@@ -216,7 +244,8 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S5 | not started | | |
 | S5b | not started | | Vertex GPU job |
 | S6 | not started | | |
-| S7 | not started | | needs GPU quota in region |
+| S7a | in progress | branch `feat/KAN-42-controlnet-baseline` | pretrained SD 1.5 + ControlNet-Scribble, one page, local output; synthetic inputs only until KAN-94 |
+| S7b | not started | | needs S1, GPU quota in region, a working `consistency()`, and KAN-94 |
 | S8 | not started | | |
 | S9 | not started | | |
 | S10 | not started | | |
@@ -230,8 +259,36 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 - **2026-11-07** — Pretrained baseline first, then the team-trained model, for each of the three models
   §5.4 requires; both measured by the golden gate. Eight days remain before the MVP and every model
   area is empty, so the baseline keeps the end-to-end path alive if a training run slips.
+- **2026-11-14** — S7 is split into S7a (the model, provable locally) and S7b (the Cloud Run worker),
+  because S7b waits on S1 and GPU quota while S7a needs neither.
+- **2026-11-14** — S7a uses SD 1.5, not SDXL: it runs in fp16 on a 16 GB laptop GPU, and the scoping
+  doc's §5.3 leaves "SDXL / 1.5" open. SDXL is a sensitivity question for later, not a baseline.
+- **2026-11-14** — The generated-image safety check lives in serving, after `illustrate()`, not in the
+  model (KAN-94). Diffusers' built-in checker is off because it returns a black image and reports
+  nothing, which would reach a `complete` book as a blank page. Until KAN-94 lands, S7a runs only on
+  synthetic sketches.
+- **2026-11-14** — The sketch is read from the in-memory bytes when serving passes them, and from
+  `drawing_ref` only otherwise; `http(s)://` and `fixture://` refs are refused rather than fetched.
+- **2026-11-14** — From an independent review of S7a:
+  - The stroke threshold is relative to the paper, not a fixed 128. At 128, a transparent canvas
+    export, grey pencil, yellow crayon and a dim phone photo all produced empty control images.
+  - A drawing with no strokes is refused rather than generated from nothing.
+  - Every device loads the pinned fp16 files, upcast to fp32 on CPU, because the fp32 files are not
+    cached and an offline CPU run could not fetch them.
+  - Read errors drop the path, which can be the child's file name.
 
 ## Verified facts
+
+- **2026-11-13** — Local baseline on an Apple M4 (16 GB, MPS, fp16), SD 1.5 rev `451f4fe` +
+  `control_v11p_sd15_scribble` rev `3564ec7`, UniPC, 25 steps, guidance 7.5, ControlNet scale 1.0,
+  seed 42, 512×512: 44.2 s to generate one page, 3.4 s to load from cache. Download is 2.86 GB of fp16
+  weights. Edge recall against the sketch was 0.993, against 0.619 for the same sketch rotated 180°.
+  Checked by running the standalone baseline script (Adit's local copy, not in the repo).
+- **2026-11-14** — `python -m primer.illustration.smoke` on the same synthetic sketch, through a
+  `file://` `drawing_ref`, on the same machine: 39.8 s to generate, 5.7 s to load on the
+  committed code (39.3–42.5 s and 5.1–5.9 s on earlier runs). The house, roof, door, round window, cloud ellipses and sun kept their places. At that speed a 6-page book takes
+  about 4–5 minutes locally, well over the 120 s `p95_full_book_s` target, so S7b needs the L4 or a
+  few-step sampler (LCM/Turbo).
 
 ## Open questions
 
