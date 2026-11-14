@@ -33,8 +33,13 @@ def scenarios() -> list[dict]:
     return load_scenarios(DEFAULT_SCENARIOS)
 
 
-def gate(metrics: dict, tmp_path: Path, name: str = "metrics.json") -> str:
-    """Write `metrics` and return check_gate's stdout."""
+def gate(metrics: dict, tmp_path: Path, name: str = "metrics.json", *, real: bool = True) -> str:
+    """Write `metrics` and return check_gate's stdout.
+
+    `real` strips the fake_models marker, because a verdict for synthetic scores now reads
+    FAKE-PASS rather than PASS. Tests about thresholds want the real vocabulary.
+    """
+    metrics = {k: v for k, v in metrics.items() if not (real and k == "fake_models")}
     path = tmp_path / name
     path.write_text(json.dumps(metrics), encoding="utf-8")
     result = subprocess.run(
@@ -125,7 +130,8 @@ def test_skip_is_unreachable_once_metrics_exist(scenarios, tmp_path):
     assert "GATE_RESULT: SKIP" not in gate(run(scenarios, FakeComponents()), tmp_path)
 
 
-def test_skip_is_still_reported_when_the_file_is_absent(tmp_path):
+def test_skip_is_reported_and_is_not_success(tmp_path):
+    """A missing metrics file measured nothing, so it must not exit 0 into an `&&` chain."""
     result = subprocess.run(
         [sys.executable, "-I", str(CHECK_GATE), "--metrics", str(tmp_path / "nope.json")],
         capture_output=True,
@@ -133,7 +139,31 @@ def test_skip_is_still_reported_when_the_file_is_absent(tmp_path):
         check=False,
     )
     assert "GATE_RESULT: SKIP" in result.stdout
-    assert result.returncode == 0
+    assert result.returncode != 0
+    assert "not built yet" not in result.stdout, "primer.evaluation exists now"
+
+
+def test_fake_metrics_do_not_read_as_a_pass(scenarios, tmp_path):
+    """A loop waiting for GATE_RESULT: PASS must not be satisfied by synthetic scores."""
+    metrics = run(scenarios, FakeComponents())
+    metrics["fake_models"] = True
+    output = gate(metrics, tmp_path, real=False)
+    assert "GATE_RESULT: FAKE-PASS" in output
+    assert "GATE_RESULT: PASS" not in output
+
+
+def test_a_selection_with_no_real_threshold_is_inconclusive(scenarios, tmp_path):
+    """`--only illustration` compares nothing: clip_consistency has a null threshold."""
+    metrics = run(scenarios, FakeComponents())
+    path = tmp_path / "metrics.json"
+    path.write_text(json.dumps({k: v for k, v in metrics.items() if k != "fake_models"}), encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, "-I", str(CHECK_GATE), "--metrics", str(path),
+         "--thresholds", str(THRESHOLDS), "--only", "illustration"],
+        capture_output=True, text=True, check=False,
+    )
+    assert "GATE_RESULT: INCONCLUSIVE" in result.stdout, result.stdout
+    assert result.returncode != 0
 
 
 # --------------------------------------------------------------------- boundaries
@@ -208,8 +238,8 @@ def test_fake_metrics_cannot_certify_an_mlflow_run(scenarios, tmp_path):
     )
     assert "REFUSED" in result.stdout, result.stdout
     assert "logged gate results" not in result.stdout
-    # The verdict itself is still reported: only the certification is refused.
-    assert "GATE_RESULT: PASS" in result.stdout
+    # The verdict is still reported, but as FAKE-PASS: the gate ran, no model was scored.
+    assert "GATE_RESULT: FAKE-PASS" in result.stdout
 
 
 def test_per_stage_detail_covers_every_owner(scenarios):

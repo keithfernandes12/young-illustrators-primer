@@ -174,10 +174,12 @@ PR, review yourself with `review-pr`, then open the PR. Before asking for review
 | `deploy-cloud-run` | canary, smoke-test or roll back a Cloud Run service; a person promotes |
 
 Loop prompts for `/goal`, `/loop` and Ralph live in `.claude/loops/`; a bare `/loop` reads
-`.claude/loop.md`. Unattended work follows `docs/plans/autonomous-loops.md`. There is one Google
-Cloud project, so `.claude/hooks/guard_cloud.py` guards the live serving path rather than a
-project name: agents may read cloud state and deploy canaries with `--no-traffic`, while traffic
-changes, deletes and IAM edits are left to a person.
+`.claude/loop.md`. Unattended work follows `docs/plans/autonomous-loops.md`. Google Cloud is one
+**shared** team project holding everything durable (`$YIP_SHARED_PROJECT`) plus one **compute**
+project per member for their own jobs (`$YIP_COMPUTE_PROJECT`); `.claude/hooks/guard_cloud.py`
+accepts both and refuses any third. It guards the live serving path rather than a project name:
+agents may read cloud state and deploy canaries with `--no-traffic`, while traffic changes,
+deletes, IAM writes and training launches are left to a person.
 
 ## Tracking and communication
 

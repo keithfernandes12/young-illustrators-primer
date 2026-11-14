@@ -34,7 +34,18 @@ fi
 echo "$PREV" > "$STATE_DIR/$SERVICE.prev"
 echo "[yip-deploy] current serving revision: $PREV (saved for rollback)"
 
-gcloud run deploy "$SERVICE" "${G[@]}" --image "$IMAGE" --no-traffic --tag canary "$@"
+# Caller flags go FIRST. gcloud takes the last occurrence of a repeated flag, so forwarding "$@"
+# after "${G[@]}" let an extra --project or --tag override the ones this script chose -- including
+# overriding --no-traffic's tag and deploying somewhere nobody intended.
+for flag in "$@"; do
+  case "$flag" in
+    --project|--project=*|--region|--region=*|--tag|--tag=*|--traffic|--to-latest)
+      echo "[yip-deploy] refusing: $flag is this script's to set, not the caller's" >&2
+      exit 1
+      ;;
+  esac
+done
+gcloud run deploy "$SERVICE" "$@" "${G[@]}" --image "$IMAGE" --no-traffic --tag canary
 
 # Record exactly which revision was tagged, so promote.sh moves traffic to the revision that was
 # smoke-tested rather than to whatever is newest by then.

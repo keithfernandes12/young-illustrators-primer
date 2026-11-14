@@ -33,19 +33,21 @@ def main() -> int:
     args = ap.parse_args()
 
     if not args.metrics.exists():
-        # primer.evaluation does not exist yet, so nothing produces this file. Say so plainly
-        # instead of raising FileNotFoundError, and never report SKIP as PASS.
+        # A missing metrics file is not a pass and not a clean exit: nothing was measured.
+        # It exits non-zero so `&&` chains and CI stop here rather than continuing.
         print(f"===== YIP GOLDEN GATE ({args.metrics}) =====")
         print(
-            f"GATE_RESULT: SKIP (no metrics at {args.metrics}; run the evaluation first. "
-            "primer.evaluation is not built yet -- see docs/plans/autonomous-loops.md)"
+            f"GATE_RESULT: SKIP (no metrics at {args.metrics}). Produce them first:\n"
+            "  python -m primer.evaluation.golden --split golden --fake-models --out "
+            f"{args.metrics}"
         )
-        return 0
+        return 1
     metrics = json.loads(args.metrics.read_text())
     spec = json.loads(args.thresholds.read_text())["metrics"]
     groups = {g.strip() for g in args.only.split(",") if g.strip()}
 
     failures, rows, logged = 0, [], {}
+    compared = 0  # rows where a real threshold was applied
     for m in spec:
         if groups and m["group"] not in groups:
             continue
@@ -66,6 +68,7 @@ def main() -> int:
         if target is None:
             rows.append(f"INFO  {key} = {actual} (no threshold set yet; report only)")
             continue
+        compared += 1
         ok = OPS[op](float(actual), float(target))
         rows.append(
             f"{'PASS' if ok else 'FAIL'}  {label}: actual={actual} target={target}"
@@ -75,7 +78,17 @@ def main() -> int:
 
     print(f"===== YIP GOLDEN GATE ({args.metrics}) =====")
     print("\n".join(rows) if rows else "no metrics selected")
-    passed = failures == 0 and bool(rows)
+
+    # A PASS has to mean something was measured against a threshold. Rows that only report a
+    # value (a null threshold, such as clip_consistency) are not evidence, so a selection made
+    # only of those -- `--only illustration` today -- is INCONCLUSIVE rather than PASS.
+    passed = failures == 0 and compared > 0
+    if failures == 0 and compared == 0:
+        print(
+            "GATE_RESULT: INCONCLUSIVE (nothing in this selection has a threshold yet; "
+            "set one in thresholds.json or gate a different group)"
+        )
+        return 1
 
     if args.mlflow_run_id:
         # The golden runner marks synthetic scores with `fake_models: true`. Certifying a real
@@ -97,6 +110,17 @@ def main() -> int:
                 print(f"logged gate results to MLflow run {args.mlflow_run_id}")
             except Exception as exc:  # noqa: BLE001
                 print(f"WARNING: could not log to MLflow: {exc}")
+
+    # Synthetic scores prove the gate works, not that a model does. A bare PASS here is how a loop
+    # goal ends, or a model gets registered, with nothing measured -- and no loop prompt matches
+    # FAKE-PASS, which is the point.
+    if metrics.get("fake_models"):
+        print(
+            f"GATE_RESULT: FAKE-{'PASS' if passed else 'FAIL'} "
+            "(--fake-models metrics: the gate ran correctly, but no real model was scored. "
+            "This is not a release signal.)"
+        )
+        return 0 if passed else 1
 
     print(f"GATE_RESULT: {'PASS' if passed else f'FAIL ({failures} failing)'}")
     return 0 if passed else 1

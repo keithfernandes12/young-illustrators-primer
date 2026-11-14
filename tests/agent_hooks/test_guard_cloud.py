@@ -103,7 +103,7 @@ def test_deploy_env_prod_is_refused_in_both_shells():
 
 def test_fails_closed_when_no_project_is_configured():
     """An unset project used to mean "allow everything"; it now means "cannot be checked"."""
-    reason = guard_cloud.check("gcloud ai custom-jobs create --region us-central1", {})
+    reason = guard_cloud.check("gcloud builds submit --tag img .", {})
     assert reason and "no Google Cloud project is configured" in reason
 
 
@@ -128,8 +128,9 @@ def test_staging_variable_is_still_honoured():
         # Builds and the registry live in the shared team project.
         f"gcloud builds submit --project {PROJECT} --tag {PROJECT}/yip/story:abc123 .",
         f"gcloud storage ls gs://yip-models --project {PROJECT}",
-        # Training burns this member's own credits, in their own project.
-        f"gcloud ai custom-jobs create --project {COMPUTE} --region us-central1 --config job.yaml",
+        # Training itself is refused by the ADR rule; watching a person's run is the agent's
+        # half of the handover, and it still has to name the member's own project.
+        f"gcloud ai custom-jobs list --project {COMPUTE} --region us-central1",
         f"gcloud ai custom-jobs stream-logs 42 --project={COMPUTE} --region us-central1",
     ],
 )
@@ -172,7 +173,7 @@ def test_repo_name_collision_does_not_return_with_two_projects():
 
 
 def test_neither_configured_and_not_read_only_is_refused():
-    reason = guard_cloud.check("gcloud ai custom-jobs create --region us-central1", {})
+    reason = guard_cloud.check("gcloud builds submit --tag img .", {})
     assert reason and "no Google Cloud project is configured" in reason
 
 
@@ -196,7 +197,7 @@ def test_compute_project_alone_is_enough():
         # so before the rewrite the literal "$YIP_SHARED_PROJECT" counted as a foreign project and
         # the documented build and training commands were refused by our own guard.
         'gcloud builds submit --project "$YIP_SHARED_PROJECT" --tag img .',
-        "gcloud ai custom-jobs create --project $YIP_COMPUTE_PROJECT --region us-central1 --config j.yaml",
+        "gcloud ai custom-jobs list --project $YIP_COMPUTE_PROJECT --region us-central1",
         "gcloud run services list --project ${YIP_SHARED_PROJECT}",
         'gcloud run services list --project "$env:YIP_SHARED_PROJECT"',
     ],
@@ -275,12 +276,12 @@ def test_a_flag_value_cannot_disguise_a_mutation_as_a_read():
     Creating a job in our own compute project is allowed, so the bypass only mattered where
     read-only status is what exempts a command: an unconfigured session, and one with no target.
     """
-    command = "gcloud ai custom-jobs create --config job.yaml --display-name list"
+    command = "gcloud builds submit --tag img . --display-name list"
     assert guard_cloud.check(command, {}), "unconfigured session must still refuse"
     assert guard_cloud.check(command, SPLIT_ENV), "no project named, so the target is unknown"
-    # The genuine read is still a read, and the genuine creation in our project is still allowed.
+    # A genuine read is still a read, and the same build named at our project is allowed.
     assert guard_cloud.check(f"gcloud ai custom-jobs list --project {COMPUTE}", SPLIT_ENV) is None
-    assert guard_cloud.check(f"{command} --project {COMPUTE}", SPLIT_ENV) is None
+    assert guard_cloud.check(f"{command} --project {PROJECT}", SPLIT_ENV) is None
 
 
 def test_every_segment_of_a_compound_command_is_checked():
@@ -296,6 +297,64 @@ def test_an_env_assignment_in_an_earlier_segment_still_counts():
         f"CLOUDSDK_CORE_PROJECT=another-team-prod; gcloud run services list --project {PROJECT}",
         SPLIT_ENV,
     )
+
+
+# ------------------------------------------------- findings from Adit's review of PR #11 (d695651)
+
+
+@pytest.mark.parametrize(
+    "wrapper",
+    [
+        "bash -lc '{inner}'",
+        "sh -ec '{inner}'",
+        "bash --login -c '{inner}'",
+        "eval '{inner}'",
+    ],
+)
+def test_a_clustered_shell_flag_does_not_launder_the_command(wrapper):
+    """Matching an exact `-c` missed `-lc` and `-ec`; short options cluster."""
+    inner = f"gcloud run services update-traffic yip-api --to-latest --project {PROJECT}"
+    assert guard_cloud.check(wrapper.format(inner=inner), SPLIT_ENV), wrapper
+
+
+@pytest.mark.parametrize("verb", ["replace", "update"])
+def test_rewriting_a_live_service_is_refused(verb):
+    """Neither says "traffic", but a service YAML sets spec.traffic and update revisions latest."""
+    command = f"gcloud run services {verb} svc.yaml --project {PROJECT}"
+    assert guard_cloud.check(command, SPLIT_ENV)
+
+
+def test_no_traffic_must_be_a_flag_not_a_substring():
+    """`--labels=n=--no-traffic` matched the old text lookahead and passed as a canary."""
+    sneaky = f"gcloud run deploy yip-api --image img --project {PROJECT} --labels=n=--no-traffic"
+    assert guard_cloud.check(sneaky, SPLIT_ENV)
+    real = f"gcloud run deploy yip-api --image img --project {PROJECT} --no-traffic --tag canary"
+    assert guard_cloud.check(real, SPLIT_ENV) is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "gcloud ai custom-jobs create --project member-dev --region us-central1 --config j.yaml",
+        "gcloud ai hp-tuning-jobs create --project member-dev --region us-central1",
+        "gcloud run jobs execute yip-eval --project member-dev --region us-central1 --wait",
+        "gcloud run jobs create yip-eval --project member-dev --region us-central1 --image x",
+    ],
+)
+def test_agents_never_launch_training(command):
+    """docs/adrs/where-model-training-happens.md. An ask rule is not enough in an unattended loop."""
+    reason = guard_cloud.check(command, SPLIT_ENV)
+    assert reason and "never train" in reason, command
+
+
+def test_reading_a_job_is_still_allowed():
+    """Monitoring somebody else's run is the agent's half of the handover."""
+    for command in (
+        f"gcloud ai custom-jobs list --project {COMPUTE} --region us-central1",
+        f"gcloud ai custom-jobs describe 42 --project {COMPUTE} --region us-central1",
+        f"gcloud ai custom-jobs stream-logs 42 --project {COMPUTE} --region us-central1",
+    ):
+        assert guard_cloud.check(command, SPLIT_ENV) is None, command
 
 
 def test_override_allows_everything():

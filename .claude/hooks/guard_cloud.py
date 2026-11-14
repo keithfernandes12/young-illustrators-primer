@@ -90,8 +90,11 @@ RISKY = [
         "changes which revision serves live traffic",
     ),
     (
-        re.compile(r"\brun\s+deploy\b(?!.*--no-traffic)"),
-        "deploys a revision that would take traffic immediately (use --no-traffic --tag for a canary)",
+        # `replace` applies a service YAML that can set spec.traffic outright, and `update` creates
+        # a revision that serves everything when the service routes to latest. Neither says
+        # "traffic" on the command line.
+        re.compile(r"\brun\s+services\s+(replace|update)\b"),
+        "rewrites a live Cloud Run service, which can move traffic without naming it",
     ),
     (
         re.compile(r"\b(run|functions|sql|compute|container|artifacts|storage)\b.*\bdelete\b"),
@@ -113,7 +116,9 @@ RISKY = [
     ),
 ]
 
-# The deploy scripts read YIP_DEPLOY_ENV; both shells can set it.
+# Nothing in the deploy scripts reads YIP_DEPLOY_ENV any more -- the staging/prod branching is
+# gone. It is still refused because a person may have it set from the old workflow, and an
+# agent inheriting it would be acting on an intent nobody restated.
 DEPLOY_ENV_PROD = re.compile(
     r"(?:(?:^|\s)YIP_DEPLOY_ENV=|\$env:YIP_DEPLOY_ENV\s*=\s*['\"]?)prod\b", re.IGNORECASE
 )
@@ -203,14 +208,68 @@ def uses_cloud_tool(tokens: list[str]) -> bool:
     return any(_basename(token).removesuffix(".cmd") in CLOUD_TOOLS for token in tokens)
 
 
-def nested_command(tokens: list[str]) -> str | None:
-    """The command string a wrapping shell was asked to run, if any."""
+def nested_commands(tokens: list[str]) -> list[str]:
+    """Every command string a wrapping shell or `eval` was asked to run.
+
+    Matching an exact `-c` missed `bash -lc '...'` and `sh -ec '...'`: short options cluster, so
+    the flag carrying the command can be any single-dash group containing `c`.
+    """
+    found: list[str] = []
     for index, token in enumerate(tokens):
-        if _basename(token).removesuffix(".exe") not in SHELL_WRAPPERS:
+        name = _basename(token).removesuffix(".exe")
+        if name == "eval" and index + 1 < len(tokens):
+            found.append(tokens[index + 1])
+            continue
+        if name not in SHELL_WRAPPERS:
             continue
         for offset in range(index + 1, len(tokens) - 1):
-            if tokens[offset] in {"-c", "-Command", "-command"}:
-                return tokens[offset + 1]
+            candidate = tokens[offset]
+            if candidate.startswith("--"):
+                if candidate.lower() == "--command":
+                    found.append(tokens[offset + 1])
+                    break
+                continue
+            if candidate.startswith("-") and "c" in candidate[1:].lower():
+                found.append(tokens[offset + 1])
+                break
+    return found
+
+
+#: Operations refused on their own tokens rather than by a text pattern, because the text form is
+#: either ambiguous or defeatable by a flag value.
+def token_refusal(tokens: list[str]) -> str | None:
+    operation, flags = operation_and_flags(tokens)
+    # Drop everything up to and including the tool itself, so the first operation word is the
+    # gcloud group ("run", "ai") rather than "gcloud" or a leading `env`/path prefix.
+    for index, word in enumerate(operation):
+        if _basename(word).removesuffix(".cmd") in CLOUD_TOOLS:
+            operation = operation[index + 1 :]
+            break
+
+    # `--no-traffic` must be a real flag. A text search also matched it inside a value, so
+    # `--labels=n=--no-traffic` passed as if the revision took no traffic.
+    if operation[:2] == ["run", "deploy"] and "no-traffic" not in flags:
+        return (
+            "this command deploys a revision that would take traffic immediately "
+            "(use --no-traffic --tag for a canary)."
+        )
+
+    # docs/adrs/where-model-training-happens.md: agent sessions never train. An ask rule is not
+    # enough when a loop is running unattended.
+    launches = {
+        ("ai", "custom-jobs", "create"): "launches a Vertex AI training job",
+        ("ai", "custom-jobs", "cancel"): "cancels a training job",
+        ("ai", "hp-tuning-jobs", "create"): "launches a hyperparameter tuning job",
+        ("run", "jobs", "create"): "creates a Cloud Run job",
+        ("run", "jobs", "execute"): "executes a Cloud Run job",
+        ("batch", "jobs", "submit"): "submits a Batch job",
+    }
+    for prefix, why in launches.items():
+        if tuple(operation[: len(prefix)]) == prefix:
+            return (
+                f"this command {why}, and agents never train "
+                "(docs/adrs/where-model-training-happens.md). Prepare the config and hand it over."
+            )
     return None
 
 
@@ -282,8 +341,9 @@ def _check_text(text: str, environ: dict[str, str], depth: int = 0) -> str | Non
     token_sets = [_tokens(segment) for segment in segments]
 
     for tokens in token_sets:
-        inner = nested_command(tokens)
-        if inner and depth < 4:
+        if depth >= 4:
+            break
+        for inner in nested_commands(tokens):
             reason = _check_text(inner, environ, depth + 1)
             if reason:
                 return reason
@@ -326,6 +386,9 @@ def _check_text(text: str, environ: dict[str, str], depth: int = 0) -> str | Non
         for pattern, why in RISKY:
             if pattern.search(segment):
                 return f"this command {why}."
+        reason = token_refusal(tokens)
+        if reason:
+            return reason
         if is_read_only(tokens):
             continue
         # A mutating command must establish where it is going.
