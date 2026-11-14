@@ -306,7 +306,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S5 | not started | | |
 | S5b | not started | | Vertex GPU job |
 | S6a | not started | | ready: needs no dataset |
-| S6b | in review | | `render_strokes` + config + PNG; numpy only, so CI covers it. KAN-87 |
+| S6b | in review | [#19](https://github.com/keithfernandes12/young-illustrators-primer/pull/19) | `render_strokes` + config + PNG; numpy only, so CI covers it. KAN-87 |
 | S6b2 | not started | | |
 | S6c | not started | | |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap |
