@@ -12,11 +12,18 @@ from typing import Protocol, runtime_checkable
 
 @dataclass(frozen=True)
 class StoryRequest:
-    """What the parent and child asked for."""
+    """What the parent and child asked for, plus what the drawing turned out to be.
+
+    ``subject`` is the label the drawing recogniser returned. Without it the writer has no idea
+    what the child drew, and the book would be about the prompt alone -- which is not the product.
+    Serving fills it in between recognition and writing; it is None only when no drawing was given.
+    """
 
     prompt: str
     age: int
     target_words: tuple[str, ...] = ()
+    subject: str | None = None
+    drawing_ref: str | None = None
 
 
 @dataclass(frozen=True)

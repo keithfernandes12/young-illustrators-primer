@@ -17,13 +17,27 @@ class Illustration:
     page_index: int
     image_ref: str
     alt_text: str
+    #: What the page was conditioned on, so consistency can be scored against the drawing.
+    subject: str | None = None
 
 
 @runtime_checkable
 class Illustrator(Protocol):
-    """Illustrate pages and keep the character consistent. Gated on `clip_consistency`."""
+    """Illustrate pages and keep the character consistent. Gated on `clip_consistency`.
 
-    def illustrate(self, page_index: int, page_text: str, style: str) -> Illustration:
+    ``subject`` and ``drawing_ref`` are the conditioning signal: the child's own drawing is what
+    the illustrations have to look like. Without them an illustrator can only read the page text,
+    and drawing-to-pages consistency cannot be scored at all.
+    """
+
+    def illustrate(
+        self,
+        page_index: int,
+        page_text: str,
+        style: str,
+        subject: str | None = None,
+        drawing_ref: str | None = None,
+    ) -> Illustration:
         """One illustration for one page."""
         ...
 
@@ -38,12 +52,25 @@ class FakeIllustrator:
     def __init__(self, consistency_score: float = 0.9) -> None:
         self.consistency_score = consistency_score
 
-    def illustrate(self, page_index: int, page_text: str, style: str) -> Illustration:
+    def illustrate(
+        self,
+        page_index: int,
+        page_text: str,
+        style: str,
+        subject: str | None = None,
+        drawing_ref: str | None = None,
+    ) -> Illustration:
         return Illustration(
             page_index=page_index,
-            image_ref=f"fake://{style}/page-{page_index}",
+            image_ref=f"fake://{style}/{subject or 'unknown'}/page-{page_index}",
             alt_text=page_text[:60],
+            subject=subject,
         )
 
     def consistency(self, illustrations: list[Illustration]) -> float:
-        return self.consistency_score if illustrations else 0.0
+        if not illustrations:
+            return 0.0
+        # A real scorer compares images; the fake reports perfect consistency only when every page
+        # was conditioned on the same subject, so serving failing to thread it through is visible.
+        subjects = {illustration.subject for illustration in illustrations}
+        return self.consistency_score if len(subjects) == 1 else 0.0
