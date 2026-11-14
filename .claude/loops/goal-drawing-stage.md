@@ -1,7 +1,16 @@
 /loop Run one loop-worker iteration on docs/plans/mvp-cloud-deploy.md, restricted to slices S6a-S6e
 (the drawing recognition stage, Jira KAN-38 and KAN-87). Only slices with a Jira key, not marked
-person-only, whose dependencies are merged. Stop with LOOP_WAIT if 3 agent-authored PRs are open.
-If no slice is ready, output LOOP_EMPTY and stop the loop.
+person-only, whose dependencies are merged. If no slice is ready, output LOOP_EMPTY and stop the
+loop.
+
+**This prompt deliberately overrides `loop-worker`'s review-queue rule, which stops at 3 open
+agent-authored PRs of any kind.** Count only the ones for this stage: stop with
+`LOOP_WAIT review-queue-full` when **3 or more open agent-authored PRs carry KAN-38 or KAN-87**, or
+when more than **5** are open across the whole repository. The reason for the change is that the
+original count is repo-wide, so another member's open PR spends this stage's budget and a loop here
+stops before doing anything — which is what happened the first time this prompt was used. The
+reason for keeping a cap at all is unchanged and still binding: humans review, and more open PRs
+make that worse, not better. Raising this further is a person's decision, not a loop's.
 
 `AGENTS.md` is the rule set and `loop-worker` reads it at the start of every iteration; it is not
 repeated here. What follows is only what is specific to this stage.
