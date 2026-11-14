@@ -33,4 +33,11 @@ import json,sys
 t=[x for x in json.load(sys.stdin).get("status",{}).get("traffic",[]) if x.get("percent")]
 print(max(t,key=lambda x:x["percent"]).get("revisionName","") if t else "")'
 }
+tagged_revision() { # tagged_revision <service> <tag> -- which revision currently carries that tag
+  gcloud run services describe "$1" "${G[@]}" --format=json | "$PY" -c '
+import json,sys
+svc=json.load(sys.stdin); tag=sys.argv[1]
+for t in svc.get("status",{}).get("traffic",[]):
+    if t.get("tag")==tag: print(t.get("revisionName","")); break' "$2"
+}
 echo "[yip-deploy] project=$PROJECT region=$REGION" >&2

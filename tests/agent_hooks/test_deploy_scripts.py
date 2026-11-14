@@ -6,6 +6,7 @@ tag_url() and serving_revision() returned empty strings and every smoke test fai
 hooks already pick an interpreter; these scripts now do the same.
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -69,6 +70,74 @@ def test_common_uses_the_single_project_variable():
     assert "YIP_PROJECT" in text, "the single-project fallback must keep working"
     # The staging/prod split is gone; there was never a prod project.
     assert "YIP_PROD_PROJECT" not in text
+
+
+# ------------------------------------------------- findings from the Copilot review of PR #11
+
+CANARY = SCRIPTS / "deploy_canary.sh"
+PROMOTE = SCRIPTS / "promote.sh"
+SMOKE = SCRIPTS / "smoke_test.sh"
+
+
+def code_of(script: Path) -> str:
+    """The script without comment lines.
+
+    These scripts explain in comments why they do *not* call `update-traffic` or `--to-latest`, so
+    a plain substring search finds the prose and not the behaviour.
+    """
+    return "\n".join(
+        line for line in script.read_text(encoding="utf-8").splitlines() if not line.strip().startswith("#")
+    )
+
+
+def test_the_canary_never_shifts_traffic():
+    """It used to send 10% of live requests, which guard_cloud.py now refuses outright."""
+    code = code_of(CANARY)
+    assert "update-traffic" not in code, "the canary must not move traffic at all"
+    assert "--no-traffic" in code and "--tag canary" in code
+    assert "CANARY_PERCENT: 0" in code
+
+
+def test_the_canary_fails_closed_when_the_service_cannot_be_described():
+    """A describe failure can be permissions or a transient error, not just an absent service.
+
+    The old fallback deployed at 100% traffic in every one of those cases.
+    """
+    text = CANARY.read_text(encoding="utf-8")
+    assert "exit 1" in text
+    # The old bootstrap branch deployed without --no-traffic. It must be gone.
+    assert "does not exist yet; first deploy takes 100%" not in text
+
+
+def test_the_canary_records_the_revision_it_tagged():
+    assert "tagged_revision" in CANARY.read_text(encoding="utf-8")
+    assert "tagged_revision()" in COMMON.read_text(encoding="utf-8").replace("tagged_revision() {", "tagged_revision()")
+
+
+def test_promote_targets_the_tested_revision_not_the_latest():
+    """`--to-latest` promotes whatever is newest, which may not be what was smoke-tested."""
+    code = code_of(PROMOTE)
+    assert "--to-latest" not in code
+    assert "--to-revisions" in code
+    assert ".canary" in code, "it must read the revision deploy_canary.sh recorded"
+    assert "refusing" in code, "it must refuse when the canary tag moved since the test"
+
+
+def test_smoke_test_fails_when_its_fixture_is_missing():
+    """A missing fixture used to skip the POST, so /healthz alone could report PASS."""
+    text = SMOKE.read_text(encoding="utf-8")
+    assert "missing smoke fixture" in text
+    assert "SMOKE_RESULT: FAIL" in text
+
+
+def test_the_smoke_fixture_exists_and_carries_no_child_data():
+    fixture = REPO_ROOT / "tests" / "fixtures" / "smoke_book_request.json"
+    assert fixture.exists(), "smoke_test.sh references this file"
+    data = json.loads(fixture.read_text(encoding="utf-8"))
+    assert data["options"]["dry_run"] is True
+    # A pseudonymous id and a reference, never a name or an uploaded image.
+    assert set(data["child"]) == {"child_id", "age"}
+    assert data["drawing"]["drawing_ref"].startswith("fixture://")
 
 
 @bash_required
