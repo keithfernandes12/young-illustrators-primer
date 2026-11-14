@@ -129,7 +129,8 @@ zero-shot and fills one `Character` — `label`, `confidence`, the ranked `candi
 measured from, and an `embedding` from the same tower. One character per drawing for now: the whole
 image is the subject. Tests use a recording fake encoder, so CI installs no weights and reaches no
 network; `python -m primer.drawing.smoke` produces one analysis from a synthetic drawing with
-cached weights, mirroring `primer.illustration.smoke`.
+cached weights. (An earlier draft of this line said it mirrors `primer.illustration.smoke`; no such
+module exists — S6a's is the first smoke module in the repository, and the pattern is its to set.)
 
 - **Why separate** — it needs no dataset. Recognition takes image bytes, so the baseline can be
   built and proved before S6b renders anything, and it is the slice everything else in S6 builds on.
@@ -305,8 +306,8 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S4 | not started | | |
 | S5 | not started | | |
 | S5b | not started | | Vertex GPU job |
-| S6a | not started | | ready: needs no dataset |
-| S6b | in review | [#19](https://github.com/keithfernandes12/young-illustrators-primer/pull/19) | `render_strokes` + config + PNG; numpy only, so CI covers it. KAN-87 |
+| S6a | in review | [#18](https://github.com/keithfernandes12/young-illustrators-primer/pull/18) | zero-shot SigLIP 2 baseline; no measured number until S6c |
+| S6b | merged | [#19](https://github.com/keithfernandes12/young-illustrators-primer/pull/19) | `render_strokes` + config + PNG; numpy only, so CI covers it. KAN-87 |
 | S6b2 | not started | | |
 | S6c | not started | | |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap |
@@ -321,6 +322,24 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S14 | not started | | |
 
 ## Decisions
+
+- **2026-11-14** — S6a takes **`google/siglip2-base-patch16-224`**, pinned at revision
+  `75de2d55…`, as the recogniser's tower. The brief rates SigLIP 2 highest of the Apache-2.0
+  candidates for this output; the **base** variant rather than a larger one is `AGENTS.md`'s local
+  GPU rule, and it binds here rather than at S6d because S6d fine-tunes whatever this slice picks.
+  DINOv3 is not taken: its custom licence is a product risk the brief flags, and nothing it offers
+  is worth that for a course MVP. The revision is pinned so a rerun measures the weights a number
+  was taken on.
+- **2026-11-14** — The 345 Quick, Draw! category names are **checked in** as
+  `src/primer/drawing/configs/quickdraw_categories.txt` rather than listed from the bucket at run
+  time. Listing needs the network, which `tests/drawing/` must not touch, and a vocabulary that can
+  change underneath a measured `drawing_top5_acc` makes two runs incomparable. The file is written
+  in the bucket's own listing order, which is the order
+  `primer.data.sources.quickdraw` counts category indexes in.
+- **2026-11-14** — `primer.drawing.smoke` **takes a drawing as a path** instead of generating one.
+  Turning strokes into pixels is S6b's `render_strokes`, and KAN-87 exists precisely so there is
+  one renderer; an `ImageDraw` loop in `smoke.py` would have been the second one before the first
+  had landed.
 
 - **2026-11-14** — **Render on the fly in the loader; do not cache rendered images.** S6b's
   contract left this open. A simplified Quick, Draw! drawing is a few hundred bytes of coordinates
@@ -377,6 +396,129 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   area is empty, so the baseline keeps the end-to-end path alive if a training run slips.
 
 ## Verified facts
+
+- **2026-11-14 — S6a: the zero-shot baseline loads and ranks sensibly.** *Hypothesis:* SigLIP 2's
+  towers can score the 345 Quick, Draw! categories for one drawing and return a ranked character
+  sheet, with no training and no dataset. *Result:* yes.
+  `python -m primer.drawing.smoke --drawing <a synthetic house>` on
+  `google/siglip2-base-patch16-224` @ `75de2d55…` returned `house` at 0.1255, with `barn` 0.0284,
+  `square` 0.0028, `church` 0.0027, `tent` 0.0023 behind it; 345 labels scored, a 768-dimension
+  embedding, 9.9 s to load on **CPU**, then 10.5 s for the first analyse and **0.12 s for the
+  second**. Almost all of that first figure is encoding the 345 prompts once; the warm number is
+  what a drawing costs and what KAN-71's budget is about. An earlier version of this fact said
+  "11.3 s to analyse", which was the cold number under a name everyone reads as per-drawing.
+  The input was a crude house drawn with
+  the standard library, so the ranking is evidence that the label/score pairing and the prompt
+  template are right — a shifted pairing would not have put four buildings in the top five.
+  **This is evidence about wiring, not about model quality:** it is one synthetic image, and no
+  `drawing_top5_acc` exists until S6c runs the real split.
+- **2026-11-14 — S6a: the confidences are sigmoid scores, not a distribution.** The winning label
+  scored 0.1255 and the five shown sum to ~0.16. That is expected — SigLIP's loss is pairwise, so
+  each score is "does this label fit" independently — but it means a confidence threshold tuned as
+  if it were a softmax probability would reject nearly everything. Ranking, which is all
+  `drawing_top5_acc` reads, is unaffected.
+- **2026-11-14 — S6a: SigLIP 2 base's parameter count and weight footprint, measured.** (The
+  heading used to say "fits the 8 GB rule, measured", which a reader skimming headings would take
+  as a VRAM measurement. It is not one — see the end of this bullet.) Loaded and counted rather than
+  estimated: 375,187,970 parameters total, **1.398 GB in fp32 / 0.699 GB in bf16**, split as a
+  92,884,224-parameter vision tower (0.346 GB fp32) and a 282,303,744-parameter text tower
+  (1.052 GB fp32). S6d fine-tunes the **vision** tower, so the figure that matters there is 93 M
+  parameters — with AdamW states and gradients that is single-digit hundreds of MB before
+  activations, well inside 8 GB. **VRAM itself was not measured:** PyPI's Windows `torch` wheel is
+  CPU-only (`torch 2.15.0+cpu`, `cuda False`), so this run never touched the GPU. The measured VRAM
+  figure AGENTS.md asks for belongs to S6d, which needs a CUDA build anyway.
+- **2026-11-14 — S6a: the smoke module earned its place on its first run.**
+  `transformers` 5.x returns a `BaseModelOutputWithPooling` from `get_text_features`, not the bare
+  tensor the model card's example shows, so normalising it raised `AttributeError` on the first
+  real call. The fake-encoder tests could not have caught it — they inject an `Encoder` and never
+  execute `SiglipEncoder`. Fixed by pulling the one version-dependent assumption into
+  `model.pooled`, which *is* unit-tested, and pinning the extra to `transformers>=5,<6` because
+  that is the only API actually exercised.
+- **2026-11-14 — S6a: the CUDA path was broken and is fixed but still unrun.** *Hypothesis:* a
+  CPU smoke run proves the encoder works. *Result:* no. A self-review found that the processor
+  returns float32 `pixel_values` and `BatchFeature.to(device)` moves without casting, so on CUDA —
+  where `load()` puts the tower in fp16 — the first matmul raises `mat1 and mat2 must have the
+  same dtype`. Fixed by passing the dtype as well (`.to(device, dtype)`, which `BatchFeature`
+  forwards to `Tensor.to`, verified against the installed source). **Not executed on a GPU:** this
+  machine has `torch 2.15.0+cpu`. The first GPU run of `smoke.py` is still an untested path, and
+  whoever makes it should expect to find something.
+- **2026-11-14 — S6a: a NaN confidence survived every guard.** With a NaN among the scores,
+  `sorted` produced an arbitrary order and `Character.__post_init__` accepted it — its ranking
+  check compares two lists, and a NaN element compares equal to itself by identity, so an unsorted
+  list whose `label` was not the top-scoring one passed validation. A mislabelled character would
+  have reached `drawing_top5_acc` as a number rather than an error. Closed at both ends: a floor on
+  the norm in `l2_normalised` (the 0/0 that produces it) and an explicit non-finite check in
+  `analyse`. The contract-level hole in `interface.py` is left alone — see Open questions.
+- **2026-11-14 — S6a: that NaN floor was a no-op in the dtype it was written for.** An independent
+  review found it: `1e-12` is below float16's smallest subnormal (~6e-8), so on CUDA
+  `clamp_min(1e-12)` clamps to exactly `0.0` and the 0/0 happens anyway — in the fp16 path the
+  comment named as the reason for the floor. The floor is now the caller's
+  `torch.finfo(features.dtype).tiny`. Mutation-checked: putting `1e-12` back, and separately
+  reverting the `.to(device, dtype)` cast, each now fails exactly one test, and neither failed
+  anything before this round. Both are fp16-only, and **still nothing has run on a GPU** — these
+  are stub towers in float16 on a CPU.
+- **2026-11-14 — S6a: the pinned checkpoint revision exists and is Apache-2.0.**
+  `https://huggingface.co/api/models/google/siglip2-base-patch16-224/revision/75de2d55…` returns
+  200 and reports `license:apache-2.0`. Every measured figure in `CARD.md` is anchored to that
+  sha, so it is worth knowing it resolves rather than assuming it.
+- **2026-11-14 — S6a: three assertions could not fail, and two inputs were accepted that should
+  not be.** The stub tower used `logit_scale = exp(0)` and `logit_bias = 0`, both identities, so
+  multiplying by the scale was indistinguishable from dividing and adding the bias from
+  subtracting; the dtype assertion guarding the CUDA fix passed with the fix reverted. `top_k: 0`
+  passed construction and died on `candidates[0]`. Nothing checked that a confidence is in 0–1, so
+  deleting `torch.sigmoid` from the encoder left every ranking test green while an unbounded logit
+  flowed out under a name three documents call a probability. All closed.
+- **2026-11-14 — S6a: the text tower's normalisation was the last unguarded line in the scoring
+  path.** A second review round found that replacing it with the raw features left all 38 tests
+  green, because the stub's text rows were already unit length. Against the real checkpoint the
+  text norms are 18–26, so skipping it scales every logit by about twenty, all 345 sigmoids
+  saturate to 1.0, and the winner becomes whichever label sorts first — `The Eiffel Tower`, for
+  every drawing. Neither guard catches it: the 0–1 check passes because a saturated sigmoid is in
+  range, and the ranking check passes because all-equal is sorted. The stub's rows are now five
+  units long, so that mutation fails, and a six-prompt case exercises a zero text row.
+- **2026-11-14 — S6a: the CUDA path now picks bf16, not fp16.** `AGENTS.md` names bf16 for local
+  GPU work and S6d will fine-tune in it, while `CARD.md` and these facts already said bf16 and the
+  code said fp16 — one of the two was wrong. bf16 also keeps fp32's exponent range, which is the
+  half of the precision question that produces a NaN rather than a drift. **Still unrun on a GPU.**
+- **2026-11-14 — S6a: that dtype switch was unasserted, and it silently decoupled three tests
+  from the code.** A third review round found that `load()`'s dtype choice could be set to fp16,
+  or to plain fp32 giving up reduced precision on CUDA entirely, with the whole suite green —
+  while the three tests added to close the CUDA gap still said "what `load()` picks on CUDA" and
+  ran float16. `load()` now has a test of its own, the first it has ever had, covering the dtype,
+  the device and the `from_pretrained` keywords against a stubbed factory; and the
+  reduced-precision fixture runs both fp16 and bf16, because the norm-floor regression only shows
+  in fp16 while the production path is bf16. Mutation-checked: setting the dtype to fp16 now fails
+  one test. The same round found the **text**-side norm floor unpinned — only the image side's was
+  — which is the side where one NaN ruins every confidence rather than one encoding.
+- **2026-11-14 — S6a: comments and card carried fp16 numbers after the switch.** The cross-dtype
+  cache-key warning said one step is "about thirty times" the rounding step, true of fp16; in
+  bf16 it is 2.441e-4 at the component the sentence names, **244 times** (a fourth round caught a
+  first correction that overshot it by 15%, by computing the binade rather than scaling the value). `CARD.md` contradicted itself on one page. The
+  justification for making the norm floor a parameter also claimed clamping to 1e-12 fails "on the
+  CUDA path", which is false for bf16 — it keeps fp32's exponent range and represents 1e-12
+  exactly. Corrected in all four places; the parameter stays, because the point is not to depend
+  on which dtype someone picks.
+- **2026-11-14 — S6a: a transparent drawing reached the tower as a solid black square.**
+  *Hypothesis:* `Image.open(...).convert("RGB")` normalises any upload to three channels.
+  *Method:* built a four-pixel PNG with one black stroke on a fully transparent canvas, in each of
+  the three shapes transparency takes — `RGBA`, `LA`, and a palette image carrying it in `info` —
+  and converted each. *Result:* all three came out a uniform `(0, 0, 0)`, ink and canvas alike:
+  `convert("RGB")` does not composite alpha, it drops it, and a sketch is black ink on
+  transparent **black**. Nothing raised; the tower scored a black square and would have returned
+  a confident label for it. Now composited onto `alpha_background` (255, white) before conversion,
+  because `drawing_render.yaml` rasterises the Quick, Draw! split as dark ink on white and a
+  photograph of a paper drawing is too — compositing onto anything else would invert an upload
+  relative to the split S6c scores it against. The mode alone does not decide it: the palette case
+  reports `"P"`. Found by the automated reviewer on the pull request.
+- **2026-11-14 — S6a: two more races and 1113 device syncs per drawing, from the same review.**
+  The lazy `_model is None` guard in `load()` let two threadpool requests on a cold start load two
+  checkpoints onto one device; locking only `load()` would not have fixed it, because two threads
+  racing `DrawingRecognizerModel.encoder` build two *different* encoders that each load past their
+  own lock. Both are locked now, and `load()` publishes `_model` last, after the move and `eval()`.
+  Separately, `float(value)` per element is a device-to-host copy that synchronises the stream —
+  345 + 768 = **1113** of them per drawing for the shipped checkpoint, on the warm path KAN-71
+  budgets — replaced with one `tolist()` per vector, with a tensor subclass counting the crossings
+  so the test pins the cost rather than only the values.
 
 - **2026-11-14** — `render_strokes` renders the Quick, Draw! 0–255 grid onto the canvas with the
   endpoints pinned: at the shipped settings coordinate 0 lands on column 8 and 255 on column 215,
@@ -450,7 +592,47 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   rather than at the first drawing, including an even `line_width`, ink equal to background, and
   padding too small for the stroke width to stay on the canvas.
 
+- **2026-11-14 — S6a's `package-data` dependency on S6b is closed, by merging in that order.**
+  A wheel built from the S6a branch alone contained no `configs/` YAML, so `DrawingRecognizerModel()`
+  would raise `FileNotFoundError` from a wheel install while editable installs, the area
+  `Dockerfile`, `verify` and the smoke run all passed. S6b carried the
+  `[tool.setuptools.package-data]` block that fixes it for every area; #19 merged first, as
+  recommended, and this branch picks it up in the merge rather than duplicating it. Nothing builds
+  a wheel today, so it was latent either way.
+
 ## Open questions
+
+- **Should CI run any line of `SiglipEncoder`?** **Tracked as KAN-106.** Today it runs none: CI installs `.[dev]`, `torch`
+  is only in the `drawing` extra, and `tests/drawing/test_siglip_encoder.py` skips wholesale. Both
+  bugs this slice found, and both the review found, lived in exactly that region. *Recommended:* a
+  separate, non-blocking CI job that installs the extra and runs that file on CPU — a few minutes
+  of wall clock for the only coverage of the code that produces the numbers. *Decides:* the KAN-38
+  owner; it changes `.github/`, which AGENTS.md keeps out of a feature PR.
+- **Should the `drawing` extra be pinned like the rest?** `tests/test_requirements.py` covers
+  `dependencies`, `dev` and `dvc` only, so `transformers` floats anywhere in `>=5,<6`. The
+  checkpoint sha is pinned precisely so a rerun reproduces a measured number, and `model.pooled`
+  exists because the return shape changed between majors — a minor is the same class of risk
+  against the same numbers. *Recommended:* add the extra to the pinned set when CI installs it.
+- **Where does a zero-shot number get logged?** **Tracked as KAN-107.** `AGENTS.md` requires every model comparison to go
+  to MLflow, and nothing from S6a is in one: the baseline's figures live in these Verified facts
+  only. `docs/engineering/model-development.md` still has an open question about who hosts the
+  shared MLflow server, so there is nowhere to log to yet. *Recommended:* settle the host before
+  S6c produces the first `drawing_top5_acc`, which is a number that genuinely needs comparing.
+
+- **Should `Character.__post_init__` reject non-finite confidences?** Its ranking check passes on a
+  list containing NaN, because CPython's list comparison short-circuits on identity, so the
+  invariant `drawing_top5_acc` is scored from is not actually enforced. S6a guards its own side in
+  `drawing/model.py`, but every other producer of a `Character` — the Fake, S6d, anything KAN-42
+  builds — has the same hole. *Recommended:* add the check in `interface.py` where the invariant is
+  declared, rather than in each caller. *Decides:* the KAN-38 owner; it touches a shared contract,
+  so it should not ride along inside a model slice.
+- **`DrawingRecognizer.analyse`'s docstring says it fills every field except `reference_image_ref`
+  and `approved`, which the real model does not do.** S6a deliberately leaves `description`,
+  `body_type`, `crop_ref`, `mask_ref` and `keypoints` at their defaults for S6e, and `build_book`
+  accepts `description=""` without complaint — so the first person to see a book built on an empty
+  description will see it in serving. *Recommended:* say in the Protocol which fields may be unset
+  before S6e lands, rather than discovering it downstream. *Decides:* KAN-38 with KAN-42.
+
 
 - Should `tests/drawing/test_render.py`'s Pillow check be gated on a real extra rather than on
   whether Pillow happens to be installed? Recommended: once S6a lands the `drawing` extra, add
@@ -472,6 +654,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   as part of S6b2 — the 0.356 ms figure is 50 drawings of one sparse category, and the obvious
   optimisation (indexing the canvas from the point list instead of building a list of tuples) has
   not been tried because nothing has needed it yet.
+
 - Which region has L4 GPU quota for the team's projects? Recommended: request quota in `us-central1`
   now; the team lead decides.
 - Does the course's GCP credit cover Claude models on Vertex AI? Recommended: check the billing account's
