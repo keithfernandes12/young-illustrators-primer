@@ -1,5 +1,18 @@
-# Hyperparameter search space for the illustration stage, versioned with the code.
-# Stub: `train.py --config` reads this.
+# The pretrained illustration baseline (KAN-42 S7a): SD 1.5 + ControlNet-Scribble v1.1, one page.
+# Values are the ones measured in the local baseline run (docs/plans/mvp-cloud-deploy.md, Verified
+# facts, 2026-11-13). Revisions are pinned so a rerun downloads exactly the weights that were measured.
+# `model.py` reads this; nothing is trained, so `search_space` stays empty until sensitivity work.
 name: illustration-baseline
 data_version: unpinned
+base_model: stable-diffusion-v1-5/stable-diffusion-v1-5
+base_revision: 451f4fe16113bff5a5d2269ed5ad43b0592e9a14
+controlnet: lllyasviel/control_v11p_sd15_scribble
+controlnet_revision: 3564ec7b87dd706d5fc760d21c9e90bb160d1e9f
+scheduler: UniPCMultistep
+seed: 42
+steps: 25
+guidance: 7.5
+controlnet_scale: 1.0
+size: 512
+negative_prompt: "photo, realistic, dark, scary, text, watermark, blurry, deformed, ugly"
 search_space: {}
