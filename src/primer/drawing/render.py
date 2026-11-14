@@ -234,21 +234,65 @@ def _runs(stroke: Stroke, index: int) -> tuple[list[float], list[float]]:
             f"stroke {index} has {len(runs)} runs; it must be [xs, ys]. Quick, Draw!'s raw format "
             "carries a third run of timings -- render the simplified format, which drops it"
         )
-    for axis, run in zip(("x", "y"), runs, strict=True):
-        if isinstance(run, (str, bytes, bytearray)):
-            # Text iterates character by character, so a run of "12" would become the coordinates
-            # 1 and 2 and render as a perfectly plausible drawing. Refused rather than drawn.
-            raise TypeError(
-                f"stroke {index}'s {axis} run is text, not a sequence of numbers; parse the record "
-                "with json.loads before rendering it"
-            )
-    try:
-        return [float(value) for value in runs[0]], [float(value) for value in runs[1]]
-    except (TypeError, ValueError) as error:
+    return _coordinates(runs[0], index, "x"), _coordinates(runs[1], index, "y")
+
+
+def _coordinates(run: object, index: int, axis: str) -> list[float]:
+    """One run of a stroke as floats, with everything that is not a coordinate refused by name.
+
+    ``float()`` on its own is too generous for a module whose contract is that a malformed record
+    raises rather than renders: it turns ``"12"`` into 12.0 and ``True`` into 1.0, so a column of
+    strings or a half-parsed record comes back as a perfectly plausible drawing. A mapping is
+    worse still -- iterating one yields its *keys*, so ``{"0": 9, "1": 9}`` renders the
+    coordinates 0 and 1 and discards the 9s entirely, while a mapping with word keys is refused;
+    that inconsistency is the tell. A set renders in sorted order, which for a stroke is a
+    different drawing.
+
+    numpy arrays and numpy scalars are numbers and stay welcome: they are what the loader holds.
+    """
+    if isinstance(run, Mapping):
         raise TypeError(
-            f"stroke {index} has runs that are not sequences of numbers ({error}); a single stroke "
-            "passed on its own, rather than a list of strokes, arrives looking like this"
-        ) from error
+            f"stroke {index}'s {axis} run is a mapping; iterating one yields its keys, so this "
+            "would render the keys and silently discard the values"
+        )
+    if isinstance(run, (str, bytes, bytearray)):
+        # Text iterates character by character, so a run of "12" would become the coordinates
+        # 1 and 2 and render as a perfectly plausible drawing.
+        raise TypeError(
+            f"stroke {index}'s {axis} run is text, not a sequence of numbers; parse the record "
+            "with json.loads before rendering it"
+        )
+    if isinstance(run, (set, frozenset)):
+        raise TypeError(
+            f"stroke {index}'s {axis} run is a set, which has no order; a stroke's points are a "
+            "sequence, and reordering them is a different drawing"
+        )
+    if not isinstance(run, (Sequence, np.ndarray)):
+        raise TypeError(
+            f"stroke {index}'s {axis} run is a {type(run).__name__}, not a sequence of numbers; a "
+            "single stroke passed on its own, rather than a list of strokes, looks like this"
+        )
+
+    coordinates: list[float] = []
+    for value in run:
+        # `bool` before anything numeric: it is a subclass of `int`, so `float(True)` is 1.0 and a
+        # boolean column would render. `RenderConfig` refuses booleans for the same reason.
+        if isinstance(value, (bool, np.bool_)):
+            raise TypeError(
+                f"stroke {index}'s {axis} run contains a boolean, which is not a coordinate"
+            )
+        if isinstance(value, (str, bytes, bytearray)):
+            raise TypeError(
+                f"stroke {index}'s {axis} run contains the text {value!r}, not a coordinate; "
+                "parse the record with json.loads before rendering it"
+            )
+        try:
+            coordinates.append(float(value))
+        except (TypeError, ValueError) as error:
+            raise TypeError(
+                f"stroke {index}'s {axis} run contains {value!r}, which is not a number ({error})"
+            ) from error
+    return coordinates
 
 
 def _points(strokes: Strokes, config: RenderConfig) -> npt.NDArray[np.int64]:

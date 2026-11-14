@@ -383,8 +383,17 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   the first and last drawable pixels of a 224px canvas with 8px padding. Pinned by
   `tests/drawing/test_render.py`, which asserts the exact inked pixels of horizontal, vertical,
   45°, shallow, steep and downhill diagonal, tie-breaking and single-point strokes on a 10×10
-  canvas rather than only their shape — the interior of a segment, not only its endpoints. 65
+  canvas rather than only their shape — the interior of a segment, not only its endpoints. 74
   tests, all but one running on `numpy` alone, so CI covers the whole path.
+- **2026-11-14** — Four shapes that are not drawings were rendering as plausible ones, found by
+  the automated reviewer on PR #19 and reproduced before fixing: a run of numeric strings
+  (`float("12")` is 12.0), a run of booleans (`bool` is a subclass of `int`), a **mapping** run
+  with numeric keys — iterating one yields its keys, so `{"0": 9, "1": 9}` drew at 0 and 1 and
+  discarded the 9s, while a word-keyed mapping raised, which is the tell — and a `set` run, which
+  renders in sorted order and so is a different drawing. Each is now refused by type and by name.
+  numpy arrays and numpy scalars still render, since that is what a loader holds; `np.bool_` is
+  refused like a plain `bool`. This is the same standard `RenderConfig` already applied to its own
+  settings, now applied to coordinates.
 - **2026-11-14** — `render_strokes` accepts numpy arrays in its type signature, not only at run
   time. `ndarray` is not a `Sequence`, so the original alias made the loader S6b2 is going to
   build — which holds strokes as arrays, and is the function's primary caller — a mypy error at

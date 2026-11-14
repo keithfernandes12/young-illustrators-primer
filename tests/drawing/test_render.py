@@ -219,6 +219,24 @@ def test_numpy_arrays_render_the_same_as_lists(tiny):
     assert np.array_equal(render_strokes(as_arrays, tiny), render_strokes(strokes, tiny))
 
 
+@pytest.mark.parametrize("dtype", [np.int16, np.int64, np.float32, np.float64])
+def test_numpy_scalars_are_numbers_not_impostors(tiny, dtype):
+    """The coordinate checks refuse text and booleans by type, so they must not refuse these.
+
+    numpy scalars inside an ordinary list are what a loader produces when it iterates a column,
+    and `np.bool_` is deliberately *not* in this list -- it is refused, like a plain `bool`.
+    """
+    strokes = [[[0, 2, 4], [0, 3, 1]]]
+    as_scalars = [[[dtype(value) for value in run] for run in stroke] for stroke in strokes]
+
+    assert np.array_equal(render_strokes(as_scalars, tiny), render_strokes(strokes, tiny))
+
+
+def test_a_numpy_boolean_is_refused_like_a_plain_one(tiny):
+    with pytest.raises(TypeError, match="contains a boolean"):
+        render_strokes([[[np.bool_(True), np.bool_(False)], [0, 1]]], tiny)
+
+
 def test_the_shipped_config_renders_at_the_checkpoint_resolution():
     config = default_config()
 
@@ -280,12 +298,19 @@ def test_a_config_that_is_not_a_mapping_says_so(tmp_path, text, message):
         ([["12", "34"]], "x run is text"),
         ([[[0], "34"]], "y run is text"),
         ([{"x": [0], "y": [0]}], "is a mapping"),
-        ([[["a"], ["b"]]], "could not convert string to float"),
-        ([[[0, None], [0, 1]]], "not sequences of numbers"),
+        # `float()` accepts all of these, so each one rendered a plausible drawing from a record
+        # that was never a drawing. The mapping is the sharpest: iterating it yields its *keys*,
+        # so numeric keys rendered while the values were discarded, and only word keys raised.
+        ([[["1", "2"], ["3", "4"]]], "contains the text '1'"),
+        ([[[True, False], [False, True]]], "contains a boolean"),
+        ([[{"0": 9, "1": 9}, [0, 1]]], "x run is a mapping"),
+        ([[{0, 2, 4}, {0, 2, 4}]], "x run is a set"),
+        ([[["a"], ["b"]]], "contains the text 'a'"),
+        ([[[0, None], [0, 1]]], "which is not a number"),
         (None, "null for image sources"),
         ([], "at least one stroke"),
         ([5], "not a pair of runs"),
-        ([[0, 4], [0, 0]], "not sequences of numbers"),
+        ([[0, 4], [0, 0]], "not a sequence of numbers"),
         ([[[0], [0], [0]]], "timings"),
         ([[[0, 1], [0]]], "x values"),
         ([[[], []]], "no points"),
