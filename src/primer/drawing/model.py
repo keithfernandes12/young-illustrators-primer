@@ -40,12 +40,16 @@ CONFIG_PATH = CONFIG_DIR / "drawing_baseline.yaml"
 #: How many decimals a confidence and an embedding component keep. Rounding is monotonic, so a
 #: ranked list stays ranked; it exists so that `Character.identity_key`, which hashes the embedding,
 #: is not changed by float noise that means nothing.
+#:
+#: **It does not make the key portable across dtypes.** The tower runs in fp16 on CUDA and fp32 on
+#: CPU, and near a unit vector's typical component (1/sqrt(768) is about 0.036) one fp16 step is
+#: around 3e-5 -- thirty times this rounding step -- so the same drawing analysed on a GPU and on a
+#: CPU keys to two different cache entries. No rounding fixes that; it is a difference in what the
+#: tower computed, not noise on top of it. Anything that shares a KAN-71 cache between devices has
+#: to say which dtype the key was taken at.
 CONFIDENCE_DECIMALS = 4
 EMBEDDING_DECIMALS = 6
 
-#: The smallest norm `l2_normalised` will divide by. Guards the 0/0 that turns a whole encoding
-#: into NaN; far below any real feature magnitude, so it never changes a genuine vector.
-NORM_FLOOR = 1e-12
 
 
 def pooled(output: Any) -> Any:
@@ -62,7 +66,7 @@ def pooled(output: Any) -> Any:
     return getattr(output, "pooler_output", output)
 
 
-def l2_normalised(features: Any) -> Any:
+def l2_normalised(features: Any, floor: float) -> Any:
     """``features`` scaled to unit length along the last axis.
 
     SigLIP's score is a dot product of unit vectors, so this is not cosmetic: skipping it leaves
@@ -72,9 +76,13 @@ def l2_normalised(features: Any) -> Any:
     zero-magnitude row there is a NaN that propagates into every confidence, and a NaN ranks
     arbitrarily rather than loudly -- `analyse` would return a mislabelled character that
     `Character.__post_init__` does not reject, because NaN compares equal to itself by identity.
-    An fp16 overflow on the CUDA path reaches the same place.
+
+    ``floor`` is a parameter rather than a constant because the right value depends on the dtype
+    the tower is running in, and a fixed one makes the guard a no-op exactly where it matters: a
+    float16's smallest normal is about 6e-5, so clamping to 1e-12 on the CUDA path clamps to 0.0
+    and the 0/0 happens regardless. Call sites pass ``torch.finfo(features.dtype).tiny``.
     """
-    return features / features.norm(p=2, dim=-1, keepdim=True).clamp_min(NORM_FLOOR)
+    return features / features.norm(p=2, dim=-1, keepdim=True).clamp_min(floor)
 
 
 @dataclass(frozen=True)
@@ -94,11 +102,16 @@ class DrawingConfig:
     text_max_length: int
     text_padding: str
     top_k: int
+    #: Where `labels_file` is resolved from: the folder the config itself came from, not a module
+    #: global. A config loaded from elsewhere brings its own vocabulary rather than silently
+    #: scoring against the shipped one, which `train.py --config` will do in S6d.
+    config_dir: Path = CONFIG_DIR
 
     @classmethod
     def from_yaml(cls, path: Path = CONFIG_PATH) -> DrawingConfig:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        return cls(**{f.name: raw[f.name] for f in fields(cls)})
+        settings = {f.name: raw[f.name] for f in fields(cls) if f.name != "config_dir"}
+        return cls(**settings, config_dir=path.parent)
 
     def labels(self) -> tuple[str, ...]:
         """The label vocabulary, in the order the file lists it.
@@ -107,7 +120,7 @@ class DrawingConfig:
         the bucket listing order the ingestion counts in; keeping it means a label index means the
         same thing here and in `primer.data.sources.quickdraw`.
         """
-        text = (CONFIG_DIR / self.labels_file).read_text(encoding="utf-8")
+        text = (self.config_dir / self.labels_file).read_text(encoding="utf-8")
         lines = [line.strip() for line in text.splitlines()]
         return tuple(line for line in lines if line and not line.startswith("#"))
 
@@ -198,7 +211,8 @@ class SiglipEncoder:
             return_tensors="pt",
         ).to(self.device)
         with torch.no_grad():
-            features = l2_normalised(pooled(self._model.get_text_features(**inputs)))
+            raw = pooled(self._model.get_text_features(**inputs))
+            features = l2_normalised(raw, torch.finfo(raw.dtype).tiny)
         self._text_cache = (wanted, features)
         return features
 
@@ -219,7 +233,8 @@ class SiglipEncoder:
         # never sees it, which is why a CPU smoke run cannot prove the GPU one.
         inputs = self._processor(images=drawing, return_tensors="pt").to(self.device, self._dtype)
         with torch.no_grad():
-            normalised = l2_normalised(pooled(self._model.get_image_features(**inputs)))
+            raw = pooled(self._model.get_image_features(**inputs))
+            normalised = l2_normalised(raw, torch.finfo(raw.dtype).tiny)
             # The same arithmetic `Siglip2Model.forward` does for `logits_per_image`: unit vectors,
             # dot product, then the learned scale and bias. Done here rather than by calling
             # `forward` so the 345 text prompts are encoded once instead of once per drawing.
@@ -256,6 +271,11 @@ class DrawingRecognizerModel:
                 f"the vocabulary in {self.config.labels_file} is empty; "
                 "there is nothing to score the drawing against"
             )
+        if self.config.top_k < 1:
+            # `0` passes the check below (`345 < 0` is false) and then dies on `candidates[0]`
+            # inside `analyse` -- the same unreadable IndexError the empty-vocabulary guard above
+            # exists to replace.
+            raise ValueError(f"top_k must be at least 1, not {self.config.top_k}")
         if len(self._labels) < self.config.top_k:
             raise ValueError(
                 f"{self.config.labels_file} has {len(self._labels)} labels but top_k is "
@@ -301,6 +321,15 @@ class DrawingRecognizerModel:
             raise ValueError(
                 "the encoder returned a non-finite confidence; a NaN ranks arbitrarily and would "
                 "be reported as a label rather than as a failure"
+            )
+        if not all(0.0 <= confidence <= 1.0 for confidence in encoding.confidences):
+            # The `Encoder` seam promises sigmoid scores, and `Character.confidence` is described
+            # as a probability in three places. Nothing else checks it: drop the `sigmoid` in
+            # `SiglipEncoder.encode` and every ranking test still passes, while an unbounded logit
+            # flows out under a name that says otherwise.
+            raise ValueError(
+                "the encoder returned a confidence outside 0-1; `Encoding.confidences` are "
+                "sigmoid scores, and a raw logit here would be reported as a probability"
             )
 
         ranked = sorted(

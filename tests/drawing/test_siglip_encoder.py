@@ -13,6 +13,9 @@ so the test is hermetic wherever it does run.
 
 from __future__ import annotations
 
+import math
+from typing import Any
+
 import pytest
 
 from primer.drawing.model import SiglipEncoder
@@ -51,23 +54,32 @@ class StubTower(torch.nn.Module):
     Text features are one-hot per prompt, image features are a weighted mix, so the dot product of
     image with prompt *i* is simply ``weights[i]`` -- which makes the ranking predictable without
     reimplementing the arithmetic in the test.
+
+    ``logit_scale`` and ``logit_bias`` are deliberately **not** the identities. With `exp(0)` and
+    `0.0` a test cannot tell multiplying by the scale from dividing by it, or adding the bias from
+    subtracting it, because both give the same numbers. `log(2)` and `-1.0` separate all four.
+
+    It records the dtype of the pixels it was handed rather than asserting on it, so the assertion
+    lives in the test that cares.
     """
 
-    def __init__(self, weights):
+    def __init__(self, weights, dtype=torch.float32):
         super().__init__()
         self.weights = weights
-        self.logit_scale = torch.nn.Parameter(torch.tensor([0.0]))  # exp(0) == 1
-        self.logit_bias = torch.nn.Parameter(torch.tensor([0.0]))
+        self.dtype_out = dtype
+        self.logit_scale = torch.nn.Parameter(torch.tensor([math.log(2.0)]))
+        self.logit_bias = torch.nn.Parameter(torch.tensor([-1.0]))
         self.text_calls = 0
+        self.seen_dtype: Any = None
 
     def get_text_features(self, **inputs):
         self.text_calls += 1
         count = inputs["input_ids"].shape[0]
-        return Pooling(torch.eye(count, DIMENSIONS))
+        return Pooling(torch.eye(count, DIMENSIONS, dtype=self.dtype_out))
 
     def get_image_features(self, **inputs):
-        assert inputs["pixel_values"].dtype == torch.float32, "the encoder casts to the tower dtype"
-        return Pooling(torch.tensor([self.weights], dtype=torch.float32))
+        self.seen_dtype = inputs["pixel_values"].dtype
+        return Pooling(torch.tensor([self.weights], dtype=self.dtype_out))
 
     def eval(self):
         return self
@@ -100,14 +112,28 @@ class Batch(dict):
         return super().keys()
 
 
-@pytest.fixture
-def encoder(config):
+def stubbed(config, dtype):
     """A `SiglipEncoder` with its tower already stubbed, so `load()` is a no-op."""
     built = SiglipEncoder(config, device="cpu")
-    built._model = StubTower(weights=[0.0, 2.0, 0.0, -2.0])
+    built._model = StubTower(weights=[0.0, 2.0, 0.0, -2.0], dtype=dtype)
     built._processor = StubProcessor()
-    built._dtype = torch.float32
+    built._dtype = dtype
     return built
+
+
+@pytest.fixture
+def encoder(config):
+    return stubbed(config, torch.float32)
+
+
+@pytest.fixture
+def half(config):
+    """A tower in float16 -- what `load()` picks on CUDA, and what no test could reach before.
+
+    Every fp16 bug in this file's history lived here: the processor returns float32 pixels, the
+    norm floor has to come from the dtype, and nothing on a CPU-only machine exercises either.
+    """
+    return stubbed(config, torch.float16)
 
 
 PROMPTS = ("a cat.", "a dog.", "a sun.", "a tree.")
@@ -116,19 +142,46 @@ PROMPTS = ("a cat.", "a dog.", "a sun.", "a tree.")
 def test_encode_returns_a_sigmoid_score_per_prompt(encoder, png):
     """The arithmetic `Siglip2Model.forward` does, checked against hand-computed values.
 
-    With a unit-norm one-hot per prompt and `logit_scale` of exp(0), the logit for prompt *i* is
-    the image feature's *i*th component, so the confidence is `sigmoid` of that.
+    With a unit-norm one-hot per prompt, the dot product for prompt *i* is the image feature's
+    *i*th component; the logit is that times `exp(logit_scale)` plus `logit_bias`, and the
+    confidence is `sigmoid` of the logit. The stub's scale of 2 and bias of -1 mean this fails if
+    either is applied the wrong way round.
     """
     encoding = encoder.encode(png, PROMPTS)
 
     assert len(encoding.confidences) == len(PROMPTS)
     # image features (0, 2, 0, -2), normalised to length 1 -> (0, .707, 0, -.707)
     expected = [
-        pytest.approx(float(torch.sigmoid(torch.tensor(value))), abs=1e-5)
+        pytest.approx(float(torch.sigmoid(torch.tensor(value) * 2.0 - 1.0)), abs=1e-5)
         for value in (0.0, 2 / 8**0.5, 0.0, -2 / 8**0.5)
     ]
     assert list(encoding.confidences) == expected
     assert encoding.confidences[1] > encoding.confidences[0] > encoding.confidences[3]
+
+
+def test_the_pixels_are_cast_to_the_towers_dtype(half, png):
+    """Without the cast, the first matmul on CUDA raises "mat1 and mat2 must have the same dtype".
+
+    The float32 fixture cannot show this: there `.to(device)` and `.to(device, dtype)` do the same
+    thing, so the old assertion passed with the fix reverted.
+    """
+    half.encode(png, PROMPTS)
+
+    assert half._model.seen_dtype == torch.float16
+
+
+def test_a_zero_feature_vector_is_not_nan_in_float16(half, png):
+    """The norm floor has to come from the dtype, not from a constant.
+
+    float16's smallest normal is about 6e-5, so `clamp_min(1e-12)` on an fp16 norm clamps to
+    exactly 0.0 and the 0/0 still happens -- on the only path that ever runs in fp16.
+    """
+    half._model.weights = [0.0, 0.0, 0.0, 0.0]
+
+    encoding = half.encode(png, PROMPTS)
+
+    assert all(math.isfinite(value) for value in encoding.confidences)
+    assert all(math.isfinite(value) for value in encoding.embedding)
 
 
 def test_encode_returns_a_unit_length_embedding(encoder, png):

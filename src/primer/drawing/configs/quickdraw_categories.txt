@@ -7,6 +7,9 @@
 #
 # Order is the bucket listing order (sorted), which is also the index order the ingestion state
 # in metadata/state/quickdraw.json counts in. Do not reorder.
+#
+# License: CC BY 4.0. Attribution: the Quick, Draw! Dataset, by Google, Inc.
+# https://github.com/googlecreativelab/quickdraw-dataset
 
 The Eiffel Tower
 The Great Wall of China

@@ -1,4 +1,8 @@
-"""Fixtures for the drawing tests. The recording encoder itself lives in `fakes.py`.
+"""Fixtures for the drawing tests. The recording encoder itself lives in `drawing_fakes.py`.
+
+That name is deliberately not `fakes.py`: `tests/` has no `__init__.py`, so pytest's prepend
+import mode puts this directory on `sys.path` and a bare `fakes` would collide with any other
+area's fakes module the moment one is added.
 
 Nothing here touches a checkpoint, the network or `PIL`. The "drawings" are arbitrary bytes: the
 fake encoder never decodes them, and nothing in this slice does either beyond handing them to the
@@ -10,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import pytest
-from fakes import TEST_LABELS
+from drawing_fakes import TEST_LABELS
 
 from primer.drawing.model import DrawingConfig
 
@@ -28,14 +32,14 @@ def labels_file(tmp_path):
 
 
 @pytest.fixture
-def config(labels_file, monkeypatch):
+def config(labels_file):
     """A `DrawingConfig` over `TEST_LABELS`, with the real prompt template and top_k.
 
-    `CONFIG_DIR` is redirected because `labels_file` is resolved relative to it, which is what
-    keeps the shipped config a single self-contained folder rather than a set of absolute paths.
+    `config_dir` is the folder the labels file is in, which is how a config resolves its own
+    vocabulary: the shipped config stays a self-contained folder rather than a set of absolute
+    paths, and a test config does not have to reach into the module to redirect a global.
     """
     path = labels_file()
-    monkeypatch.setattr("primer.drawing.model.CONFIG_DIR", path.parent)
     return DrawingConfig(
         name="test-baseline",
         encoder="fake/encoder",
@@ -46,6 +50,7 @@ def config(labels_file, monkeypatch):
         text_max_length=64,
         text_padding="max_length",
         top_k=5,
+        config_dir=path.parent,
     )
 
 

@@ -28,19 +28,31 @@ from pathlib import Path
 from primer.drawing.model import DrawingConfig, DrawingRecognizerModel, SiglipEncoder
 
 
-def peak_vram_gb() -> float | None:
-    """Peak CUDA memory this process reserved, or None when it did not run on a GPU.
+def peak_vram_gb(device: str | None) -> float | None:
+    """Peak CUDA memory this process reserved, or None when the run did not use a GPU.
 
     Reported because the choice of checkpoint is constrained by an 8 GB laptop, and AGENTS.md asks
     for the figure a candidate actually needed rather than an estimate of it.
+
+    Keyed on the device the encoder actually used, not on whether the machine has a GPU: with
+    `--device cpu` on a CUDA box the latter reports `0.0` for a run that never touched the card,
+    which is a measurement of nothing wearing the name of the one number that must be measured.
     """
+    if device != "cuda":
+        return None
+    import torch
+
+    return round(torch.cuda.max_memory_reserved() / 1024**3, 2)
+
+
+def reset_vram_peak() -> None:
+    """Zero the CUDA peak counter, so the figure reported is this run's rather than the process's."""
     try:
         import torch
     except ImportError:
-        return None
-    if not torch.cuda.is_available():
-        return None
-    return round(torch.cuda.max_memory_reserved() / 1024**3, 2)
+        return
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -55,6 +67,7 @@ def main(argv: list[str] | None = None) -> int:
     encoder = SiglipEncoder(config, device=args.device)
     model = DrawingRecognizerModel(config, encoder=encoder)
 
+    reset_vram_peak()
     started = time.perf_counter()
     encoder.load()
     loaded = time.perf_counter()
@@ -62,7 +75,10 @@ def main(argv: list[str] | None = None) -> int:
     finished = time.perf_counter()
 
     character = analysis.main
-    assert character is not None, "the baseline always returns one character"
+    if character is None:
+        # Not an `assert`: `python -O` drops those, and the next line would raise an
+        # `AttributeError` on None instead of saying what went wrong.
+        raise RuntimeError("the baseline always returns one character, and this analysis has none")
     print(
         json.dumps(
             {
@@ -77,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
                 "device": encoder.device,
                 "load_seconds": round(loaded - started, 1),
                 "analyse_seconds": round(finished - loaded, 1),
-                "peak_vram_gb": peak_vram_gb(),
+                "peak_vram_gb": peak_vram_gb(encoder.device),
             },
             indent=2,
         )

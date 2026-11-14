@@ -11,7 +11,7 @@ import ast
 from pathlib import Path
 
 import pytest
-from fakes import TEST_LABELS, RecordingEncoder
+from drawing_fakes import TEST_LABELS, RecordingEncoder
 
 from primer.drawing.interface import BodyType, DrawingRecognizer
 from primer.drawing.model import (
@@ -237,7 +237,22 @@ def test_a_non_finite_confidence_is_refused(config, drawing):
         model.analyse(drawing)
 
 
-def test_an_empty_vocabulary_is_refused_at_construction(config, labels_file, monkeypatch):
+@pytest.mark.parametrize("rogue", [1.5, -0.1])
+def test_a_confidence_outside_zero_to_one_is_refused(config, drawing, rogue):
+    """The seam promises sigmoid scores, and nothing else makes it keep that promise.
+
+    Drop `torch.sigmoid` from `SiglipEncoder.encode` and every ranking assertion here still
+    passes, while `Character.confidence` becomes an unbounded logit that this module's docstring,
+    `CARD.md` and the plan all describe as a probability.
+    """
+    scores = list(DOG_WINS)
+    scores[2] = rogue
+    model, _ = recogniser(config, scores=scores)
+    with pytest.raises(ValueError, match="outside 0-1"):
+        model.analyse(drawing)
+
+
+def test_an_empty_vocabulary_is_refused_at_construction(config, labels_file):
     """And at construction, not at the first drawing.
 
     `analyse` would have raised `IndexError` off `candidates[0]`, which says nothing about the
@@ -246,21 +261,45 @@ def test_an_empty_vocabulary_is_refused_at_construction(config, labels_file, mon
     from dataclasses import replace
 
     path = labels_file(labels=(), name="empty.txt")
-    monkeypatch.setattr("primer.drawing.model.CONFIG_DIR", path.parent)
 
     with pytest.raises(ValueError, match="vocabulary .* is empty"):
         DrawingRecognizerModel(replace(config, labels_file=path.name))
 
 
-def test_a_vocabulary_smaller_than_top_k_is_refused(config, labels_file, monkeypatch):
+def test_a_vocabulary_smaller_than_top_k_is_refused(config, labels_file):
     """Otherwise `top_labels(5)` quietly returns three and the gate scores fewer guesses."""
     from dataclasses import replace
 
     path = labels_file(labels=("cat", "dog", "sun"), name="tiny.txt")
-    monkeypatch.setattr("primer.drawing.model.CONFIG_DIR", path.parent)
 
     with pytest.raises(ValueError, match="top_k"):
         DrawingRecognizerModel(replace(config, labels_file=path.name, top_k=5))
+
+
+def test_top_k_below_one_is_refused(config):
+    """`0` passes `len(labels) < top_k` and then dies on `candidates[0]` inside `analyse`."""
+    from dataclasses import replace
+
+    with pytest.raises(ValueError, match="top_k must be at least 1"):
+        DrawingRecognizerModel(replace(config, top_k=0))
+
+
+def test_a_config_resolves_its_labels_against_its_own_folder(tmp_path, config):
+    """A config from elsewhere brings its own vocabulary rather than the shipped 345.
+
+    `train.py --config` in S6d is the caller that makes this matter: resolving against a module
+    global would score a fine-tune's own vocabulary file against the default categories.
+    """
+    from dataclasses import replace
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "own.txt").write_text("robot\nrocket\n", encoding="utf-8")
+
+    moved = replace(config, labels_file="own.txt", config_dir=elsewhere, top_k=2)
+
+    assert moved.labels() == ("robot", "rocket")
+    assert config.labels() != moved.labels(), "the two configs read two different files"
 
 
 def test_a_prompt_template_without_the_label_placeholder_is_refused(config):
@@ -371,7 +410,7 @@ def test_l2_normalised_divides_by_the_last_axis_norm():
     which reads as "every label is confident" rather than as a crash.
     """
     vector = _Vector(8.0, norm=2.0)
-    assert l2_normalised(vector).value == 4.0
+    assert l2_normalised(vector, 1e-12).value == 4.0
     assert vector.norm_args == (2, -1, True), "per row, along the feature axis"
 
 
@@ -382,4 +421,14 @@ def test_l2_normalised_floors_the_norm_so_a_zero_vector_is_not_nan():
     NaN and every confidence with it; the refusal downstream turns that into an error, and this
     keeps it from arising at all.
     """
-    assert l2_normalised(_Vector(0.0, norm=0.0)).value == 0.0, "0 / floor, not 0 / 0"
+    assert l2_normalised(_Vector(0.0, norm=0.0), 1e-12).value == 0.0, "0 / floor, not 0 / 0"
+
+
+def test_l2_normalised_takes_the_floor_from_its_caller():
+    """Because the right floor depends on the dtype, and a constant is wrong in float16.
+
+    float16's smallest normal is about 6e-5, so a hard-coded 1e-12 clamps to 0.0 there and the
+    0/0 the floor exists to prevent happens anyway -- on CUDA, the only path that runs in fp16.
+    """
+    assert l2_normalised(_Vector(0.0, norm=0.0), 6.1e-5).value == 0.0
+    assert l2_normalised(_Vector(1.0, norm=0.0), 0.5).value == 2.0, "the floor is what divides"

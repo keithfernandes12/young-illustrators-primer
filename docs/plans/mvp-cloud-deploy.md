@@ -407,8 +407,44 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   have reached `drawing_top5_acc` as a number rather than an error. Closed at both ends: a floor on
   the norm in `l2_normalised` (the 0/0 that produces it) and an explicit non-finite check in
   `analyse`. The contract-level hole in `interface.py` is left alone — see Open questions.
+- **2026-11-14 — S6a: that NaN floor was a no-op in the dtype it was written for.** An independent
+  review found it: `1e-12` is below float16's smallest subnormal (~6e-8), so on CUDA
+  `clamp_min(1e-12)` clamps to exactly `0.0` and the 0/0 happens anyway — in the fp16 path the
+  comment named as the reason for the floor. The floor is now the caller's
+  `torch.finfo(features.dtype).tiny`. Mutation-checked: putting `1e-12` back, and separately
+  reverting the `.to(device, dtype)` cast, each now fails exactly one test, and neither failed
+  anything before this round. Both are fp16-only, and **still nothing has run on a GPU** — these
+  are stub towers in float16 on a CPU.
+- **2026-11-14 — S6a: the pinned checkpoint revision exists and is Apache-2.0.**
+  `https://huggingface.co/api/models/google/siglip2-base-patch16-224/revision/75de2d55…` returns
+  200 and reports `license:apache-2.0`. Every measured figure in `CARD.md` is anchored to that
+  sha, so it is worth knowing it resolves rather than assuming it.
+- **2026-11-14 — S6a: three assertions could not fail, and two inputs were accepted that should
+  not be.** The stub tower used `logit_scale = exp(0)` and `logit_bias = 0`, both identities, so
+  multiplying by the scale was indistinguishable from dividing and adding the bias from
+  subtracting; the dtype assertion guarding the CUDA fix passed with the fix reverted. `top_k: 0`
+  passed construction and died on `candidates[0]`. Nothing checked that a confidence is in 0–1, so
+  deleting `torch.sigmoid` from the encoder left every ranking test green while an unbounded logit
+  flowed out under a name three documents call a probability. All closed.
 
 ## Open questions
+
+- **Should CI run any line of `SiglipEncoder`?** Today it runs none: CI installs `.[dev]`, `torch`
+  is only in the `drawing` extra, and `tests/drawing/test_siglip_encoder.py` skips wholesale. Both
+  bugs this slice found, and both the review found, lived in exactly that region. *Recommended:* a
+  separate, non-blocking CI job that installs the extra and runs that file on CPU — a few minutes
+  of wall clock for the only coverage of the code that produces the numbers. *Decides:* the KAN-38
+  owner; it changes `.github/`, which AGENTS.md keeps out of a feature PR.
+- **Should the `drawing` extra be pinned like the rest?** `tests/test_requirements.py` covers
+  `dependencies`, `dev` and `dvc` only, so `transformers` floats anywhere in `>=5,<6`. The
+  checkpoint sha is pinned precisely so a rerun reproduces a measured number, and `model.pooled`
+  exists because the return shape changed between majors — a minor is the same class of risk
+  against the same numbers. *Recommended:* add the extra to the pinned set when CI installs it.
+- **Where does a zero-shot number get logged?** `AGENTS.md` requires every model comparison to go
+  to MLflow, and nothing from S6a is in one: the baseline's figures live in these Verified facts
+  only. `docs/engineering/model-development.md` still has an open question about who hosts the
+  shared MLflow server, so there is nowhere to log to yet. *Recommended:* settle the host before
+  S6c produces the first `drawing_top5_acc`, which is a number that genuinely needs comparing.
 
 - **Should `Character.__post_init__` reject non-finite confidences?** Its ranking check passes on a
   list containing NaN, because CPython's list comparison short-circuits on identity, so the
