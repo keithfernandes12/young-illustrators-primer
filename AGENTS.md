@@ -85,6 +85,26 @@ lost, so an agent could write to Jira or submit a PR review without checking. Sa
   `docs/adrs/bounded-local-training-for-agents.md`. Cap local *pipeline* runs with `--batch-size`.
 - **Never create service-account JSON keys** or commit credentials. Use Application Default
   Credentials (`gcloud auth application-default login`, run by a person).
+- **Never delete anything outside this repository.** The only exception is a temporary file or
+  folder you created yourself for the task at hand, which you delete by the exact path you created.
+  Never delete by a path you did not write, never recursively above the repository root, and never
+  widen a delete with a glob. *Partly enforced*: `.claude/settings.json` denies the catastrophic
+  forms, but there is no hook that resolves an arbitrary path, so most of this rule is still on you.
+  When a delete is not obviously yours to make, leave the files and say so.
+- **Prefer a model that fine-tunes comfortably on one local GPU.** Model selection is constrained
+  by what a member can actually iterate on: a laptop RTX 4060 is 8 GB of VRAM, so a candidate that
+  only fine-tunes on an A100 is the wrong default however good its benchmark. Reach for the smaller
+  checkpoint first (a base or large tower over a giant one), use bf16 and gradient checkpointing,
+  and keep anything that will not fit as inference-only or as a later cloud run. Record the VRAM a
+  candidate actually needed as a dated Verified fact, measured rather than estimated.
+- **Every model comparison is logged, not remembered.** Any run that produces a number someone
+  might repeat — a candidate bake-off, a hyperparameter change, a capped local run — logs to MLflow
+  with its params, metrics and the data version, so two candidates can be compared later without
+  re-running either. A number that appears only in a transcript did not happen.
+- **The GPU is reachable from Git Bash and WSL, not from PowerShell.** `docker run --gpus all` is
+  verified working from Git Bash (`docs/engineering/model-containers-on-windows.md`). PowerShell
+  does not reliably see the GPU, which is one reason `CLAUDE_CODE_USE_POWERSHELL_TOOL=0` is set for
+  the project. Run anything that touches the GPU from Git Bash.
 
 ## Git and pull requests
 
