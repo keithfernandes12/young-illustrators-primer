@@ -75,10 +75,14 @@ lost, so an agent could write to Jira or submit a PR review without checking. Sa
   risk.
 - **Split by book, never by page**, so pages of one book never land in both train and test.
 - **No PII in logs, fixtures or commits.** Child data is COPPA-sensitive; use pseudonymous IDs.
-- **Agent sessions never train.** A member may train on their own machine; an agent may only run
-  the CPU smoke test. A run that gets registered must be reproducible from the area's container
-  on Vertex AI, with the same frozen data version, logged to the shared MLflow. See
-  `docs/adrs/where-model-training-happens.md`. Cap local *pipeline* runs with `--batch-size`.
+- **Agent sessions never launch a cloud training job.** Vertex AI custom jobs, hyperparameter
+  tuning jobs and Cloud Run jobs are a person's action, whatever the project. An agent **may**
+  train locally, on the machine the session runs on, bounded by the area's `max_steps` and a
+  30-minute wall clock; record the result as a dated Verified fact, and treat it as evidence
+  about wiring, not about model quality. A member trains freely on their own machine. A run that
+  gets registered must be reproducible from the area's container on Vertex AI, with the same
+  frozen data version, logged to the shared MLflow. See
+  `docs/adrs/bounded-local-training-for-agents.md`. Cap local *pipeline* runs with `--batch-size`.
 - **Never create service-account JSON keys** or commit credentials. Use Application Default
   Credentials (`gcloud auth application-default login`, run by a person).
 
