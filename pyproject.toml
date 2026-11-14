@@ -26,6 +26,13 @@ dependencies = [
 dashboard = ["streamlit>=1.40"]
 dvc = ["dvc[gs]>=3.50"]
 dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.10"]
+# The drawing recogniser's weights. Deliberately not in `dependencies`: CI never installs torch,
+# and `tests/drawing/` runs against a fake encoder instead. requirements.txt does not pin these --
+# tests/test_requirements.py covers the dependencies, dev and dvc sets, which CI installs.
+# `transformers>=5` because that is the API the encoder was written and run against: 5.x returns a
+# `BaseModelOutputWithPooling` from `get_text_features`, where the model card's 4.x example shows a
+# bare tensor. `model.pooled` handles both, but only the 5.x path has been exercised.
+drawing = ["torch>=2.4", "transformers>=5.0,<6", "pillow>=10.0"]
 
 [project.scripts]
 primer-data = "primer.data.cli:main"
