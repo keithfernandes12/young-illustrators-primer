@@ -358,7 +358,9 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   blocked behind work nobody had begun. Split out as S6b, a pure function with no frozen data, and
   deliberately kept as **one** renderer imported by training and inference alike: KAN-87's whole
   point is that the two cannot drift, and that reason survives the change of owner. The dataset
-  split that was S6b is now S6b2. **Tell the previous assignee before starting S6b.**
+  split that was S6b is now S6b2. **Tell the previous assignee before starting S6b.** Done on
+  2026-11-14 by Rishi, in person rather than on the ticket — so KAN-87 itself carries no comment,
+  and nobody needs to raise this again.
 - **2026-11-14** — S6 split into S6a–S6e so a loop can take one at a time, and each slice given the
   Jira key that already covers it (KAN-38, or KAN-87 for the render dependency) rather than new
   issues: `loop-worker` skips a slice with no key, and creating issues is an `ask` rule that would
