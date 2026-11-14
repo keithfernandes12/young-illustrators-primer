@@ -70,7 +70,7 @@ an assumption until someone measures it.
 | 1 | Drawing recognition and attribute extraction | request | owned (SigLIP/CLIP/ConvNeXt) | `drawings` (labelled strokes); `character_drawings` (child-style raster, **no label**) |
 | 2 | Story generation | request | owned (1–3B instruct + LoRA) | `stories_text`, `storybook_pages` |
 | 3 | Readability scoring | request + offline | owned (DistilBERT/DeBERTa regression) | `readability` (CLEAR, with the Flesch-Kincaid baseline column) |
-| 4 | Safety / moderation on text and image prompt | request + offline | pretrained → owned | **none** |
+| 4 | Safety / moderation — request prompt, story text, **and the generated image** | request + offline | pretrained → owned | **none** |
 | 5 | Illustration | request | pretrained SD + ControlNet; style LoRA is a stretch goal | `storybook_pages.image_uri` |
 | 6 | Character-consistency check | request + eval | pretrained CLIP | golden set |
 | 7 | Narration with word timings | request | pretrained TTS; an aligner too if the TTS emits no word timestamps | none needed |
@@ -133,6 +133,11 @@ whether a number means anything (questions 2 and 3 below).
   pretrained for the MVP, as §5.3 already allows. Worth being explicit that an off-the-shelf toxicity
   model does not cover "unsafe for a four-year-old": scary, violent or sad-ending content scores clean.
   The blocklist and the golden-set cases carry that, not the classifier. — *Language lead*
+- **What checks the generated image?** Recommended: an image entry point in the safety area, called
+  from serving after `illustrate()`, counted by `safety_violations_golden`. Today `build_book` checks
+  the request prompt and the story text and returns illustrations that nothing has looked at, while
+  the scoping doc requires a filter at the image stage and an alert on the image flag rate.
+  `SafetyClassifier.check` takes only `text`. — *Language lead with the Illustration lead*
 - **Has MyST access been requested?** Recommended: request it now or drop the ASR word-error-rate
   target from §7 until it arrives. The corpus is access-by-request and has no pipeline, so the stretch
   goal currently cannot even be evaluated, let alone fine-tuned. — *Speech lead*

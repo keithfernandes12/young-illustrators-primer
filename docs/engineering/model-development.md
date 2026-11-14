@@ -24,7 +24,7 @@ evaluation gate can read all six.
 | 2 · Story generation | `src/primer/story/` | LoRA |
 | 4 · Safety gate | `src/primer/safety/` | threshold tuning, optional fine-tune |
 | 5 · Illustration | `src/primer/illustration/` | pretrained (style LoRA is a stretch goal) |
-| 6 · Character consistency | `src/primer/illustration/consistency.py` | pretrained |
+| 6 · Character consistency | `src/primer/illustration/` — `Illustrator.consistency()` | pretrained |
 | 8 · Read-aloud ASR | `src/primer/speech/` | pretrained, optional fine-tune |
 
 Three of the six do not train anything. The course guidelines are explicit that this does not excuse
@@ -100,11 +100,26 @@ merges these into one file, and `golden-gate` reads it.
 }
 ```
 
-Keys inside `overall` must be the keys in `.claude/skills/golden-gate/thresholds.json` — `drawing_top5_acc`,
-`target_word_inclusion`, `story_quality_mean`, `reading_level_within1`, `readability_rmse`,
-`safety_violations_golden`, `clip_consistency`. A missing key is a gate failure, not a gap in the report.
-`baseline` is what the model must beat and is never omitted; for a pretrained stage it is the
-off-the-shelf model's own score, which is what makes step 1 below worth doing.
+Keys inside `overall` are the **ten** contract keys in `.claude/skills/golden-gate/thresholds.json`, and
+`src/primer/evaluation/contract.py` records which area owns each one:
+
+| Key | Owner |
+|---|---|
+| `drawing_top5_acc` | drawing |
+| `target_word_inclusion`, `story_quality_mean` | story |
+| `reading_level_within1`, `readability_rmse` | readability |
+| `safety_violations_golden` | safety |
+| `clip_consistency` | illustration |
+| `p95_first_page_s`, `p95_full_book_s`, `cost_per_book_usd` | system |
+
+A missing key is a gate failure, not a gap in the report. Do not invent a key outside this list: the
+gate ignores it, so a metric that is not one of the ten is a note in `CARD.md`, not a gate.
+
+`baseline` is what the model must beat and is never omitted. For a stage that trains, it is the
+zero-shot or off-the-shelf score. For a stage that never trains, "the off-the-shelf model's own score"
+is circular, because that model *is* the model — so the baseline there is a **named frozen
+configuration**: model, weights, seed and sampler settings, pinned in the area's `CARD.md`. Later work
+beats that configuration, not itself.
 
 ### Tracking conventions
 
@@ -163,9 +178,9 @@ which already implements country, gender-swap, era, genre and picture-book origi
 |---|---|---|---|---|
 | 1 Drawing | top-5 accuracy on strokes; the same on the labelled child-style split | `country_code`, category | stroke count, line thickness, partial erasure | T4/L4, hours |
 | 2 Story | target-word inclusion, judge score, level within ±1 | gender-swapped prompts, origin, age mode | drop each prompt constraint in turn; temperature sweep | L4, hours |
-| 4 Safety | violations on golden, false-positive rate on benign | age mode, theme, gender-swap | threshold sweep — the real tuning here; word-level LIME | CPU |
-| 5 Illustration | CLIP consistency, p95 seconds per page | subject category, skin-tone and origin prompts | diffusion steps, guidance scale, ControlNet weight | L4, the largest GPU cost |
-| 6 Consistency | agreement with human ranking on the golden set | subject category, dominant colour | choice of embedding model; threshold sweep | CPU |
+| 4 Safety | `safety_violations_golden`, false-positive rate on benign — over the request, the story **and the generated image** | age mode, theme, gender-swap | threshold sweep — the real tuning here; word-level LIME | CPU |
+| 5 Illustration | `clip_consistency`, sketch preservation, and the two `system` latency keys | subject category, skin-tone and origin prompts | diffusion steps, guidance scale, ControlNet weight | 1× L4, the largest GPU cost |
+| 6 Consistency | `clip_consistency` again — it is the key IP-Adapter has to move | subject category, dominant colour | choice of embedding model; threshold sweep | CPU |
 | 8 ASR | word error rate | speaker age, accent | added noise, speed perturbation | CPU/T4 |
 
 Stage 8 cannot complete steps 1–4 today: MyST is registered in `configs/sources.yaml` with no pipeline
@@ -177,6 +192,67 @@ character, and no category. For stage 1 that makes it an evaluation set once som
 a training set. For stage 5 the segmentation and joints are conditioning signal — the character's
 outline and pose, which is what ControlNet wants — so members 1 and 4 should agree on how it is read
 before either writes a loader.
+
+### What the illustration numbers mean
+
+"CLIP consistency" and "seconds per page" are not measurable as written, so:
+
+- **`clip_consistency`** is the mean pairwise CLIP image-image similarity **between the generated
+  pages of one book** — page four against page one. Not page against sketch, not page against text.
+  That is what `Illustrator.consistency()` already defines it as. Proposed threshold **≥ 0.80**, to be
+  re-set from the spread the baseline configuration actually produces. `thresholds.json` holds `null`
+  today, so until someone writes a number there the illustration group cannot fail.
+- **Sketch preservation** is a separate measurement, because `clip_consistency` can be perfect while
+  every page ignores the child's drawing — and keeping that drawing is the product. Measure edge recall
+  of the generated page against the input sketch. The local SD 1.5 + ControlNet-Scribble baseline gives
+  **0.993**, against **0.619** for the same sketch rotated 180°, so the negative control separates
+  cleanly; proposed threshold **≥ 0.90**. It is not one of the ten contract keys, so today it is a
+  `CARD.md` number, not a gate. Propose it as an eleventh key if the team wants it to block a release.
+- **Latency is not a stage 5 key at all.** The contract has `p95_first_page_s` (≤ 20 s) and
+  `p95_full_book_s` (≤ 120 s), both owned by `system`. Stage 5 reports its per-page time into those,
+  measured on **one NVIDIA L4 on Cloud Run GPU**; the numbers mean nothing without the hardware named.
+
+### Stage 5's baseline, and what has to beat it
+
+The baseline is **SD 1.5 + ControlNet-Scribble at a fixed seed and fixed sampler settings**, pinned in
+`illustration/CARD.md`. The scoping doc leaves "SDXL / 1.5" open; this picks 1.5 so that the baseline
+is one reproducible configuration rather than a family, which makes SDXL a candidate that has to beat
+it like any other.
+
+Two pieces of later work each have to beat that configuration on a named number:
+
+- **IP-Adapter** — the scoping doc's mechanism for keeping the child's design, and the substance of
+  stage 6 — on `clip_consistency`, without losing sketch preservation.
+- **The style LoRA** (stretch goal 3) on judged style match, holding `clip_consistency` and sketch
+  preservation at or above the baseline.
+
+Neither ships on "looks better". If it does not move a number named in this section, it is not an
+improvement.
+
+### Where the child's sketch enters the pipeline
+
+The illustration interface defines this, not this document. `Illustrator.illustrate(..., drawing_ref=…)`
+in `src/primer/illustration/interface.py` says what `drawing_ref` points to and when it is required,
+and `primer.serving.book.build_book` requires it and passes it through. Bytes alone are not enough: a
+retry, a queue hop or an attribution all outlive the request, so the illustrator needs a durable
+handle on the upload. `character_drawings` is the training and evaluation side of the same
+relationship; `drawing_ref` is the request-time side.
+
+### Safety runs three times, and the third one has an owner
+
+The scoping doc requires filters at the prompt, text **and image** stages, and alerts on the safety
+flag rate for text *and* image. Two of the three exist in `build_book`: the request prompt, before
+anything is generated, and the story text, after it is written. **Nothing checks the generated image.**
+
+- **Member 3 owns the image check**, in the safety area, as a second entry point beside
+  `SafetyClassifier.check(text)`.
+- **Member 6 wires it into serving**, after `illustrate()` and before the book is returned, so its
+  verdict sets `Book.safety` and therefore `Book.complete`, exactly as the two text checks do.
+- **`safety_violations_golden` covers it** — the definition widens to count image flags rather than the
+  stage gaining a key of its own. The golden set's 20 safety scenarios must then include cases whose
+  *image* is the problem, not only cases whose prompt is.
+
+Until that lands, a book can be refused for its words and served with a picture nothing has looked at.
 
 For stages 2, 5 and 8, SHAP and LIME do not apply — there is no feature vector to attribute. Ablation
 is the honest substitute: remove one conditioning input at a time and measure the metric. Say so in
@@ -193,9 +269,16 @@ is roughly half the work of a fine-tune.
 | 1 | Stage 1 — drawing recognition | the labelled child-style eval split, and reconciling two drawing datasets |
 | 2 | Stage 2 — story generation | the instruction-pair builder |
 | 3 | Stage 4 — safety, **and stage 3 — readability** | the readability back-fill that stage 2 and the scoping doc's §11 both depend on |
-| 4 | Stage 5 — illustration | the GPU container and Cloud Run GPU deploy |
-| 5 | Stage 6 — consistency | `src/primer/evaluation/` and the golden set — the shared contract |
-| 6 | Stage 8 — ASR (data-blocked) | `src/primer/serving/` and the CI eval gate |
+| 4 | Stages 5 **and 6** — illustration and character consistency | the GPU container and Cloud Run GPU deploy |
+| 5 | `src/primer/evaluation/` and the golden set — the shared contract | the scenarios behind every gated number, safety cases included |
+| 6 | Stage 8 — ASR (data-blocked) | `src/primer/serving/`, the image-safety wiring, and the CI eval gate |
+
+Stages 5 and 6 share an owner because they share a protocol: `Illustrator.illustrate()` and
+`Illustrator.consistency()` are methods on the same object in the same file, and
+`contract.METRIC_OWNERS` gives `clip_consistency` to `illustration`. Splitting them would put member 5
+inside member 4's area, which the rule below forbids. Member 5's primary is the evaluation harness
+instead — every other member's number passes through it, which makes it a workstream rather than a
+second hat.
 
 Shared files have one named owner and change only by PR with that owner reviewing:
 `src/primer/evaluation/` and `configs/golden/` (member 5), `src/primer/serving/` (member 6),
