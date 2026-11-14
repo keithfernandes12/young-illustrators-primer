@@ -98,6 +98,47 @@ def test_the_canary_never_shifts_traffic():
     assert "CANARY_PERCENT: 0" in code
 
 
+@bash_required
+@pytest.mark.parametrize(
+    "flag",
+    ["--project", "--project=other-team", "--region", "--tag", "--traffic", "--to-latest"],
+)
+def test_the_canary_refuses_caller_flags_it_owns(tmp_path, flag):
+    """gcloud takes the last occurrence, so a forwarded --project silently won.
+
+    The refusal has to happen before any `gcloud run deploy` runs, so this asserts on a PATH with
+    no gcloud at all: reaching gcloud would fail differently.
+    """
+    result = subprocess.run(
+        [BASH, str(CANARY), "yip-api", "IMG", flag, "other-team"],
+        cwd=tmp_path,
+        env={"PATH": BASH_PATH, "YIP_SHARED_PROJECT": "young-illustrators-primer"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0, result.stdout
+    assert "refusing" in result.stderr, result.stderr
+    assert flag.split("=")[0] in result.stderr
+    assert "gcloud" not in result.stdout, "it must refuse before deploying anything"
+
+
+@bash_required
+def test_the_canary_still_accepts_the_flags_it_does_not_own(tmp_path):
+    """The GPU flags from this script's own example must pass straight through."""
+    result = subprocess.run(
+        [BASH, str(CANARY), "yip-story", "IMG", "--gpu", "1", "--no-cpu-throttling"],
+        cwd=tmp_path,
+        env={"PATH": BASH_PATH, "YIP_SHARED_PROJECT": "young-illustrators-primer"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    # It gets past the flag check and fails later, on the describe, because gcloud is not on PATH.
+    assert "refusing" not in result.stderr, result.stderr
+    assert "cannot describe" in result.stderr or "yip-story" in result.stderr
+
+
 def test_the_canary_fails_closed_when_the_service_cannot_be_described():
     """A describe failure can be permissions or a transient error, not just an absent service.
 

@@ -22,6 +22,9 @@ from primer.data.versioning import create_version
 log = logging.getLogger(__name__)
 
 # Order the DAG lays the source groups out in (all run in parallel).
+# Sources the Airflow DAG runs. Amateur Drawings is left out on purpose: its first ingest is a ~48 GB
+# download, too big to start by surprise from the DAG or the no-cloud reproduce path, so it runs once
+# by hand from the CLI (README section 3). check_data still validates its dataset with the rest.
 PIPELINE_SOURCES = ("tinystories", "quickdraw", "clear_corpus", "sight_words", "kuperman_aoa",
                     "storyweaver", "african_storybook")
 REPORTS_DIR = "metadata/reports"

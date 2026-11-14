@@ -1,4 +1,4 @@
-md5: 253d3960de2b6eebf73ce6860117d31b
+md5: b732e4524b98abb672a994cdc3ec4cd9
 frozen: true
 deps:
 - hash: md5
@@ -18,6 +18,34 @@ deps:
     etag: 0889e2aff2a6b097031001
     size: 1018684
     version_id: '1791664637866249'
+  - relpath: source=tinystories/batch=20261027T003515Z.parquet
+    etag: 0881c2cefdf9d897031001
+    size: 1012081
+    version_id: '1793061331116289'
+  - relpath: source=tinystories/batch=20261027T003712Z.parquet
+    etag: 08b9a1b5bffad897031001
+    size: 26027498
+    version_id: '1793061469114553'
+  - relpath: source=tinystories/batch=20261110T052137Z.parquet
+    etag: 0892dcb59cd5fc97031001
+    size: 249113319
+    version_id: '1794288414191122'
+  - relpath: source=tinystories/batch=20261110T052657Z.parquet
+    etag: 08f3d788d1d6fc97031001
+    size: 231629804
+    version_id: '1794288793037811'
+  - relpath: source=tinystories/batch=20261110T053316Z.parquet
+    etag: 08e588f2efd7fc97031001
+    size: 209268194
+    version_id: '1794289126114405'
+  - relpath: source=tinystories/batch=20261110T053851Z.parquet
+    etag: 0888a8c69ed9fc97031001
+    size: 189496613
+    version_id: '1794289492399112'
+  - relpath: source=tinystories/batch=20261110T054456Z.parquet
+    etag: 08faab98d9d9fc97031001
+    size: 23675165
+    version_id: '1794289615377914'
 outs:
 - hash: md5
   path: stories_text

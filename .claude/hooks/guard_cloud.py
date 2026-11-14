@@ -49,8 +49,23 @@ import sys
 # Tools whose commands can change Google Cloud. Anything else is none of our business.
 CLOUD_TOOLS = {"gcloud", "gsutil", "bq", "terraform"}
 
-# Shells that take a command string, so the real command is one level down.
+# Shells that take a command string, so the real command is one level down and can be re-checked
+# as a command.
 SHELL_WRAPPERS = {"bash", "sh", "zsh", "dash", "ash", "pwsh", "powershell"}
+
+# Interpreters whose -c payload is *code*, not a command line. It cannot be tokenised as a shell
+# command -- `subprocess.run(['gcloud',...])` is one token -- so the payload is only checked for a
+# cloud tool named in it. That is deliberately partial: an interpreter running arbitrary code
+# cannot be policed by reading the command text, and anyone determined can defeat it. It stops the
+# obvious shape, and a person who means it has YIP_ALLOW_PROD=1 and the `!` prefix.
+INTERPRETERS = {"python", "python3", "py", "node", "ruby", "perl"}
+
+# gcloud release tracks. `gcloud beta run deploy` is the same operation as `gcloud run deploy`.
+RELEASE_TRACKS = {"alpha", "beta"}
+
+# Tools that accept --project. terraform does not: its project comes from the provider config, so
+# demanding an explicit --project from it is an instruction nobody can follow.
+PROJECT_FLAG_TOOLS = {"gcloud", "gsutil", "bq"}
 
 # Operations that only read. Compared against the parsed operation and against flag NAMES, never
 # against flag values -- `--display-name list` must not make a job creation look like a read.
@@ -109,6 +124,11 @@ RISKY = [
         re.compile(r"\b(add|remove|set)-iam-policy-binding\b|\bset-iam-policy\b"),
         "writes an IAM policy",
     ),
+    (
+        # bq has its own delete verbs and none of the words the resource pattern above looks for.
+        re.compile(r"\bbq\b[^|;&]*\s(rm|rk)\b"),
+        "deletes a BigQuery dataset, table or reservation",
+    ),
     (re.compile(r"\bterraform\b.*\bdestroy\b"), "destroys terraform-managed infrastructure"),
     (
         re.compile(r"\bterraform\b.*(workspace\s+select\s+prod\b|-var-file[= ]\S*prod)"),
@@ -147,8 +167,78 @@ def allowed_projects(environ: dict[str, str]) -> set[str]:
     return {value.strip() for var in PROJECT_VARS if (value := environ.get(var, "")).strip()}
 
 
+def extract_substitutions(command: str) -> tuple[str, list[str]]:
+    """Pull out everything the shell runs in a subshell or a substitution.
+
+    `( … )`, `$( … )`, backticks and `<( … )` / `>( … )` all run a command, and none of them is a
+    separator this splitter understood, so the command inside was never looked at. Command
+    substitution happens inside double quotes too, which is why only single quotes stop the scan.
+
+    Returns the text with each construct removed, plus the inner commands to check separately.
+    """
+    outer: list[str] = []
+    inner: list[str] = []
+    index = 0
+    in_double = False
+    while index < len(command):
+        char = command[index]
+        if char == '"':
+            in_double = not in_double
+            outer.append(char)
+            index += 1
+            continue
+        if char == "'" and not in_double:  # single quotes suppress every substitution
+            close = command.find("'", index + 1)
+            if close == -1:
+                outer.append(command[index:])
+                break
+            outer.append(command[index : close + 1])
+            index = close + 1
+            continue
+        if char == "`":
+            close = command.find("`", index + 1)
+            if close == -1:
+                break
+            inner.append(command[index + 1 : close])
+            outer.append(" ")
+            index = close + 1
+            continue
+        # `$( )`, `<( )` and `>( )` run a command even inside double quotes. A bare `(` only opens
+        # a subshell outside them -- inside, it is an ordinary character, which is what made
+        # `python -c "subprocess.run([...])"` look like a subshell and hid the payload.
+        opens = command.startswith(("$(", "<(", ">("), index) or (char == "(" and not in_double)
+        if opens:
+            start = index + (1 if char == "(" else 2)
+            depth = 1
+            cursor = start
+            while cursor < len(command) and depth:
+                if command[cursor] == "(":
+                    depth += 1
+                elif command[cursor] == ")":
+                    depth -= 1
+                cursor += 1
+            inner.append(command[start : cursor - 1 if depth == 0 else len(command)])
+            outer.append(" ")
+            index = cursor
+            continue
+        outer.append(char)
+        index += 1
+    return "".join(outer), inner
+
+
 def split_segments(command: str) -> list[str]:
-    """Split on &&, ||, ;, | and newlines that appear outside quotes."""
+    """Split on &&, ||, ;, | and newlines that appear outside quotes.
+
+    Subshells and substitutions are lifted out first and returned as segments of their own, so a
+    command hidden in `$( … )` is checked rather than skipped.
+    """
+    command, nested = extract_substitutions(command)
+    segments = [segment for part in nested for segment in split_segments(part)]
+    segments.extend(_split_on_separators(command))
+    return segments
+
+
+def _split_on_separators(command: str) -> list[str]:
     segments: list[str] = []
     current: list[str] = []
     quote = ""
@@ -245,6 +335,10 @@ def token_refusal(tokens: list[str]) -> str | None:
         if _basename(word).removesuffix(".cmd") in CLOUD_TOOLS:
             operation = operation[index + 1 :]
             break
+    # Then drop the release track. `gcloud beta run deploy` is the same operation as
+    # `gcloud run deploy`, but it shifted every prefix below by one and defeated all of them.
+    if operation and operation[0] in RELEASE_TRACKS:
+        operation = operation[1:]
 
     # `--no-traffic` must be a real flag. A text search also matched it inside a value, so
     # `--labels=n=--no-traffic` passed as if the revision took no traffic.
@@ -254,22 +348,58 @@ def token_refusal(tokens: list[str]) -> str | None:
             "(use --no-traffic --tag for a canary)."
         )
 
-    # docs/adrs/where-model-training-happens.md: agent sessions never train. An ask rule is not
-    # enough when a loop is running unattended.
+    # docs/adrs/bounded-local-training-for-agents.md: an agent may train locally within a cap, but
+    # a job in the cloud is a person's action. An ask rule is not enough in an unattended loop --
+    # this is the clause with money behind it, so it is the one with a mechanism behind it.
     launches = {
         ("ai", "custom-jobs", "create"): "launches a Vertex AI training job",
-        ("ai", "custom-jobs", "cancel"): "cancels a training job",
         ("ai", "hp-tuning-jobs", "create"): "launches a hyperparameter tuning job",
         ("run", "jobs", "create"): "creates a Cloud Run job",
-        ("run", "jobs", "execute"): "executes a Cloud Run job",
+        ("run", "jobs", "execute"): "executes a Cloud Run job, which may be a training run",
         ("batch", "jobs", "submit"): "submits a Batch job",
     }
     for prefix, why in launches.items():
         if tuple(operation[: len(prefix)]) == prefix:
             return (
-                f"this command {why}, and agents never train "
-                "(docs/adrs/where-model-training-happens.md). Prepare the config and hand it over."
+                f"this command {why}, and agents never train in the cloud "
+                "(docs/adrs/bounded-local-training-for-agents.md). Prepare the config and hand it "
+                "over. A capped local run to check the wiring first is allowed."
             )
+
+    # Cancelling is refused for a different reason, so it says a different thing: train-vertex is
+    # explicit that you never cancel or delete another person's job.
+    if tuple(operation[:3]) == ("ai", "custom-jobs", "cancel"):
+        return (
+            "this command cancels a training job, which may be someone else's run. Reading a job "
+            "(list, describe, stream-logs) is the agent's half of the handover; stopping one is not."
+        )
+    return None
+
+
+def interpreter_refusal(tokens: list[str]) -> str | None:
+    """Refuse an interpreter whose inline code names a cloud tool.
+
+    Partial by construction -- see INTERPRETERS. Tool names are matched on word boundaries, not
+    project names, so this cannot collide with the repository name the way a project-id search did.
+    """
+    for index, token in enumerate(tokens):
+        if _basename(token).removesuffix(".exe") not in INTERPRETERS:
+            continue
+        for offset in range(index + 1, len(tokens) - 1):
+            candidate = tokens[offset]
+            if not candidate.startswith("-"):
+                continue
+            if candidate.startswith("--") or "c" not in candidate[1:].lower():
+                continue
+            payload = tokens[offset + 1]
+            for tool in sorted(CLOUD_TOOLS):
+                if re.search(rf"(?<![A-Za-z0-9_]){re.escape(tool)}(?![A-Za-z0-9_])", payload):
+                    return (
+                        f"this command runs inline code that names {tool!r}. An interpreter can "
+                        "reach the cloud without the guard seeing a command, so it is refused "
+                        "here; run the tool directly instead."
+                    )
+            break
     return None
 
 
@@ -298,7 +428,15 @@ def operation_and_flags(tokens: list[str]) -> tuple[list[str], list[str]]:
         if token.startswith("-"):
             name, _, inline_value = token.partition("=")
             flags.append(name.lstrip("-"))
-            skip_next = not inline_value and index + 1 < len(tokens)
+            # A flag only consumes the NEXT token when that token is a value. Consuming it
+            # unconditionally made every boolean flag swallow the flag after it, so
+            # `--no-allow-unauthenticated --no-traffic` hid --no-traffic and refused the canary
+            # deploy this skill's own GPU example uses.
+            skip_next = (
+                not inline_value
+                and index + 1 < len(tokens)
+                and not tokens[index + 1].startswith("-")
+            )
             continue
         operation.append(token)
     return operation, flags
@@ -349,7 +487,7 @@ def _check_text(text: str, environ: dict[str, str], depth: int = 0) -> str | Non
                 return reason
 
     for tokens in token_sets:
-        reason = helper_refusal(tokens)
+        reason = helper_refusal(tokens) or interpreter_refusal(tokens)
         if reason:
             return reason
 
@@ -404,7 +542,12 @@ def _check_text(text: str, environ: dict[str, str], depth: int = 0) -> str | Non
                     f"this command would target {inherited!r} through CLOUDSDK_CORE_PROJECT, "
                     "which is not one of ours."
                 )
-            if not inherited:
+            # Only demand an explicit --project from a tool that has one. terraform does not, so
+            # this rule used to make `terraform -chdir=infra apply` impossible to run at all.
+            takes_project = any(
+                _basename(token).removesuffix(".cmd") in PROJECT_FLAG_TOOLS for token in tokens
+            )
+            if not inherited and takes_project:
                 return (
                     "this command changes cloud state without naming a project, so its target "
                     "cannot be established. Pass --project explicitly."

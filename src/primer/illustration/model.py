@@ -8,7 +8,7 @@ from __future__ import annotations
 
 
 class IllustratorModel:
-    """The production illustration implementation. Satisfies ``interface.Illustrator``."""
+    """The production illustration implementation. Will satisfy ``interface.Illustrator``."""
 
     def __init__(self, model_uri: str | None = None) -> None:
         self._model_uri = model_uri

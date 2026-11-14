@@ -72,6 +72,10 @@ def main() -> int:
     for index in range(80):
         label, words = SUBJECTS[index % len(SUBJECTS)]
         age = 3 + (index % 6)
+        # Walk the settings rather than sampling them. Random choice gave three pairs that were
+        # identical in every field but `id`, so three cases were double-weighted in every gated
+        # metric and the set covered 77 situations while claiming 80.
+        setting = SETTINGS[(index // len(SUBJECTS)) % len(SETTINGS)]
         rows.append(
             {
                 "id": f"golden-{index + 1:03d}",
@@ -81,7 +85,7 @@ def main() -> int:
                 "target_words": words[: 2 + (index % 2)],
                 # Flesch-Kincaid grade the story should land on, give or take one grade.
                 "target_reading_level": round(max(0.0, (age - 4) + rng.choice([-0.3, 0.0, 0.3])), 1),
-                "prompt": f"a {label} {rng.choice(SETTINGS)}",
+                "prompt": f"a {label} {setting}",
                 "expect_flagged": False,
             }
         )

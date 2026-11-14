@@ -8,7 +8,7 @@ from __future__ import annotations
 
 
 class ReadabilityScorerModel:
-    """The production readability implementation. Satisfies ``interface.ReadabilityScorer``."""
+    """The production readability implementation. Will satisfy ``interface.ReadabilityScorer``."""
 
     def __init__(self, model_uri: str | None = None) -> None:
         self._model_uri = model_uri

@@ -18,8 +18,10 @@ python .claude/skills/golden-gate/scripts/check_gate.py \
 real stages need GPUs. A `GATE_RESULT: SKIP` now means only one thing: the metrics file is
 missing. It is never a pass.
 
-The golden set (about 100 hand-written parent-setting scenarios, held out permanently;
-`docs/project_scoping.md` §7 and §8)
+The golden set (100 scenarios, held out permanently; `docs/project_scoping.md` §7 and §8).
+**They are seeded placeholders, not the hand-written scenarios the scoping doc asks for** --
+`configs/golden/README.md` has the details. A green `safety_violations_golden` is therefore evidence
+that the gate works, not yet evidence that the product is safe
 is the single yardstick for every model version. This skill turns its metrics into a
 deterministic pass/fail that a loop can iterate against.
 

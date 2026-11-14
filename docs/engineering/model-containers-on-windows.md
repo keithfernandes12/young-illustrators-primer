@@ -6,7 +6,7 @@ status: active
 author: rishiparekh
 jira: [KAN-89]
 tags: [windows, wsl, docker, gpu, models, gcp]
-related: [onboarding, where-model-training-happens]
+related: [onboarding, bounded-local-training-for-agents]
 ---
 
 # Running the model containers from Git Bash and from WSL
@@ -19,7 +19,7 @@ file-mode noise.
 
 What this document adds is the **container** path, which is what the model work actually uses. You do
 not need a second checkout for it. The container is the unit of reproducibility the training ADR
-requires (`docs/adrs/where-model-training-happens.md`), so it has to be launchable from whichever
+requires (`docs/adrs/bounded-local-training-for-agents.md`), so it has to be launchable from whichever
 shell you live in.
 
 > `docs/engineering/model-development.md`, referred to below, is not on this branch yet. It is

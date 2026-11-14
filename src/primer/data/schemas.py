@@ -68,6 +68,33 @@ DRAWINGS = {
     "ingested_at": "datetime64[ns, UTC]",
 }
 
+# processed/character_drawings/source=<source>/batch=<batch_id>.parquet
+# Drawings of characters (human figures) with pose and shape annotations, in COCO conventions.
+CHARACTER_DRAWINGS = {
+    "record_id": "string",
+    "source": "string",
+    "source_id": "string",          # image id in the source
+    "image_uri": "string",          # the original image in raw/
+    "image_sha256": "string",
+    "width": "int32",               # size of the PNG at image_uri, in pixels; bbox, keypoints and
+    "height": "int32",              # segmentation are in this frame (Meta's PNGs are 512 px on the long side)
+    "original_width": "int32",      # size of the drawing as uploaded, before Meta resized it
+    "original_height": "int32",
+    "bbox_x": "float64",            # character bounding box, pixels from the top-left corner
+    "bbox_y": "float64",
+    "bbox_width": "float64",
+    "bbox_height": "float64",
+    "area": "float64",              # segmentation area in pixels
+    "keypoints": "string",          # JSON: 17 [x, y, visibility] joints in COCO order (nose, eyes, ears, ...)
+    "n_keypoints": "int32",         # joints with visibility > 0 (17 for every Amateur Drawings row today;
+                                    # kept for sources or releases with hidden joints)
+    "segmentation": "string",       # JSON: COCO polygons [[x1, y1, x2, y2, ...], ...]
+    "license": "string",
+    "attribution": "string",
+    "batch_id": "string",
+    "ingested_at": "datetime64[ns, UTC]",
+}
+
 # processed/readability/source=<source>/batch=<batch_id>.parquet
 READABILITY = {
     "record_id": "string",

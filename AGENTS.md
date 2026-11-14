@@ -50,6 +50,16 @@ the agent will ask you to run it. To check by hand: `git config core.hooksPath` 
 `primer-data sources` runs; in Claude Code, `/hooks` lists the two hooks and `/mcp` shows
 `atlassian` connected.
 
+**Run Python through the project's virtualenv, not through whatever `python` is on `PATH`.** After
+`pip install -e ".[dev,dvc]"` the dependencies live in `.venv`, and the agent's shell does not
+inherit an activation — its state does not survive between commands, so `source .venv/…/activate`
+in one call is gone by the next. Bare `python -m pytest` therefore fails at `tests/conftest.py`
+with `ModuleNotFoundError: gcsfs` while `.venv/Scripts/python.exe -m pytest` passes. Name the
+interpreter explicitly (`.venv/Scripts/python.exe` on Windows, `.venv/bin/python` elsewhere);
+`permissions.allow` carries both spellings for the gates, so an unattended loop is not stopped by a
+prompt on every `verify`. Launching Claude Code from an already-activated shell also works, because
+the process inherits `PATH`.
+
 Once per clone, also check that the permission rules load: in a session in Manual permission mode,
 ask the agent to run `git tag --list`. It should ask you before running it, because
 `Bash(git tag:*)` is in `permissions.ask`. If it runs without asking, the `permissions` block in
@@ -75,12 +85,36 @@ lost, so an agent could write to Jira or submit a PR review without checking. Sa
   risk.
 - **Split by book, never by page**, so pages of one book never land in both train and test.
 - **No PII in logs, fixtures or commits.** Child data is COPPA-sensitive; use pseudonymous IDs.
-- **Agent sessions never train.** A member may train on their own machine; an agent may only run
-  the CPU smoke test. A run that gets registered must be reproducible from the area's container
-  on Vertex AI, with the same frozen data version, logged to the shared MLflow. See
-  `docs/adrs/where-model-training-happens.md`. Cap local *pipeline* runs with `--batch-size`.
+- **Agent sessions never launch a cloud training job.** Vertex AI custom jobs, hyperparameter
+  tuning jobs and Cloud Run jobs are a person's action, whatever the project. An agent **may**
+  train locally, on the machine the session runs on, bounded by the area's `max_steps` and a
+  30-minute wall clock; record the result as a dated Verified fact, and treat it as evidence
+  about wiring, not about model quality. A member trains freely on their own machine. A run that
+  gets registered must be reproducible from the area's container on Vertex AI, with the same
+  frozen data version, logged to the shared MLflow. See
+  `docs/adrs/bounded-local-training-for-agents.md`. Cap local *pipeline* runs with `--batch-size`.
 - **Never create service-account JSON keys** or commit credentials. Use Application Default
   Credentials (`gcloud auth application-default login`, run by a person).
+- **Never delete anything outside this repository.** The only exception is a temporary file or
+  folder you created yourself for the task at hand, which you delete by the exact path you created.
+  Never delete by a path you did not write, never recursively above the repository root, and never
+  widen a delete with a glob. *Partly enforced*: `.claude/settings.json` denies the catastrophic
+  forms, but there is no hook that resolves an arbitrary path, so most of this rule is still on you.
+  When a delete is not obviously yours to make, leave the files and say so.
+- **Prefer a model that fine-tunes comfortably on one local GPU.** Model selection is constrained
+  by what a member can actually iterate on: a laptop RTX 4060 is 8 GB of VRAM, so a candidate that
+  only fine-tunes on an A100 is the wrong default however good its benchmark. Reach for the smaller
+  checkpoint first (a base or large tower over a giant one), use bf16 and gradient checkpointing,
+  and keep anything that will not fit as inference-only or as a later cloud run. Record the VRAM a
+  candidate actually needed as a dated Verified fact, measured rather than estimated.
+- **Every model comparison is logged, not remembered.** Any run that produces a number someone
+  might repeat — a candidate bake-off, a hyperparameter change, a capped local run — logs to MLflow
+  with its params, metrics and the data version, so two candidates can be compared later without
+  re-running either. A number that appears only in a transcript did not happen.
+- **The GPU is reachable from Git Bash and WSL, not from PowerShell.** `docker run --gpus all` is
+  verified working from Git Bash (`docs/engineering/model-containers-on-windows.md`). PowerShell
+  does not reliably see the GPU, which is one reason `CLAUDE_CODE_USE_POWERSHELL_TOOL=0` is set for
+  the project. Run anything that touches the GPU from Git Bash.
 
 ## Git and pull requests
 
@@ -171,7 +205,7 @@ PR, review yourself with `review-pr`, then open the PR. Before asking for review
 | `privacy-guard` | lint for child PII in logs, URLs, object names and stored audio |
 | `loop-worker` | run one unattended engineering-loop iteration on a plan (for `/goal`, `/loop`, Ralph) |
 | `train-vertex` | launch and track a Vertex AI training job |
-| `deploy-cloud-run` | canary, smoke-test or roll back a Cloud Run service; a person promotes |
+| `deploy-cloud-run` | canary and smoke-test a Cloud Run service; a person promotes and rolls back |
 
 Loop prompts for `/goal`, `/loop` and Ralph live in `.claude/loops/`; a bare `/loop` reads
 `.claude/loop.md`. Unattended work follows `docs/plans/autonomous-loops.md`. Google Cloud is one

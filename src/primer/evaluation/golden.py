@@ -8,8 +8,14 @@ writer emits exactly `contract.GOLDEN_METRIC_KEYS`, so a key that is never writt
 gate as ``metric missing`` and fails it.
 
 No area under `src/primer/<area>/` is implemented yet, so `--fake-models` is currently the only mode
-that runs; it is also what CI would use, since the real stages need GPUs. As each area lands, its
-component replaces the fake here.
+that runs; it is also what CI would use, since the real stages need GPUs.
+
+**These fakes do not share the area Protocols.** They predate them and their signatures differ for
+five of six stages -- `drawing.top5(label)` against `DrawingRecognizer.analyse(image)`, and so on --
+so an area implementation cannot be passed here as it stands. `safety.flagged(prompt, expect_flagged)`
+takes the ground truth as an argument, which no real classifier can. Reconciling the two, by
+adapter or by rewriting these to the Protocols, is open work and belongs with the first real area;
+it is recorded in docs/plans/autonomous-loops.md.
 """
 
 from __future__ import annotations

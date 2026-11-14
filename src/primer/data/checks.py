@@ -23,16 +23,17 @@ def required_columns(columns: list[str], required: list[str]) -> Check:
     return Check("required_columns", not missing, f"missing: {', '.join(missing)}" if missing else "all present")
 
 
-def required_fields(records: list[dict], fields: list[str]) -> Check:
+def required_fields(records: list[dict], fields: list[str], name: str = "required_fields") -> Check:
+    """Every record has every field (present; a null value still counts as present)."""
     missing = Counter(f for r in records for f in fields if f not in r)
     detail = ", ".join(f"{f} missing in {n:,}" for f, n in missing.items())
-    return Check("required_fields", not missing, detail or f"all records have {', '.join(fields)}")
+    return Check(name, not missing, detail or f"all records have {', '.join(fields)}")
 
 
-def unique(records: list[dict], field: str) -> Check:
+def unique(records: list[dict], field: str, name: str | None = None) -> Check:
     counts = Counter(r.get(field) for r in records)
     dupes = sum(n - 1 for n in counts.values() if n > 1)
-    return Check(f"unique_{field}", dupes == 0, f"{dupes:,} duplicate {field} values")
+    return Check(name or f"unique_{field}", dupes == 0, f"{dupes:,} duplicate {field} values")
 
 
 def max_ratio(name: str, records: list[dict], is_bad: Callable[[dict], bool], limit: float) -> Check:

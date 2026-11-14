@@ -4,7 +4,7 @@ A child draws characters and scenes. The Primer turns those drawings into a pers
 
 This is our MLOps course team project (IE 7374), inspired by Y Combinator's *"The Primer"* request for an adaptive AI reading tutor for kids.
 
-> **Status:** the **data pipeline** is built and running: seven open datasets are downloaded, validated, cleaned, versioned with DVC and orchestrated with Airflow. Model training starts next. This README documents the data pipeline end to end.
+> **Status:** the **data pipeline** is built and running: eight open sources are downloaded, validated, cleaned into six datasets and versioned with DVC; seven sources are orchestrated with Airflow (Amateur Drawings, a 48 GB archive, runs once by hand from the CLI). Model training starts next. This README documents the data pipeline end to end.
 
 ## Contents
 
@@ -28,9 +28,10 @@ This is our MLOps course team project (IE 7374), inspired by Y Combinator's *"Th
 
 ```mermaid
 flowchart LR
-    subgraph Sources["7 open sources"]
+    subgraph Sources["8 open sources"]
         TS[TinyStories]
         QD[Quick, Draw!]
+        AD[Amateur Drawings<br/>CLI only]
         CL[CLEAR]
         WL[Dolch / Fry / Kuperman]
         PB[StoryWeaver +<br/>African Storybook]
@@ -40,15 +41,16 @@ flowchart LR
     end
     Sources --> I
     P --> S[summarize<br/>run report]
-    P --> D[(DVC versions<br/>data-v0.1)]
+    P --> D[(DVC versions<br/>data-v1.1)]
     P -.-> B[bias report<br/>run by hand]
     S --> T[tracker dashboard]
 ```
 
-| Dataset (`processed/`) | Rows today | Used by |
+| Dataset (`processed/`) | Rows in `v1.1` | Used by |
 |---|---|---|
+| `stories_text` | 1,799,990 | story LLM |
 | `drawings` | 632,746 | drawing recognizer |
-| `stories_text` | 54,642 | story LLM |
+| `character_drawings` | 174,981 | drawing understanding, character sheet |
 | `word_lists` | 32,323 | target-word selection |
 | `storybook_pages` | 7,142 pages (with illustrations) | illustration style, readability |
 | `readability` | 4,723 | readability scorer |
@@ -90,7 +92,7 @@ Dependencies are declared in [`pyproject.toml`](pyproject.toml) (extras: `dev`, 
 
 ## 3. Data sources
 
-Only open datasets, downloaded by code (no manual steps). Each processed record keeps its `license` and `attribution`.
+Only open datasets, downloaded by code. Seven sources need no manual steps; Amateur Drawings' 48 GB archive is downloaded by a person first and then ingested from the CLI ([runbook](docs/runbooks/full-ingest.md)). Each processed record keeps its `license` and `attribution`.
 
 | Source | What it gives us | How it's fetched | Kind |
 |---|---|---|---|
@@ -101,6 +103,7 @@ Only open datasets, downloaded by code (no manual steps). Each processed record 
 | **Kuperman AoA** norms | age of acquisition for ~31k words | Brysbaert's OSF file | snapshot |
 | **StoryWeaver** (Pratham Books) | 391 illustrated books, page text + images + captions | Global Storybooks GitHub mirror | snapshot |
 | **African Storybook** | 363 illustrated books, page text + images | Global Storybooks GitHub mirror | snapshot |
+| **Amateur Drawings** (Meta FAIR) | 178k+ drawings of human figures with box, joints and mask | Meta's download server, ~48 GB archive streamed into the bucket (CLI only, not in the Airflow DAG) | snapshot |
 
 - **Incremental** sources continue where the last run stopped (position saved in `metadata/state/<source>.json`).
 - **Snapshot** sources re-download a fixed file or repo and make a new batch only when it changed; otherwise the run reports "nothing new" and skips.
@@ -117,12 +120,12 @@ Every source implements the same three stages ([`src/primer/data/sources/base.py
 | **validate** | Source-specific checks: record counts, required fields, unique ids, empty or malformed records, value ranges, image coverage and page/image alignment. **Any failed check fails the run** before anything reaches `processed/` | checks recorded in the run manifest |
 | **preprocess** | Clean and transform into one schema per dataset type: Unicode/whitespace normalization, length filters, exact-duplicate removal (within the batch and against earlier batches), stroke and image metadata, page/illustration alignment, label normalization | `processed/<dataset>/source=<source>/batch=<id>.parquet` |
 
-Schemas are defined once in [`src/primer/data/schemas.py`](src/primer/data/schemas.py) (`STORIES_TEXT`, `DRAWINGS`, `READABILITY`, `WORD_LISTS`, `STORYBOOK_PAGES`) and every source is forced into them, so model code reads all sources of a dataset together:
+Schemas are defined once in [`src/primer/data/schemas.py`](src/primer/data/schemas.py) (`STORIES_TEXT`, `DRAWINGS`, `CHARACTER_DRAWINGS`, `READABILITY`, `WORD_LISTS`, `STORYBOOK_PAGES`) and every source is forced into them, so model code reads all sources of a dataset together:
 
 ```python
 from primer.data.catalog import read_dataset
 drawings = read_dataset("drawings")                    # current data
-drawings_v01 = read_dataset("drawings", version="v0.1")  # exactly as frozen in a version
+drawings_v11 = read_dataset("drawings", version="v1.1")  # exactly as frozen in a version
 ```
 
 **Anomalies the checks have already caught** in real data: a README parsed as a story, back-cover blurbs hiding credits, empty stories in a mirror, a duplicated word in the Fry list, and nine CLEAR excerpts with no publication year. Tests caught two more before they reached real data: Excel turning "900" into "900.0", and same-second batches overwriting each other. Each one now has a regression test.
@@ -164,14 +167,21 @@ african_storybook  ingest → validate → preprocess ─┘
 The bucket has **object versioning** on, so a replaced file keeps its old copy. A dataset version records the exact GCS object generation of every processed file:
 
 ```bash
-primer-data version v0.2 -m "what changed"   # freeze; writes metadata/versions/v0.2.json
+primer-data version v1.2 -m "what changed"   # freeze; writes metadata/versions/v1.2.json
 primer-data dvc-pointers                     # refresh data/*.dvc (no data downloaded or copied)
-git add data/*.dvc && git commit -m "chore(data): data version v0.2 (KAN-<n>)" && git tag data-v0.2
+git add data/*.dvc && git commit -m "chore(data): data version v1.2 (KAN-<n>)" && git tag data-v1.2
 ```
 
 - [`data/*.dvc`](data/) are DVC `import-url --version-aware` pointers: they record the same object versions **without storing any data in git or the DVC cache**.
-- Versions are permanent (a tag can't be overwritten). The first one, **`data-v0.1`**, is tagged in git.
-- Get a version back: `git checkout data-v0.1 && dvc pull data/drawings.dvc`, or in Python `read_dataset(..., version="v0.1")`.
+- Versions are permanent (a tag can't be overwritten), so a fix means a new version:
+
+  | Version | Git tag | What it holds |
+  |---|---|---|
+  | `v0.1` | `data-v0.1` | the first freeze: 2,754 stories, no Amateur Drawings |
+  | `v1` | none | all sources; **superseded** by `v1.1` (it kept 3 zero-height Amateur Drawings boxes, found in review) |
+  | **`v1.1`** | **`data-v1.1`** | **current**: all eight sources, 2.65M rows, the one to train on |
+
+- Get a version back: `git checkout data-v1.1 && dvc pull data/drawings.dvc`, or in Python `read_dataset(..., version="v1.1")`.
 
 Details: [`src/primer/data/README.md`](src/primer/data/README.md) → Versions.
 

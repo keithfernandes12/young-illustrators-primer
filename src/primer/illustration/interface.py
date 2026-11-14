@@ -25,9 +25,11 @@ class Illustration:
     subject: str | None = None
     #: Whether the child's sketch reached the model for this page (ControlNet structure).
     conditioned_on_sketch: bool = False
-    #: The character identity this page was conditioned on (IP-Adapter). Derived from child data:
-    #: never log it or name an object after it.
-    character_embedding: tuple[float, ...] = ()
+    #: Which character identity this page was conditioned on (IP-Adapter), as the opaque
+    #: `Character.identity_key` rather than the embedding itself. A book has one of these per page,
+    #: and the embedding is child-derived, so the vector stays with the illustrator that conditions
+    #: on it instead of being copied onto every page.
+    identity: str | None = None
 
 
 @runtime_checkable
@@ -38,8 +40,15 @@ class Illustrator(Protocol):
 
     - ``sketch`` -- the child's drawing itself, for ControlNet (scribble/lineart). This is the
       **structure**: what the page should be shaped like.
-    - ``characters`` -- the recogniser's output, carrying one embedding per main character, for
-      IP-Adapter. This is the **identity**: who the character is, so page four looks like page one.
+    - ``characters`` -- the recogniser's character sheets, for IP-Adapter. This is the
+      **identity**: who the character is, so page four looks like page one.
+
+    Within ``characters``, condition IP-Adapter on ``reference_image_ref`` -- the storybook-style
+    render a parent approved -- and check ``has_approved_reference`` first. Not on ``crop_ref``,
+    which is the child's raw crayon lines and would make every page look like crayon, and not on
+    ``embedding``, which is a cache key (KAN-71) in a different space from KAN-48's DINOv2 + CLIP
+    consistency measurement. ``body_type`` picks the reposing branch and ``keypoints`` drives it
+    for humanoids.
 
     Both are optional in the signature because an illustrator may implement only one of them, and a
     page may have no recognised character at all. Neither is optional in practice for a good book:
@@ -105,7 +114,7 @@ class FakeIllustrator:
             subject=subject,
             # Recorded, not stored: a test can see whether serving actually conditioned the page.
             conditioned_on_sketch=sketch is not None,
-            character_embedding=characters[0].embedding if characters else (),
+            identity=characters[0].identity_key if characters and characters[0].has_embedding else None,
         )
 
     def consistency(
@@ -120,9 +129,9 @@ class FakeIllustrator:
             return 0.0
         if len({illustration.subject for illustration in illustrations}) != 1:
             return 0.0
-        embeddings = {illustration.character_embedding for illustration in illustrations}
-        if len(embeddings) != 1 or not next(iter(embeddings)):
+        identities = {illustration.identity for illustration in illustrations}
+        if len(identities) != 1 or not next(iter(identities)):
             return 0.0
-        if characters and next(iter(embeddings)) != characters[0].embedding:
+        if characters and next(iter(identities)) != characters[0].identity_key:
             return 0.0
         return self.consistency_score

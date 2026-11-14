@@ -1,7 +1,8 @@
 """Train the speech model. CLI: --config --data-version --out.
 
-Logs exactly one MLflow run, with the tags `model-development.md` lists. An agent session never
-runs this: see docs/adrs/where-model-training-happens.md.
+Logs exactly one MLflow run, with the tags `model-development.md` lists. An agent session may
+run this locally inside the cap -- `max_steps` and 30 minutes -- to check the wiring, and never
+launches it as a cloud job: see docs/adrs/bounded-local-training-for-agents.md.
 """
 
 from __future__ import annotations

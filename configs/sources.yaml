@@ -120,10 +120,15 @@ sources:
     feeds: [drawing_recognizer]
     priority: 6
     mvp: true
-    format: Images + JSON annotations
+    format: PNG images (gzipped tar) + COCO keypoint annotations (JSON)
     url: https://github.com/facebookresearch/AnimatedDrawings
-    license: Research use (verify)
-    attribution: "Amateur Drawings Dataset, Meta AI"
+    license: CC-BY-NC-4.0               # Meta's stated licence for the dataset; metadata, not checked
+    attribution: "Amateur Drawings Dataset, Meta AI (Smith et al., 2023)"
+    ingest:
+      annotations_url: https://dl.fbaipublicfiles.com/amateur_drawings/amateur_drawings_annotations.json
+      archive_url: https://dl.fbaipublicfiles.com/amateur_drawings/amateur_drawings.tar   # ~48 GB
+      min_images: 170000
+      max_missing: 0.005             # share of annotated images allowed to lack a file in the archive
 
   gutenberg_children:
     name: Project Gutenberg (children's)

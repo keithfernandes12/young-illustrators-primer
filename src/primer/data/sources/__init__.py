@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from primer.data.config import SourceConfig
+from primer.data.sources.amateur_drawings import AmateurDrawings
 from primer.data.sources.base import Source
 from primer.data.sources.clear_corpus import ClearCorpus
 from primer.data.sources.quickdraw import QuickDraw
@@ -13,7 +14,7 @@ from primer.data.storage import Store
 
 SOURCES: dict[str, type[Source]] = {
     cls.key: cls for cls in (TinyStories, QuickDraw, ClearCorpus, SightWords, KupermanAoA,
-                             StoryWeaver, AfricanStorybook)
+                             StoryWeaver, AfricanStorybook, AmateurDrawings)
 }
 
 

@@ -449,9 +449,14 @@ def write_schemas(store: Store | None = None, schemas_dir: Path = SCHEMAS_DIR,
         df = read_dataset(dataset, store)
         if df.empty:
             continue
-        schema = infer_schema(dataset, profile_frame(df))
+        schema = json.loads(json.dumps(infer_schema(dataset, profile_frame(df)), default=_json_default))
         path = schemas_dir / f"{dataset}.json"
-        path.write_text(json.dumps(schema, indent=2, default=_json_default) + "\n", encoding="utf-8")
+        if path.exists():
+            # Keep the old date when nothing else changed, so an unchanged contract has no diff.
+            old = json.loads(path.read_text(encoding="utf-8"))
+            if {**old, "created_at": None} == {**schema, "created_at": None}:
+                schema["created_at"] = old.get("created_at")
+        path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8", newline="\n")
         written.append(path)
     return written
 

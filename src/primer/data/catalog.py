@@ -18,7 +18,7 @@ from primer.data.sources import SOURCES
 from primer.data.sources.base import batch_order
 from primer.data.storage import Store
 
-DATASETS = ("stories_text", "storybook_pages", "drawings", "readability", "word_lists")
+DATASETS = ("stories_text", "storybook_pages", "drawings", "character_drawings", "readability", "word_lists")
 VERSIONS_DIR = "metadata/versions"
 
 

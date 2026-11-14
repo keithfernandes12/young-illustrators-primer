@@ -8,7 +8,7 @@ from __future__ import annotations
 
 
 class SafetyClassifierModel:
-    """The production safety implementation. Satisfies ``interface.SafetyClassifier``."""
+    """The production safety implementation. Will satisfy ``interface.SafetyClassifier``."""
 
     def __init__(self, model_uri: str | None = None) -> None:
         self._model_uri = model_uri
