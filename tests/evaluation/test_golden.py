@@ -139,6 +139,79 @@ def test_skip_is_still_reported_when_the_file_is_absent(tmp_path):
 # --------------------------------------------------------------------- boundaries
 
 
+# ------------------------------------------------- findings from the Copilot review of PR #11
+
+
+def test_a_forced_miss_really_misses(scenarios):
+    """The filler labels were golden labels, so `miss_every=1` still scored 0.25, not 0.0."""
+    metrics = run(scenarios, FakeComponents(drawing=FakeDrawingClassifier(miss_every=1)))
+    assert metrics["drawing_top5_acc"] == 0.0
+
+
+def test_filler_labels_are_not_golden_labels(scenarios):
+    """Keep the fake's decoys disjoint from the set it scores, or misses are not misses."""
+    golden = {str(scenario["drawing_label"]) for scenario in scenarios}
+    assert not golden & set(FakeDrawingClassifier.FILLER)
+
+
+@pytest.mark.parametrize(
+    "story,target,expected",
+    [
+        ("The cat was there.", "cat", True),
+        ("The concatenate was there.", "cat", False),  # substring membership used to count this
+        ("A CAT, loudly.", "cat", True),
+        ("the cats were there", "cat", False),
+        ("a red kite flew", "red kite", True),
+        ("a kite, red", "red kite", False),
+        ("", "cat", False),
+    ],
+)
+def test_target_words_match_on_word_boundaries(story, target, expected):
+    from primer.evaluation.golden import contains_target_word
+
+    assert contains_target_word(story, target) is expected
+
+
+def test_a_word_hidden_inside_another_word_does_not_count(scenarios, tmp_path):
+    """The regression case: a writer that only ever emits the target inside a longer word."""
+
+    class SmugglesTheWord:
+        quality = 4.6
+
+        def write(self, prompt: str, target_words: list[str], age: int) -> str:
+            return " ".join(f"The {word}alogue was there." for word in target_words)
+
+        def quality_score(self, story: str) -> float:
+            return self.quality
+
+    metrics = run(scenarios, FakeComponents(story=SmugglesTheWord()))
+    assert metrics["target_word_inclusion"] == 0.0
+    assert "GATE_RESULT: FAIL" in gate(metrics, tmp_path)
+
+
+def test_fake_metrics_cannot_certify_an_mlflow_run(scenarios, tmp_path):
+    """A fake PASS says the gate works, not that a model does; it must not tag a real run."""
+    metrics = run(scenarios, FakeComponents())
+    metrics["fake_models"] = True
+    path = tmp_path / "fake.json"
+    path.write_text(json.dumps(metrics), encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable, "-I", str(CHECK_GATE),
+            "--metrics", str(path),
+            "--thresholds", str(THRESHOLDS),
+            "--mlflow-run-id", "run-abc123",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert "REFUSED" in result.stdout, result.stdout
+    assert "logged gate results" not in result.stdout
+    # The verdict itself is still reported: only the certification is refused.
+    assert "GATE_RESULT: PASS" in result.stdout
+
+
 def test_per_stage_detail_covers_every_owner(scenarios):
     """Each member needs to see which numbers their area is responsible for."""
     metrics = run(scenarios, FakeComponents())

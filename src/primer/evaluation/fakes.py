@@ -19,11 +19,16 @@ class FakeDrawingClassifier:
     miss_every: int = 0
     _seen: int = field(default=0, init=False)
 
+    #: Deliberately not drawn from the golden set's own labels. The first version used
+    #: ["kite", "frog", "star", "boat"], all four of which ARE golden labels, so a forced miss still
+    #: contained the true label for 4 of 16 subjects and `miss_every=1` scored 0.25 instead of 0.0.
+    FILLER = ("decoy-one", "decoy-two", "decoy-three", "decoy-four", "decoy-five")
+
     def top5(self, true_label: str) -> list[str]:
         self._seen += 1
         wrong = self.miss_every and self._seen % self.miss_every == 0
-        filler = ["kite", "frog", "star", "boat"]
-        return filler + ["unknown"] if wrong else [true_label, *filler]
+        filler = [label for label in self.FILLER if label != true_label]
+        return filler[:5] if wrong else [true_label, *filler[:4]]
 
 
 @dataclass

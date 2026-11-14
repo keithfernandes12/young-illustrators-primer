@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -52,6 +53,20 @@ def load_scenarios(path: Path) -> list[Scenario]:
 
 def _rmse(errors: Sequence[float]) -> float:
     return math.sqrt(sum(error * error for error in errors) / len(errors)) if errors else 0.0
+
+
+def contains_target_word(text: str, target: str) -> bool:
+    """Whether `text` uses `target` as a word.
+
+    Substring membership overstates the metric: asking for "cat" and generating "concatenate" would
+    count as inclusion, which hides a real target-word regression. A multiword target must appear as
+    a contiguous run of words, in order.
+    """
+    words = re.findall(r"[a-z0-9']+", text.lower())
+    wanted = re.findall(r"[a-z0-9']+", target.lower())
+    if not wanted:
+        return False
+    return any(words[i : i + len(wanted)] == wanted for i in range(len(words) - len(wanted) + 1))
 
 
 def _git_sha() -> str:
@@ -94,9 +109,8 @@ def run(scenarios: list[Scenario], components: FakeComponents) -> dict[str, Any]
             drawing_hits += 1
 
         story = components.story.write(str(scenario["prompt"]), target_words, age)
-        lowered = story.lower()
         words_wanted += len(target_words)
-        words_found += sum(1 for word in target_words if word.lower() in lowered)
+        words_found += sum(1 for word in target_words if contains_target_word(story, word))
         quality.append(components.story.quality_score(story))
 
         predicted = components.readability.grade(story, target_level)

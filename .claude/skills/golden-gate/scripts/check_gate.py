@@ -78,15 +78,25 @@ def main() -> int:
     passed = failures == 0 and bool(rows)
 
     if args.mlflow_run_id:
-        try:
-            import mlflow  # type: ignore
+        # The golden runner marks synthetic scores with `fake_models: true`. Certifying a real
+        # MLflow run from them would put gate_passed=true on a model nothing measured, and a later
+        # registration reads that tag. Running the gate on fakes is still useful -- it is how we
+        # test the gate -- so refuse only the certification.
+        if metrics.get("fake_models"):
+            print(
+                "REFUSED: these metrics are from --fake-models, so they cannot certify MLflow run "
+                f"{args.mlflow_run_id}. Evaluate the real candidate first."
+            )
+        else:
+            try:
+                import mlflow  # type: ignore
 
-            with mlflow.start_run(run_id=args.mlflow_run_id):
-                mlflow.log_metrics(logged)
-                mlflow.set_tag("gate_passed", str(passed).lower())
-            print(f"logged gate results to MLflow run {args.mlflow_run_id}")
-        except Exception as exc:  # noqa: BLE001
-            print(f"WARNING: could not log to MLflow: {exc}")
+                with mlflow.start_run(run_id=args.mlflow_run_id):
+                    mlflow.log_metrics(logged)
+                    mlflow.set_tag("gate_passed", str(passed).lower())
+                print(f"logged gate results to MLflow run {args.mlflow_run_id}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"WARNING: could not log to MLflow: {exc}")
 
     print(f"GATE_RESULT: {'PASS' if passed else f'FAIL ({failures} failing)'}")
     return 0 if passed else 1
