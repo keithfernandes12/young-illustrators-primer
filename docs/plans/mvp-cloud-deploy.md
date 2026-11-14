@@ -306,7 +306,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S5 | not started | | |
 | S5b | not started | | Vertex GPU job |
 | S6a | not started | | ready: needs no dataset |
-| S6b | not started | | ready: pure function, no data. KAN-87, taken over by this stage |
+| S6b | in review | [#19](https://github.com/keithfernandes12/young-illustrators-primer/pull/19) | `render_strokes` + config + PNG; numpy only, so CI covers it. KAN-87 |
 | S6b2 | not started | | |
 | S6c | not started | | |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap |
@@ -322,13 +322,47 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 
 ## Decisions
 
+- **2026-11-14** — **Render on the fly in the loader; do not cache rendered images.** S6b's
+  contract left this open. A simplified Quick, Draw! drawing is a few hundred bytes of coordinates
+  and rasterises in 0.36 ms measured, so a cache under `processed/` would buy a few minutes per
+  epoch across the whole split while costing a bucket copy of every image and a freeze step to keep
+  it honest. It would also buy
+  the one thing KAN-87 exists to prevent: a second copy of the pixels, which can drift from the
+  function that made them. KAN-31's paper-and-crayon augmentation is applied at training time only
+  (S6b2), so a cache would hold the cheap half of the work anyway. Reversible: if profiling in S6d
+  shows rendering dominates a step, caching can be added behind the same function without changing
+  its signature.
+- **2026-11-14** — **The render defaults are 224px, 3px strokes, 8px padding, black ink on white.**
+  The other point S6b left to decide. `size: 224` is the SigLIP 2 checkpoint's own input
+  resolution, so the image processor's resize is a no-op rather than a second resample of an
+  already-rasterised sketch; that couples the default to S6a's checkpoint on purpose, and moving
+  resolution in S6d means re-rendering the split. A 1px stroke at the 0.81 scale factor leaves a
+  sketch that is mostly background, and padding keeps a stroke off the border where a convolution's
+  receptive field is truncated. The whole 0–255 grid is mapped with one scale factor for both axes
+  rather than each drawing's bounding box, because the simplified format has already been aligned
+  and scaled with aspect ratio preserved, and re-fitting per drawing would stretch each one
+  differently. All of it lives in `src/primer/drawing/configs/drawing_render.yaml` — the area's own
+  config folder, not the repository's top-level `configs/`: these settings travel with a
+  measured `drawing_top5_acc`, since a number taken at one stroke weight is not comparable with one
+  taken at another. **Decided by the loop, not with the vision teammate KAN-87 names** — none of it
+  is expensive to reverse before S6b2 renders a split, so push back on the PR.
+- **2026-11-14** — **The renderer uses no image library.** Geometry is integer Bresenham plus a
+  disc stamp over a numpy array, and PNG encoding is `zlib` and `struct` directly. Two reasons:
+  the pixels are then a function of the strokes and the config alone rather than of whichever
+  Pillow is installed, and `numpy` is a declared dependency while Pillow is declared nowhere in
+  this project at all — so the whole strokes-to-bytes path is covered by CI instead of being
+  skipped there. Pillow is still used where it happens to be present, to assert the encoder emits
+  a PNG a real decoder reads; that one test is gated on an incidental install rather than on an
+  extra anybody can ask for, which is worth fixing once S6a lands the `drawing` extra.
 - **2026-11-14** — The drawing stage takes over **KAN-87** (`render_strokes`), which was assigned
   elsewhere and unstarted since 2026-11-08 — no branch, no PR, no `render_strokes` in the tree. It
   is the hard dependency of every measured slice in S6, so leaving it where it was left S6c and S6d
   blocked behind work nobody had begun. Split out as S6b, a pure function with no frozen data, and
   deliberately kept as **one** renderer imported by training and inference alike: KAN-87's whole
   point is that the two cannot drift, and that reason survives the change of owner. The dataset
-  split that was S6b is now S6b2. **Tell the previous assignee before starting S6b.**
+  split that was S6b is now S6b2. **Tell the previous assignee before starting S6b.** Done on
+  2026-11-14 by Rishi, in person rather than on the ticket — so KAN-87 itself carries no comment,
+  and nobody needs to raise this again.
 - **2026-11-14** — S6 split into S6a–S6e so a loop can take one at a time, and each slice given the
   Jira key that already covers it (KAN-38, or KAN-87 for the render dependency) rather than new
   issues: `loop-worker` skips a slice with no key, and creating issues is an `ask` rule that would
@@ -344,8 +378,100 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 
 ## Verified facts
 
+- **2026-11-14** — `render_strokes` renders the Quick, Draw! 0–255 grid onto the canvas with the
+  endpoints pinned: at the shipped settings coordinate 0 lands on column 8 and 255 on column 215,
+  the first and last drawable pixels of a 224px canvas with 8px padding. Pinned by
+  `tests/drawing/test_render.py`, which asserts the exact inked pixels of horizontal, vertical,
+  45°, shallow, steep and downhill diagonal, tie-breaking and single-point strokes on a 10×10
+  canvas rather than only their shape — the interior of a segment, not only its endpoints. 74
+  tests, all but one running on `numpy` alone, so CI covers the whole path.
+- **2026-11-14** — Four shapes that are not drawings were rendering as plausible ones, found by
+  the automated reviewer on PR #19 and reproduced before fixing: a run of numeric strings
+  (`float("12")` is 12.0), a run of booleans (`bool` is a subclass of `int`), a **mapping** run
+  with numeric keys — iterating one yields its keys, so `{"0": 9, "1": 9}` drew at 0 and 1 and
+  discarded the 9s, while a word-keyed mapping raised, which is the tell — and a `set` run, which
+  renders in sorted order and so is a different drawing. Each is now refused by type and by name.
+  numpy arrays and numpy scalars still render, since that is what a loader holds; `np.bool_` is
+  refused like a plain `bool`. This is the same standard `RenderConfig` already applied to its own
+  settings, now applied to coordinates.
+- **2026-11-14** — `render_strokes` accepts numpy arrays in its type signature, not only at run
+  time. `ndarray` is not a `Sequence`, so the original alias made the loader S6b2 is going to
+  build — which holds strokes as arrays, and is the function's primary caller — a mypy error at
+  its one honest call site. Verified both ways: before the widening a list of arrays failed
+  `mypy` with `incompatible type … expected Sequence[Sequence[Sequence[float]]]`; after it, a
+  caller passing a list of arrays and one passing a single array both type-check. The usual
+  answer to that error is a `# type: ignore`, which `AGENTS.md` treats as weakening CI.
+- **2026-11-14** — The geometry tests are checked against mutations rather than assumed to bite.
+  Three edits that move pixels without looking like they would have been found so far: loosening
+  `_line`'s first tie-break from `>=` to `>`, swapping half-up rounding for round-half-to-even,
+  and loosening the *second* tie-break from `<=` to `<`. The first two were caught in one round
+  and the third survived it — a tie in that branch needs an even `dx`, and every stroke pinned at
+  the time had `dx` of 7 or 0. Each now fails exactly one test. **Not a proof that no fourth
+  exists**, which is the honest status of any mutation check.
+- **2026-11-14** — The single-renderer guard scanned `src/primer` while claiming the repository,
+  and widening it introduced a second bug: a `.claude/worktrees` checkout made it report
+  `render.py` twice, so it failed on a developer's machine and passed in CI, which has no
+  worktrees. It now prunes any directory with its own `.git` and asserts repository-relative
+  paths, so a genuine second renderer is located rather than merely counted. Verified by dropping
+  a copy of the branch under `.claude/worktrees` and re-running.
+- **2026-11-14** — The same strokes and config give byte-identical PNGs across calls, and the
+  hand-written encoder's output is a real PNG: Pillow opens it as mode `L` at the right size and
+  the array it decodes equals the array that was encoded. That one check is skipped wherever
+  Pillow is absent, CI included; the chunk, length and CRC checks beside it are not, and one test
+  corrupts a CRC to prove they fail when they should.
+- **2026-11-14** — Eyeballed, not measured: **real** Quick, Draw! drawings render legibly at the
+  shipped settings. The first three `house` records of
+  `gs://quickdraw_dataset/full/simplified/house.ndjson` (public bucket, anonymous read, nothing
+  written) have 3–8 strokes, 24–50 points, coordinates spanning the full 0–255 range, and come out
+  with 2,383–3,387 inked pixels of 50,176; printed as ASCII, the first is a house with a pitched
+  roof, a panelled window and a door, all strokes continuous. This confirms the stroke format the
+  renderer assumes and says the settings produce a drawing rather than noise. It says nothing about
+  whether a model recognises it; there is no `drawing_top5_acc` until S6c.
+- **2026-11-14** — Measured on 50 real `house` drawings at the shipped 224px settings: 0.356 ms to
+  render one to an array, 0.454 ms more to encode it as PNG. At the 500k-record scale S6b2 is
+  heading for that is roughly 3 minutes of rendering single-threaded, or 7 with PNG — which is why
+  rendering on the fly beats caching, and the figure to check against if a loader ever looks slow.
+  **One category, and a sparse one.** A denser drawing of comparable point count measures around
+  1.1 ms, so take 3× as the working upper bound until S6b2 re-measures over the real split.
+- **2026-11-14** — `zlib` compression level 9 cost 2.647 ms per image against the default's
+  0.312 ms, for 875 bytes against 1,134 — 8.5× the time for 23% fewer bytes. A sketch is long runs
+  of one byte, deflate's worst case for the effort. `to_png` uses the default; the level was the
+  single largest cost in the whole strokes-to-bytes path before this was measured.
+- **2026-11-14** — The disc stamp does **not** equalise stroke weight at the shipped
+  `line_width: 3`, contrary to the obvious argument for using one. At radius 1 the "disc" is a
+  five-cell plus: a horizontal stroke lays down 3.0 pixels of ink per pixel of length, a diagonal
+  2.1, and a 3×3 square stamp would give 3.5 — 29% thin against 18% thick. The disc is kept
+  because the gap closes as the radius grows and a square's does not, but it is a choice, not a
+  result; S6c is the first slice that can say whether it costs accuracy.
+- **2026-11-14** — A malformed drawing is refused rather than rendered as something plausible:
+  empty stroke lists, mismatched x/y runs, empty strokes, coordinates off the grid and NaN all
+  raise, and JSON text raises a `TypeError` naming `json.loads` — the `strokes` column is stored as
+  JSON, so passing it unparsed is the likely call-site mistake. Config errors raise at construction
+  rather than at the first drawing, including an even `line_width`, ink equal to background, and
+  padding too small for the stroke width to stay on the canvas.
+
 ## Open questions
 
+- Should `tests/drawing/test_render.py`'s Pillow check be gated on a real extra rather than on
+  whether Pillow happens to be installed? Recommended: once S6a lands the `drawing` extra, add
+  `pillow` to it and point the skip at that, so the check can be opted into rather than only
+  arriving by accident through `transformers`. Whoever merges S6a.
+- **Half of S6b's acceptance is deferred to S6b2, and the acceptance line does not say so.** "Training
+  and inference import the same function, asserted by a test" is asserted today as "defined exactly
+  once and nothing else draws", because nothing imports it yet; and "`license` and `attribution`
+  stay on every rendered record" belongs to the slice that handles records. Both are the right
+  calls, but S6b2 inherits them. *Recommended:* S6b2 adds the import assertion and the column
+  check, and this line moves with them.
+- **What should the S6b2 loader do when `render_strokes` raises mid-epoch?** The renderer refuses a
+  malformed drawing rather than rendering something plausible, and it will be called once per
+  record across hundreds of thousands. `preprocess` filters on `valid_strokes` before writing, so
+  processed records should never trip it — but "should never" is not a policy. Related: `valid_strokes`
+  accepts three runs (the raw format's timings) where the renderer requires two, so the two
+  definitions of a valid stroke have already diverged. *Recommended:* S6b2 decides, and says so.
+- Should the renderer's per-record cost be re-measured over the real S6b2 split? Recommended: yes,
+  as part of S6b2 — the 0.356 ms figure is 50 drawings of one sparse category, and the obvious
+  optimisation (indexing the canvas from the point list instead of building a list of tuples) has
+  not been tried because nothing has needed it yet.
 - Which region has L4 GPU quota for the team's projects? Recommended: request quota in `us-central1`
   now; the team lead decides.
 - Does the course's GCP credit cover Claude models on Vertex AI? Recommended: check the billing account's
