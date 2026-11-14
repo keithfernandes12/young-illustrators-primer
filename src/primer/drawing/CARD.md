@@ -73,7 +73,7 @@ Per-slice results for the keys in `slices.py`, and what was done about any gap. 
   consistency in DINOv2 + CLIP space. Reusing this one there would measure the encoder against
   itself.
 - **That cache key is bound to the dtype it was taken at.** The tower runs in bf16 on CUDA and
-  fp32 on CPU, and near a unit vector's typical component one bf16 step is some 280 times the
+  fp32 on CPU, and near a unit vector's typical component one bf16 step is 244 times the
   rounding `model.py` applies — so the same drawing analysed on a GPU and on a CPU produces two
   different `identity_key`s and two cache entries. Rounding cannot fix it: the two runs computed
   different numbers, rather than the same number with noise on top. Anything sharing a KAN-71

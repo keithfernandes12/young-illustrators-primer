@@ -50,8 +50,8 @@ CONFIG_PATH = CONFIG_DIR / "drawing_baseline.yaml"
 #: precision should raise this rather than assume it.
 #:
 #: **It does not make the key portable across dtypes.** The tower runs in bf16 on CUDA and fp32 on
-#: CPU, and near a unit vector's typical component (1/sqrt(768) is about 0.036) one bf16 step is
-#: around 2.8e-4 -- some 280 times this rounding step -- so the same drawing analysed on a GPU and
+#: CPU, and near a unit vector's typical component (1/sqrt(768) is about 0.0361) one bf16 step is
+#: 2.44e-4 -- 244 times this rounding step -- so the same drawing analysed on a GPU and
 #: on a CPU keys to two different cache entries. No rounding fixes that; it is a difference in what
 #: the tower computed, not noise on top of it. Anything that shares a KAN-71 cache between devices
 #: has to say which dtype the key was taken at.

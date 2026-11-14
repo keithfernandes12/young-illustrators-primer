@@ -22,6 +22,9 @@ from primer.drawing.model import SiglipEncoder
 
 torch = pytest.importorskip("torch", reason="torch comes from the `drawing` extra; CI omits it")
 Image = pytest.importorskip("PIL.Image", reason="pillow comes from the `drawing` extra too")
+# `load()`'s test stubs the factories on this module, so it has to be importable here too --
+# without this the file errors rather than skipping wherever only part of the extra is installed.
+pytest.importorskip("transformers", reason="transformers comes from the `drawing` extra too")
 
 DIMENSIONS = 4
 
@@ -71,6 +74,7 @@ class StubTower(torch.nn.Module):
         self.logit_bias = torch.nn.Parameter(torch.tensor([-1.0]))
         self.text_calls = 0
         self.seen_dtype: Any = None
+        self.evaluated = False
 
     def get_text_features(self, **inputs):
         self.text_calls += 1
@@ -92,6 +96,7 @@ class StubTower(torch.nn.Module):
         return self
 
     def eval(self):
+        self.evaluated = True
         return self
 
 
@@ -213,6 +218,7 @@ def test_load_selects_the_dtype_that_goes_with_the_device(config, monkeypatch, d
         return tower
 
     def fake_processor(name, **kwargs):
+        passed["processor"] = {"name": name, **kwargs}
         return StubProcessor()
 
     # The factory methods rather than the `transformers` attributes: `load()` does
@@ -228,7 +234,12 @@ def test_load_selects_the_dtype_that_goes_with_the_device(config, monkeypatch, d
     assert passed["dtype"] is getattr(torch, dtype), "the tower is loaded in it, not just recorded"
     assert passed["revision"] == config.encoder_revision, "the pinned weights, not the branch head"
     assert passed["name"] == config.encoder
+    # The processor is pinned too, and for the same reason: it carries the image size, the
+    # normalisation mean and standard deviation and the tokenizer, so a `preprocessor_config.json`
+    # moving under pinned weights changes every score just as surely as new weights would.
+    assert passed["processor"] == {"name": config.encoder, "revision": config.encoder_revision}
     assert tower.moved_to == (device,)
+    assert tower.evaluated, "dropout and the like off; the tower is only ever used for inference"
 
 
 def test_the_pixels_are_cast_to_the_towers_dtype(half, png):

@@ -451,7 +451,9 @@ def test_l2_normalised_takes_the_floor_from_its_caller():
     """Because the right floor depends on the dtype, and a constant is wrong in float16.
 
     float16's smallest normal is about 6e-5, so a hard-coded 1e-12 clamps to 0.0 there and the
-    0/0 the floor exists to prevent happens anyway -- on CUDA, the only path that runs in fp16.
+    0/0 the floor exists to prevent happens anyway. No path here runs in fp16 today -- CUDA picks
+    bf16, which would be fine with a constant -- and that is exactly why the floor is a parameter
+    rather than one: it must not depend on which dtype someone later selects.
     """
     assert l2_normalised(_Vector(0.0, norm=0.0), 6.1e-5).value == 0.0
     assert l2_normalised(_Vector(1.0, norm=0.0), 0.5).value == 2.0, "the floor is what divides"

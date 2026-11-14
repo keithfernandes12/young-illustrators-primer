@@ -457,7 +457,8 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   — which is the side where one NaN ruins every confidence rather than one encoding.
 - **2026-11-14 — S6a: comments and card carried fp16 numbers after the switch.** The cross-dtype
   cache-key warning said one step is "about thirty times" the rounding step, true of fp16; in
-  bf16 it is around 2.8e-4, some **280 times**. `CARD.md` contradicted itself on one page. The
+  bf16 it is 2.441e-4 at the component the sentence names, **244 times** (a fourth round caught a
+  first correction that overshot it by 15%, by computing the binade rather than scaling the value). `CARD.md` contradicted itself on one page. The
   justification for making the norm floor a parameter also claimed clamping to 1e-12 fails "on the
   CUDA path", which is false for bf16 — it keeps fp32's exponent range and represents 1e-12
   exactly. Corrected in all four places; the parameter stays, because the point is not to depend
