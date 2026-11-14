@@ -1,0 +1,23 @@
+{
+  "_comment": "Synthetic smoke-test request for POST /v1/books:dryRun. Contains no child data: the drawing is a reference to a checked-in sample, not an upload, and the prompt is invented. Shape follows primer.story.interface.StoryRequest plus the drawing the recogniser is given.",
+  "request_id": "smoke-0001",
+  "child": {
+    "child_id": "00000000-0000-4000-8000-000000000001",
+    "age": 5
+  },
+  "drawing": {
+    "drawing_ref": "fixture://smoke/cat-crayon.png",
+    "expected_label": "cat"
+  },
+  "story": {
+    "prompt": "a cat in the garden",
+    "target_words": ["cat", "nap"],
+    "target_reading_level": 1.0
+  },
+  "options": {
+    "style": "crayon",
+    "pages": 3,
+    "narrate": true,
+    "dry_run": true
+  }
+}

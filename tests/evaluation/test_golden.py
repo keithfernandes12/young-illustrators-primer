@@ -1,0 +1,266 @@
+"""The golden runner writes a complete metrics file and the gate returns a real verdict.
+
+Before this, `golden-gate` could only report SKIP: nothing produced a metrics file. A gate that
+cannot fail is not a gate, so these tests check both directions -- a perfect fake passes, and each
+way a stage can regress turns it red.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from primer.evaluation import contract
+from primer.evaluation.fakes import (
+    FakeComponents,
+    FakeDrawingClassifier,
+    FakeSafetyClassifier,
+    FakeStoryWriter,
+)
+from primer.evaluation.golden import DEFAULT_SCENARIOS, load_scenarios, run
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CHECK_GATE = REPO_ROOT / ".claude" / "skills" / "golden-gate" / "scripts" / "check_gate.py"
+THRESHOLDS = REPO_ROOT / ".claude" / "skills" / "golden-gate" / "thresholds.json"
+
+
+@pytest.fixture(scope="module")
+def scenarios() -> list[dict]:
+    return load_scenarios(DEFAULT_SCENARIOS)
+
+
+def gate(metrics: dict, tmp_path: Path, name: str = "metrics.json", *, real: bool = True) -> str:
+    """Write `metrics` and return check_gate's stdout.
+
+    `real` strips the fake_models marker, because a verdict for synthetic scores now reads
+    FAKE-PASS rather than PASS. Tests about thresholds want the real vocabulary.
+    """
+    metrics = {k: v for k, v in metrics.items() if not (real and k == "fake_models")}
+    path = tmp_path / name
+    path.write_text(json.dumps(metrics), encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, "-I", str(CHECK_GATE), "--metrics", str(path), "--thresholds", str(THRESHOLDS)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout
+
+
+# --------------------------------------------------------------------- the golden set itself
+
+
+def test_golden_set_shape(scenarios):
+    assert len(scenarios) == 100
+    assert sum(1 for s in scenarios if s["expect_flagged"]) == 20
+    assert all({"id", "kind", "age", "prompt", "expect_flagged"} <= set(s) for s in scenarios)
+    assert len({s["id"] for s in scenarios}) == 100, "scenario ids must be unique"
+
+
+def test_safety_cases_name_a_category(scenarios):
+    for scenario in scenarios:
+        if scenario["expect_flagged"]:
+            assert scenario.get("safety_category"), scenario["id"]
+
+
+# --------------------------------------------------------------------- the contract
+
+
+def test_contract_matches_the_thresholds_file():
+    """Adding a threshold without teaching the writer to emit it must break the build."""
+    spec = json.loads(THRESHOLDS.read_text(encoding="utf-8"))["metrics"]
+    assert set(contract.GATED_METRIC_KEYS) == {m["key"] for m in spec}
+    referenced = {m["ref"] for m in spec if "ref" in m}
+    assert set(contract.REFERENCE_METRIC_KEYS) == referenced
+
+
+def test_every_contract_key_is_written(scenarios):
+    metrics = run(scenarios, FakeComponents())
+    assert contract.missing_keys(metrics) == []
+
+
+# --------------------------------------------------------------------- the verdict
+
+
+def test_perfect_fake_passes(scenarios, tmp_path):
+    output = gate(run(scenarios, FakeComponents()), tmp_path)
+    assert "GATE_RESULT: PASS" in output, output
+
+
+def test_dropping_one_target_word_fails(scenarios, tmp_path):
+    """A story model that stops honouring the word list is the regression the gate exists for."""
+    components = FakeComponents(story=FakeStoryWriter(drop_target_words=1))
+    metrics = run(scenarios, components)
+    assert metrics["target_word_inclusion"] < 0.95
+    output = gate(metrics, tmp_path)
+    assert "GATE_RESULT: FAIL" in output, output
+    assert "target_word_inclusion" in output
+
+
+def test_one_missed_safety_case_fails(scenarios, tmp_path):
+    components = FakeComponents(safety=FakeSafetyClassifier(miss_every=20))
+    metrics = run(scenarios, components)
+    assert metrics["safety_violations_golden"] >= 1
+    assert "GATE_RESULT: FAIL" in gate(metrics, tmp_path)
+
+
+def test_a_weak_drawing_model_fails(scenarios, tmp_path):
+    components = FakeComponents(drawing=FakeDrawingClassifier(miss_every=2))
+    metrics = run(scenarios, components)
+    assert metrics["drawing_top5_acc"] < 0.85
+    assert "GATE_RESULT: FAIL" in gate(metrics, tmp_path)
+
+
+@pytest.mark.parametrize("key", contract.GOLDEN_METRIC_KEYS)
+def test_a_missing_key_fails_the_gate(scenarios, tmp_path, key):
+    """A key the writer forgets must fail, not be skipped as a gap in the report."""
+    metrics = run(scenarios, FakeComponents())
+    del metrics[key]
+    output = gate(metrics, tmp_path, name=f"without-{key}.json")
+    assert "GATE_RESULT: FAIL" in output, f"removing {key} left the gate green:\n{output}"
+    assert "missing" in output
+
+
+def test_skip_is_unreachable_once_metrics_exist(scenarios, tmp_path):
+    """SKIP means no metrics file. With the runner in place it must never be the answer."""
+    assert "GATE_RESULT: SKIP" not in gate(run(scenarios, FakeComponents()), tmp_path)
+
+
+def test_skip_is_reported_and_is_not_success(tmp_path):
+    """A missing metrics file measured nothing, so it must not exit 0 into an `&&` chain."""
+    result = subprocess.run(
+        [sys.executable, "-I", str(CHECK_GATE), "--metrics", str(tmp_path / "nope.json")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert "GATE_RESULT: SKIP" in result.stdout
+    assert result.returncode != 0
+    assert "not built yet" not in result.stdout, "primer.evaluation exists now"
+
+
+def test_fake_metrics_do_not_read_as_a_pass(scenarios, tmp_path):
+    """A loop waiting for GATE_RESULT: PASS must not be satisfied by synthetic scores."""
+    metrics = run(scenarios, FakeComponents())
+    metrics["fake_models"] = True
+    output = gate(metrics, tmp_path, real=False)
+    assert "GATE_RESULT: FAKE-PASS" in output
+    assert "GATE_RESULT: PASS" not in output
+
+
+def test_a_selection_with_no_real_threshold_is_inconclusive(scenarios, tmp_path):
+    """`--only illustration` compares nothing: clip_consistency has a null threshold."""
+    metrics = run(scenarios, FakeComponents())
+    path = tmp_path / "metrics.json"
+    path.write_text(json.dumps({k: v for k, v in metrics.items() if k != "fake_models"}), encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, "-I", str(CHECK_GATE), "--metrics", str(path),
+         "--thresholds", str(THRESHOLDS), "--only", "illustration"],
+        capture_output=True, text=True, check=False,
+    )
+    assert "GATE_RESULT: INCONCLUSIVE" in result.stdout, result.stdout
+    assert result.returncode != 0
+
+
+# --------------------------------------------------------------------- boundaries
+
+
+# ------------------------------------------------- findings from the Copilot review of PR #11
+
+
+def test_a_forced_miss_really_misses(scenarios):
+    """The filler labels were golden labels, so `miss_every=1` still scored 0.25, not 0.0."""
+    metrics = run(scenarios, FakeComponents(drawing=FakeDrawingClassifier(miss_every=1)))
+    assert metrics["drawing_top5_acc"] == 0.0
+
+
+def test_filler_labels_are_not_golden_labels(scenarios):
+    """Keep the fake's decoys disjoint from the set it scores, or misses are not misses."""
+    golden = {str(scenario["drawing_label"]) for scenario in scenarios}
+    assert not golden & set(FakeDrawingClassifier.FILLER)
+
+
+@pytest.mark.parametrize(
+    "story,target,expected",
+    [
+        ("The cat was there.", "cat", True),
+        ("The concatenate was there.", "cat", False),  # substring membership used to count this
+        ("A CAT, loudly.", "cat", True),
+        ("the cats were there", "cat", False),
+        ("a red kite flew", "red kite", True),
+        ("a kite, red", "red kite", False),
+        ("", "cat", False),
+    ],
+)
+def test_target_words_match_on_word_boundaries(story, target, expected):
+    from primer.evaluation.golden import contains_target_word
+
+    assert contains_target_word(story, target) is expected
+
+
+def test_a_word_hidden_inside_another_word_does_not_count(scenarios, tmp_path):
+    """The regression case: a writer that only ever emits the target inside a longer word."""
+
+    class SmugglesTheWord:
+        quality = 4.6
+
+        def write(self, prompt: str, target_words: list[str], age: int) -> str:
+            return " ".join(f"The {word}alogue was there." for word in target_words)
+
+        def quality_score(self, story: str) -> float:
+            return self.quality
+
+    metrics = run(scenarios, FakeComponents(story=SmugglesTheWord()))
+    assert metrics["target_word_inclusion"] == 0.0
+    assert "GATE_RESULT: FAIL" in gate(metrics, tmp_path)
+
+
+def test_fake_metrics_cannot_certify_an_mlflow_run(scenarios, tmp_path):
+    """A fake PASS says the gate works, not that a model does; it must not tag a real run."""
+    metrics = run(scenarios, FakeComponents())
+    metrics["fake_models"] = True
+    path = tmp_path / "fake.json"
+    path.write_text(json.dumps(metrics), encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable, "-I", str(CHECK_GATE),
+            "--metrics", str(path),
+            "--thresholds", str(THRESHOLDS),
+            "--mlflow-run-id", "run-abc123",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert "REFUSED" in result.stdout, result.stdout
+    assert "logged gate results" not in result.stdout
+    # The verdict is still reported, but as FAKE-PASS: the gate ran, no model was scored.
+    assert "GATE_RESULT: FAKE-PASS" in result.stdout
+
+
+def test_per_stage_detail_covers_every_owner(scenarios):
+    """Each member needs to see which numbers their area is responsible for."""
+    metrics = run(scenarios, FakeComponents())
+    assert set(metrics["stages"]) == set(contract.METRIC_OWNERS.values())
+    assert metrics["stages"]["safety"] == {"safety_violations_golden": 0}
+    owned = {key for stage in metrics["stages"].values() for key in stage}
+    assert owned == set(contract.GOLDEN_METRIC_KEYS), "every contract key belongs to exactly one stage"
+
+
+def test_cli_refuses_to_pretend_it_ran_real_models(tmp_path):
+    """Until an area is implemented, a run without --fake-models must not produce a metrics file."""
+    out = tmp_path / "metrics.json"
+    result = subprocess.run(
+        [sys.executable, "-m", "primer.evaluation.golden", "--split", "golden", "--out", str(out)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "--fake-models is required" in result.stderr
+    assert not out.exists()

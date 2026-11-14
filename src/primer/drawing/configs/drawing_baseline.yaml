@@ -1,0 +1,5 @@
+# Hyperparameter search space for the drawing stage, versioned with the code.
+# Stub: `train.py --config` reads this.
+name: drawing-baseline
+data_version: unpinned
+search_space: {}

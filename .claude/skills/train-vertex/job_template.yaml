@@ -1,0 +1,28 @@
+# Vertex AI CustomJob spec for `gcloud ai custom-jobs create --config`.
+# Verify field names against `gcloud help ai custom-jobs create` before use.
+workerPoolSpecs:
+  - machineSpec:
+      machineType: g2-standard-8
+      acceleratorType: NVIDIA_L4
+      acceleratorCount: 1
+    replicaCount: 1
+    diskSpec:
+      bootDiskType: pd-ssd
+      bootDiskSizeGb: 200
+    containerSpec:
+      imageUri: us-central1-docker.pkg.dev/YIP_SHARED_PROJECT/yip/trainer:GIT_SHA
+      command: ["python", "-m", "primer.story.train"]
+      # Flags must match primer.<area>.train: --config, --data-version and --out are all
+      # required, and --output does not exist. The config is the one that ships with the area.
+      args: ["--config", "src/primer/story/configs/story_baseline.yaml",
+             "--data-version", "DATA_VERSION",
+             "--out", "gs://YIP_ARTIFACT_BUCKET/models/story/RUN_NAME"]
+      env:
+        - name: MLFLOW_EXPERIMENT_NAME
+          value: yip-story
+        - name: MLFLOW_TRACKING_URI
+          value: https://YOUR-MLFLOW-SERVER
+serviceAccount: yip-trainer@YIP_COMPUTE_PROJECT.iam.gserviceaccount.com
+# Optional cost saver if the trainer resumes from GCS checkpoints:
+# scheduling:
+#   strategy: SPOT

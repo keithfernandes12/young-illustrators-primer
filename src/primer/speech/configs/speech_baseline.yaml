@@ -1,0 +1,5 @@
+# Hyperparameter search space for the speech stage, versioned with the code.
+# Stub: `train.py --config` reads this.
+name: speech-baseline
+data_version: unpinned
+search_space: {}

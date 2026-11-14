@@ -345,12 +345,16 @@ def check_command(command: str, cwd: str, environ: dict[str, str] | None = None,
     return None
 
 
+SHELL_TOOLS = {"Bash", "PowerShell"}
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
         return 0
-    if payload.get("tool_name") != "Bash":
+    # On Windows the PowerShell tool is the primary shell for claude.ai accounts, so both are checked.
+    if payload.get("tool_name") not in SHELL_TOOLS:
         return 0
     command = (payload.get("tool_input") or {}).get("command") or ""
     reason = check_command(command, payload.get("cwd") or os.getcwd())

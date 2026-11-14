@@ -1,0 +1,5 @@
+# Hyperparameter search space for the illustration stage, versioned with the code.
+# Stub: `train.py --config` reads this.
+name: illustration-baseline
+data_version: unpinned
+search_space: {}

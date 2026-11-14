@@ -36,6 +36,7 @@ ruff check .                                 # lint (line length 110)
 ruff format .                                # format
 mypy src                                     # type-check
 python scripts/check_docs.py                 # docs frontmatter (also runs inside pytest)
+python .claude/skills/verify/scripts/verify.py   # everything CI runs, plus privacy lint; one PASS/FAIL line
 primer-data --data-uri .local-data run <source> --batch-size 2   # pipeline, locally
 pip install -e ".[dashboard]" && streamlit run dashboards/tracker/app.py
 ```
@@ -74,7 +75,10 @@ lost, so an agent could write to Jira or submit a PR review without checking. Sa
   risk.
 - **Split by book, never by page**, so pages of one book never land in both train and test.
 - **No PII in logs, fixtures or commits.** Child data is COPPA-sensitive; use pseudonymous IDs.
-- **No local model training.** Cap local pipeline runs with `--batch-size`; real runs go to Vertex AI.
+- **Agent sessions never train.** A member may train on their own machine; an agent may only run
+  the CPU smoke test. A run that gets registered must be reproducible from the area's container
+  on Vertex AI, with the same frozen data version, logged to the shared MLflow. See
+  `docs/adrs/where-model-training-happens.md`. Cap local *pipeline* runs with `--batch-size`.
 - **Never create service-account JSON keys** or commit credentials. Use Application Default
   Credentials (`gcloud auth application-default login`, run by a person).
 
@@ -162,6 +166,20 @@ PR, review yourself with `review-pr`, then open the PR. Before asking for review
 | `freeze-dataset-version` | prepare and finish a dataset version (a person runs the bucket write) |
 | `planning-poker` | size Jira issues as a team |
 | `refine-comments` | clean up code comments and docstrings without changing logic |
+| `verify` | run every CI check plus the privacy and infra gates; ends `VERIFY_RESULT: PASS/FAIL` |
+| `golden-gate` | compare golden-set metrics with the §7 targets; ends `GATE_RESULT: PASS/FAIL` |
+| `privacy-guard` | lint for child PII in logs, URLs, object names and stored audio |
+| `loop-worker` | run one unattended engineering-loop iteration on a plan (for `/goal`, `/loop`, Ralph) |
+| `train-vertex` | launch and track a Vertex AI training job |
+| `deploy-cloud-run` | canary and smoke-test a Cloud Run service; a person promotes and rolls back |
+
+Loop prompts for `/goal`, `/loop` and Ralph live in `.claude/loops/`; a bare `/loop` reads
+`.claude/loop.md`. Unattended work follows `docs/plans/autonomous-loops.md`. Google Cloud is one
+**shared** team project holding everything durable (`$YIP_SHARED_PROJECT`) plus one **compute**
+project per member for their own jobs (`$YIP_COMPUTE_PROJECT`); `.claude/hooks/guard_cloud.py`
+accepts both and refuses any third. It guards the live serving path rather than a project name:
+agents may read cloud state and deploy canaries with `--no-traffic`, while traffic changes,
+deletes, IAM writes and training launches are left to a person.
 
 ## Tracking and communication
 
