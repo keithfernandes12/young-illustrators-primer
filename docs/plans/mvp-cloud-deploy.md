@@ -2,6 +2,7 @@
 title: MVP on Google Cloud — models v0, serving, deploy, gates and monitoring
 type: plan
 created: 2026-11-07
+updated: 2026-11-14
 status: draft
 author: rishiparekh
 tags: [mvp, gcp, serving, models, deploy, loops]
@@ -118,15 +119,87 @@ trained on Vertex AI with `train-vertex`; replaces the S5 base model only if the
 - **Acceptance** — MLflow run with data version; golden `story` metrics compared with S5 in Verified facts.
 - **Depends on** — S1, S5. **Jira** — to create.
 
-### S6 · Drawing recognizer
+### S6a · Drawing recogniser, pretrained baseline
+
+*size: small*
+
+`src/primer/drawing/model.py`: `DrawingRecognizerModel` behind the `DrawingRecognizer` contract.
+Weights load lazily, never at import. SigLIP 2's image tower scores the QuickDraw categories
+zero-shot and fills one `Character` — `label`, `confidence`, the ranked `candidates` the metric is
+measured from, and an `embedding` from the same tower. One character per drawing for now: the whole
+image is the subject. Tests use a recording fake encoder, so CI installs no weights and reaches no
+network; `python -m primer.drawing.smoke` produces one analysis from a synthetic drawing with
+cached weights, mirroring `primer.illustration.smoke`.
+
+- **Why separate** — it needs no dataset. Recognition takes image bytes, so the baseline can be
+  built and proved before S6b renders anything, and it is the slice everything else in S6 builds on.
+- **Acceptance** — `tests/drawing/` passes with no weights and no network; the smoke module returns
+  a `DrawingAnalysis` whose `candidates` are ranked and whose `top_labels(5)` has five entries.
+- **Not in this slice** — the per-drawing `description` (a separate VLM), multi-character
+  detection, `body_type`, `crop_ref`/`mask_ref`, `keypoints` (all S6e), any fine-tune (S6d), and
+  any measured `drawing_top5_acc` (S6c, which needs S6b's dataset).
+- **Depends on** — nothing. **Jira** — KAN-38.
+
+### S6b · Rendered QuickDraw split for the recogniser
 
 *size: medium*
 
-`src/primer/drawing/`: zero-shot SigLIP/CLIP baseline over the QuickDraw categories, then a fine-tune on
-the frozen QuickDraw version on Vertex AI (`train-vertex`), plus the parent-label correction path.
+`src/primer/drawing/data.py`: train/val/test over the frozen QuickDraw version, reading images
+through KAN-87's shared `render_strokes` so training and inference cannot drift, with KAN-31's
+paper/crayon augmentation applied at training time only.
 
-- **Acceptance** — golden `drawing_top5_acc` for baseline and fine-tune, against the 0.85 target.
-- **Depends on** — S2. **Jira** — to create.
+- **Why separate** — it is the only slice in S6 that needs frozen data on disk and the render
+  function, and both belong to another member's ticket.
+- **Acceptance** — the loader returns the three splits for a pinned version, no record appears in
+  two splits, and augmentation is off for val and test.
+- **Depends on** — **KAN-87** (`render_strokes`, assigned to another member) and KAN-31.
+  **Jira** — KAN-87.
+
+### S6c · `drawing_top5_acc` from the golden split
+
+*size: small*
+
+`src/primer/drawing/evaluate.py` and `slices.py`: run S6a's baseline over S6b's test split, write
+the `primer.evaluation.contract` shape, and report the gated key per slice as well as overall.
+
+- **Acceptance** — `check_gate.py --only drawing` returns a verdict rather than `metric missing`,
+  and the baseline number is recorded as a dated Verified fact whether or not it clears 0.85.
+- **Depends on** — S6a, S6b. **Jira** — KAN-38.
+
+### S6d · Fine-tune the recogniser
+
+*size: medium*
+
+`src/primer/drawing/train.py`: fine-tune the SigLIP 2 tower on S6b's split, logging one MLflow run
+with the tags `model-development.md` lists. `--max-steps` and a wall-clock bound are part of this
+slice, not an afterthought: `docs/adrs/bounded-local-training-for-agents.md` clause 2 requires both
+before an agent may run training at all, and no area has them yet.
+
+- **Why separate** — it is the first slice that trains, and the first that can move the gated
+  number. A capped local run proves the wiring; the run that gets registered is a person's, on
+  Vertex AI, from the area's container against the frozen data version.
+- **Acceptance** — a capped local run completes and logs an MLflow run; `drawing_top5_acc` from
+  S6c is compared with the S6a baseline in Verified facts, against the 0.85 target.
+- **Depends on** — S6b, S6c. **Jira** — KAN-38.
+
+### S6e · The rest of the character sheet
+
+*size: medium*
+
+Fill the fields KAN-42 reads and S6a leaves empty: the per-drawing `description` from a captioning
+VLM, `body_type`, `crop_ref`/`mask_ref` from a detector plus segmentation, and `keypoints` for
+humanoids. `docs/briefs/drawing-recognition-model-candidates.md` lists the candidates per field and
+the licence constraint on each.
+
+- **Why separate** — it is four more models behind one method, and none of them moves
+  `drawing_top5_acc`. It is also what unblocks KAN-42's reposing branch and IP-Adapter
+  conditioning, so it is worth keeping independent of the gate work in S6c and S6d.
+- **Acceptance** — a multi-character drawing returns one sheet per character with every field
+  populated, and `test_every_character_sheet_field_reaches_the_illustrator` passes against the
+  real recogniser rather than the Fake.
+- **Not in this slice** — `reference_image_ref` and `approved`, which the stylise-and-approve step
+  sets; who owns that step is still open between KAN-38 and KAN-42.
+- **Depends on** — S6a. **Jira** — KAN-38.
 
 ### S7 · Illustration worker v0
 
@@ -210,12 +283,16 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | Slice | State | PR | Notes |
 |---|---|---|---|
 | S1 | not started | | person-only apply |
-| S2 | in review | [#11](https://github.com/keithfernandes12/young-illustrators-primer/pull/11) | golden set + runner + gate done on fakes; real-model evaluation still open. Unblocks S3–S6, S11 |
+| S2 | merged | [#11](https://github.com/keithfernandes12/young-illustrators-primer/pull/11) | golden set + runner + gate done on fakes; real-model evaluation still open. Unblocks S3–S6, S11 |
 | S3 | not started | | |
 | S4 | not started | | |
 | S5 | not started | | |
 | S5b | not started | | Vertex GPU job |
-| S6 | not started | | |
+| S6a | not started | | ready: needs no dataset |
+| S6b | not started | | person-only until KAN-87 lands; another member owns `render_strokes` |
+| S6c | not started | | |
+| S6d | not started | | first slice that trains; builds its own `--max-steps` cap |
+| S6e | not started | | unblocks KAN-42's reposing and IP-Adapter branches |
 | S7 | not started | | needs GPU quota in region |
 | S8 | not started | | |
 | S9 | not started | | |
@@ -227,6 +304,15 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 
 ## Decisions
 
+- **2026-11-14** — S6 split into S6a–S6e so a loop can take one at a time, and each slice given the
+  Jira key that already covers it (KAN-38, or KAN-87 for the render dependency) rather than new
+  issues: `loop-worker` skips a slice with no key, and creating issues is an `ask` rule that would
+  stall an unattended run. S6a is deliberately first because it needs no dataset — recognition
+  takes image bytes — so the stage is not blocked behind another member's ticket.
+- **2026-11-14** — The drawing stage keeps its slices here rather than in a plan of its own.
+  `docs/plans/AGENTS.md`: "Never keep a second plan elsewhere." The research that chose the
+  candidate models lives in `docs/briefs/drawing-recognition-model-candidates.md`, which is a brief,
+  not a second plan.
 - **2026-11-07** — Pretrained baseline first, then the team-trained model, for each of the three models
   §5.4 requires; both measured by the golden gate. Eight days remain before the MVP and every model
   area is empty, so the baseline keeps the end-to-end path alive if a training run slips.
