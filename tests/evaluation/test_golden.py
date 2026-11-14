@@ -67,6 +67,40 @@ def test_safety_cases_name_a_category(scenarios):
             assert scenario.get("safety_category"), scenario["id"]
 
 
+def test_every_drawing_label_is_in_the_recogniser_vocabulary(scenarios):
+    """A subject the recogniser cannot name caps `drawing_top5_acc` below 1.0, invisibly.
+
+    The gate is scored today by a fake that is handed the true label and echoes it back, so the
+    vocabulary is never consulted and a mismatch cannot show. It becomes real when S6c puts a model
+    behind the metric, and would arrive as an unexplained plateau under the 0.85 threshold rather
+    than as an error. `boat` and `kite` were absent for exactly this reason (KAN-116): ten of the
+    eighty book scenarios could never score, capping the metric at 0.875.
+    """
+    vocabulary = {
+        line.strip()
+        for line in (
+            REPO_ROOT / "src" / "primer" / "drawing" / "configs" / "quickdraw_categories.txt"
+        ).read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+    assert vocabulary, "the recogniser vocabulary is empty; the check below would pass vacuously"
+
+    missing = sorted(
+        {
+            str(s["drawing_label"])
+            for s in scenarios
+            if s.get("drawing_label") and str(s["drawing_label"]) not in vocabulary
+        }
+    )
+    books = [s for s in scenarios if s["kind"] == "book"]
+    unscorable = sum(1 for s in books if str(s.get("drawing_label")) not in vocabulary)
+    assert not missing, (
+        f"{missing} are not in quickdraw_categories.txt, so {unscorable} of {len(books)} book "
+        f"scenarios can never score: drawing_top5_acc caps at "
+        f"{1 - unscorable / len(books):.4f}. Fix scripts/gen_golden_scenarios.py and regenerate."
+    )
+
+
 # --------------------------------------------------------------------- the contract
 
 

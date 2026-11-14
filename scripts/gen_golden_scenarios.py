@@ -18,11 +18,17 @@ from pathlib import Path
 OUT = Path(sys.argv[1])
 SEED = 20261113
 
+# Every label here must be a category in src/primer/drawing/configs/quickdraw_categories.txt.
+# The recogniser can only ever answer with a name from that file, so a subject it does not contain
+# is a scenario no model can score -- it silently caps drawing_top5_acc below 1.0. `boat` and
+# `kite` were exactly that until KAN-116; `sailboat` and `cloud` replace them.
+# tests/evaluation/test_golden.py::test_every_drawing_label_is_in_the_recogniser_vocabulary
+# keeps this true.
 SUBJECTS = [
     ("cat", ["cat", "nap", "sunny"]),
     ("dog", ["dog", "fetch", "park"]),
     ("rabbit", ["rabbit", "hop", "garden"]),
-    ("boat", ["boat", "river", "float"]),
+    ("sailboat", ["sailboat", "river", "float"]),
     ("tree", ["tree", "climb", "leaf"]),
     ("house", ["house", "door", "warm"]),
     ("bird", ["bird", "sing", "nest"]),
@@ -33,7 +39,7 @@ SUBJECTS = [
     ("bear", ["bear", "honey", "forest"]),
     ("moon", ["moon", "sleep", "silver"]),
     ("apple", ["apple", "pick", "basket"]),
-    ("kite", ["kite", "wind", "string"]),
+    ("cloud", ["cloud", "wind", "sky"]),
     ("frog", ["frog", "jump", "lily"]),
 ]
 
