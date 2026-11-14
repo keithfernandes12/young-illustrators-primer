@@ -161,17 +161,58 @@ failure this ticket exists to prevent. `license` and `attribution` stay on every
   choice as a dated Decision.
 - **Depends on** — nothing. **Jira** — KAN-87.
 
+### S6b1 · The shared preprocessing module
+
+*size: medium*
+
+`src/primer/drawing/preprocess.py`: **one** module holding both directions of KAN-31 — the
+inference path that turns an arbitrary uploaded image into the form the recogniser sees, and the
+training-time augmentation that makes a rendered Quick, Draw! canvas look like such an upload.
+Settings in config, not in call sites.
+
+Numbered between S6b and S6b2 because that is where it belongs in build order: S6b2 and S6c2 both
+need it and neither can start without it. Nothing exists today — there is no `preprocess.py`, and
+`analyse(image: bytes)` hands raw upload bytes straight to the processor.
+
+- **Why separate** — it is KAN-87's argument a second time. If training degrades images one way and
+  inference normalises them another, a measured number is a comparison between a model and two
+  preprocessing paths, and nobody can tell which moved. One module, both directions, so they cannot
+  drift. It is also the only thing standing between S6b2 and S6c2 and the "ready" column: KAN-31
+  gates both and has had no slice, which by this plan's own rule — `loop-worker` builds slices, not
+  tickets — meant neither could ever be scheduled.
+- **Inference direction** — decode, optionally convert to greyscale, optionally crop and binarise to
+  the renderer's black-on-white convention, and land on the same canvas geometry
+  `drawing_render.yaml` defines. This half needs nothing from the other and should land first: it is
+  what S6c2's variants call, and S6c2 is what would tell us whether the augmentation half is any
+  good.
+- **Training direction** — paper texture, line wobble, partial erasure, colour fill and lighting over
+  a rendered canvas, applied at training time only and seeded so a run reproduces. What it produces
+  has to be something the inference direction could also produce; that constraint is the point of
+  one module.
+- **Not in this slice** — KAN-31 also covers Amateur Drawings derived sets: character crops, masks,
+  normalised keypoints, OpenPose renders and auto-captions. Those are detection and segmentation
+  rather than preprocessing, and **S6e** already owns that work. Say so when closing KAN-31 so the
+  ticket is not read as done.
+- **Acceptance** — a test asserts a single entry point per direction, as KAN-87's single-renderer
+  guard does, so a second preprocessing path cannot appear later under another name. Augmentation is
+  deterministic given a seed. The whole module runs on `numpy` alone, so CI covers it without the
+  `drawing` extra — the same reason S6b is testable.
+- **Where the risk is** — the augmentation is synthetic and nothing validates that it resembles a
+  real upload. S6c2 is what would say, and S6c2 needs only the inference half, so build that half
+  first and treat the augmentation as unproven until there are numbers.
+- **Depends on** — S6b for the canvas convention. **Jira** — KAN-31.
+
 ### S6b2 · Rendered QuickDraw split for the recogniser
 
 *size: medium*
 
 `src/primer/drawing/data.py`: train/val/test over the frozen QuickDraw version through S6b's
-renderer, with KAN-31's paper/crayon augmentation applied at training time only.
+renderer, with S6b1's paper/crayon augmentation applied at training time only.
 
 - **Why separate** — it is the first slice that needs frozen data on disk, which S6b does not.
 - **Acceptance** — the loader returns the three splits for a pinned version, no record appears in
   two splits, and augmentation is off for val and test.
-- **Depends on** — S6b, and KAN-31 for the augmentation set. **Jira** — KAN-38.
+- **Depends on** — S6b, and **S6b1** for the augmentation. **Jira** — KAN-38.
 
 ### S6c · `drawing_top5_acc` from the golden split
 
@@ -244,7 +285,7 @@ often the prediction changes between variants, not whether it is right.
   not close the distance between the gate's number and the product's. That distance also spans a
   change of corpus and subject matter, which none of these variants decomposes.
 - **Depends on** — S6a; S6c, which establishes the `primer.evaluation.contract` shape in the same
-  file; and KAN-31 for the binarise variant **only** — the first two variants need nothing from it
+  file; and **S6b1** for the binarise variant **only** — the first two variants need nothing from it
   and land without it. **Jira** — KAN-109.
 
 | Variant | Isolates | Crop |
@@ -389,9 +430,10 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S5b | not started | | Vertex GPU job |
 | S6a | merged | [#18](https://github.com/keithfernandes12/young-illustrators-primer/pull/18) | zero-shot SigLIP 2 baseline; no measured number until S6c |
 | S6b | merged | [#19](https://github.com/keithfernandes12/young-illustrators-primer/pull/19) | `render_strokes` + config + PNG; numpy only, so CI covers it. KAN-87 |
-| S6b2 | not started | | S6b merged; still needs KAN-31's augmentation set, which has no slice |
+| S6b1 | not started | | the shared preprocessing module, both directions. Unblocks S6b2 and S6c2. KAN-31 |
+| S6b2 | not started | | S6b merged; waits on S6b1's augmentation |
 | S6c | not started | | the gate's number, over rendered Quick, Draw! — not the product's. Capped at 0.875 until KAN-116 |
-| S6c2 | not started | | preprocessing stability on photographs; no labels needed. Needs KAN-31. KAN-109 |
+| S6c2 | not started | | preprocessing stability on uploads; no labels needed. Needs S6b1's inference half. KAN-109 |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap. Reads S6c2's stability figures |
 | S6e | not started | | unblocks KAN-42's reposing and IP-Adapter branches |
 | S7 | not started | | needs GPU quota in region |
@@ -752,11 +794,12 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   the asymmetry is probably mild, since SigLIP 2 was trained on photographs; the concern is after
   S6d, where a tower fine-tuned only on greyscale renders can regress on colour drawings while the
   gate, scored on those same renders, stays green. That is reasoning, not measurement.
-  *Recommended:* give the recogniser greyscale, since KAN-31's preprocessing module has to produce
+  *Recommended:* give the recogniser greyscale, since S6b1's preprocessing module has to produce
   it anyway, and keep colour for the character sheet and KAN-42, where it matters far more than it
   does for naming an object. That needs a colour field on `Character`, which does not exist. S6c2's
   greyscale variant measures the cost either way. *Decides:* the KAN-38 owner with the KAN-31 owner,
-  before S6d.
+  before S6d — and before S6b1 is built, since it decides whether greyscale is a variant or the
+  default path.
 - **Does the 345-category vocabulary fit what children actually draw?** **Tracked as KAN-111.** It
   cannot name a whole person
   (see the Verified fact above), and KAN-64's flow is "name each character" — children draw
