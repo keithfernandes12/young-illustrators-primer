@@ -222,7 +222,8 @@ before either writes a loader.
   cleanly; proposed threshold **≥ 0.90**. Those two figures come from the KAN-42 reviewer's own machine
   and have no run id in this repository — treat them as the reason to measure, not as a measurement we
   can reproduce. It is not one of the eleven contract keys, so today it is a
-  `CARD.md` number, not a gate. Propose it as an eleventh key if the team wants it to block a release.
+  `CARD.md` number, not a gate. Propose it as an eleventh *gated* key (the twelfth contract key) if
+  the team wants it to block a release.
 - **Latency is not a stage 5 key at all.** The contract has `p95_first_page_s` (≤ 20 s) and
   `p95_full_book_s` (≤ 120 s), both owned by `system`. Stage 5 reports its per-page time into those,
   measured on **one NVIDIA L4 on Cloud Run GPU**; the numbers mean nothing without the hardware named.
@@ -257,8 +258,9 @@ travel from the drawing to `Illustrator.illustrate()`, and they are not intercha
 
 - `sketch: bytes | None` — the drawing's pixels, which is what ControlNet conditions on for
   **structure**. `build_book` passes `sketch=drawing`.
-- `characters` / `character_embedding` — the recognised identity, which is what IP-Adapter conditions
-  on so page four looks like page one, and what `consistency()` scores against.
+- `characters: tuple[Character, ...]` — each carrying `Character.embedding`, the recognised identity
+  that IP-Adapter conditions on so page four looks like page one, and what `consistency()` scores
+  against.
 - `drawing_ref: str` — a durable URI for the upload. `build_book` raises `ValueError` without one,
   because a retry, a queue hop or an attribution all outlive the request and the bytes in it.
 
@@ -339,7 +341,7 @@ Shared files have one named owner and change only by PR with that owner reviewin
 | Result visualisations | logged as run artifacts | matplotlib |
 | Sensitivity analysis | `<area>/sensitivity.py` | SHAP / LIME / ablation |
 | CI/CD triggers training and validation | `.github/workflows/` | GitHub Actions |
-| Automated bias detection that can block | the gate's bias group | `golden-gate` |
+| Automated bias detection that can block | step 3's per-slice metrics, written to `CARD.md`; **no gated bias key exists yet**, so nothing blocks on a bias result — adding one means a change to `contract.py` and `thresholds.json` | Fairlearn (`primer.data.bias`); `golden-gate` once a key is added |
 | Notifications | email, per the existing decision | Actions + Cloud Monitoring |
 | Rollback | registry alias + previous revision | `deploy-cloud-run` |
 | Docker format | one Dockerfile per area | the same image local and on Vertex |
