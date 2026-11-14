@@ -306,7 +306,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S5 | not started | | |
 | S5b | not started | | Vertex GPU job |
 | S6a | not started | | ready: needs no dataset |
-| S6b | not started | | ready: pure function, no data. KAN-87, taken over by this stage |
+| S6b | in review | | `render_strokes` + config + PNG; numpy only, so CI covers it. KAN-87 |
 | S6b2 | not started | | |
 | S6c | not started | | |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap |
@@ -322,6 +322,36 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 
 ## Decisions
 
+- **2026-11-14** — **Render on the fly in the loader; do not cache rendered images.** S6b's
+  contract left this open. A simplified Quick, Draw! drawing is a few hundred bytes of coordinates
+  and rasterises in 0.36 ms measured, so a cache under `processed/` would buy a few minutes per
+  epoch across the whole split while costing a bucket copy of every image and a freeze step to keep
+  it honest. It would also buy
+  the one thing KAN-87 exists to prevent: a second copy of the pixels, which can drift from the
+  function that made them. KAN-31's paper-and-crayon augmentation is applied at training time only
+  (S6b2), so a cache would hold the cheap half of the work anyway. Reversible: if profiling in S6d
+  shows rendering dominates a step, caching can be added behind the same function without changing
+  its signature.
+- **2026-11-14** — **The render defaults are 224px, 3px strokes, 8px padding, black ink on white.**
+  The other point S6b left to decide. `size: 224` is the SigLIP 2 checkpoint's own input
+  resolution, so the image processor's resize is a no-op rather than a second resample of an
+  already-rasterised sketch; that couples the default to S6a's checkpoint on purpose, and moving
+  resolution in S6d means re-rendering the split. A 1px stroke at the 0.81 scale factor leaves a
+  sketch that is mostly background, and padding keeps a stroke off the border where a convolution's
+  receptive field is truncated. The whole 0–255 grid is mapped with one scale factor for both axes
+  rather than each drawing's bounding box, because the simplified format has already been aligned
+  and scaled with aspect ratio preserved, and re-fitting per drawing would stretch each one
+  differently. All of it lives in `configs/drawing_render.yaml`: these settings travel with a
+  measured `drawing_top5_acc`, since a number taken at one stroke weight is not comparable with one
+  taken at another. **Decided by the loop, not with the vision teammate KAN-87 names** — none of it
+  is expensive to reverse before S6b2 renders a split, so push back on the PR.
+- **2026-11-14** — **The renderer uses no image library.** Geometry is integer Bresenham plus a
+  disc stamp over a numpy array, and PNG encoding is `zlib` and `struct` directly. Two reasons:
+  the pixels are then a function of the strokes and the config alone rather than of whichever
+  Pillow is installed, and `numpy` is already a dependency while `pillow` is in the `drawing` extra
+  that CI does not install — so the whole strokes-to-bytes path is covered by CI instead of being
+  skipped there. Pillow is still used where it is installed, to assert the encoder emits a PNG a
+  real decoder reads.
 - **2026-11-14** — The drawing stage takes over **KAN-87** (`render_strokes`), which was assigned
   elsewhere and unstarted since 2026-11-08 — no branch, no PR, no `render_strokes` in the tree. It
   is the hard dependency of every measured slice in S6, so leaving it where it was left S6c and S6d
@@ -343,6 +373,45 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   area is empty, so the baseline keeps the end-to-end path alive if a training run slips.
 
 ## Verified facts
+
+- **2026-11-14** — `render_strokes` renders the Quick, Draw! 0–255 grid onto the canvas with the
+  endpoints pinned: at the shipped settings coordinate 0 lands on column 8 and 255 on column 215,
+  the first and last drawable pixels of a 224px canvas with 8px padding. Pinned by
+  `tests/drawing/test_render.py`, which asserts the exact inked pixels of horizontal, vertical,
+  diagonal and single-point strokes on a 10×10 canvas rather than only their shape. 32 tests, all
+  of them running on `numpy` alone, so CI covers the whole path.
+- **2026-11-14** — The same strokes and config give byte-identical PNGs across calls, and the
+  hand-written encoder's output is a real PNG: Pillow opens it as mode `L` at the right size and
+  the array it decodes equals the array that was encoded. That check is gated on the `drawing`
+  extra, so CI skips it; the determinism and pixel checks around it are not.
+- **2026-11-14** — Eyeballed, not measured: **real** Quick, Draw! drawings render legibly at the
+  shipped settings. The first three `house` records of
+  `gs://quickdraw_dataset/full/simplified/house.ndjson` (public bucket, anonymous read, nothing
+  written) have 3–8 strokes, 24–50 points, coordinates spanning the full 0–255 range, and come out
+  with 2,383–3,387 inked pixels of 50,176; printed as ASCII, the first is a house with a pitched
+  roof, a panelled window and a door, all strokes continuous. This confirms the stroke format the
+  renderer assumes and says the settings produce a drawing rather than noise. It says nothing about
+  whether a model recognises it; there is no `drawing_top5_acc` until S6c.
+- **2026-11-14** — Measured on 50 real `house` drawings at the shipped 224px settings: 0.356 ms to
+  render one to an array, 0.454 ms more to encode it as PNG. At the 500k-record scale S6b2 is
+  heading for that is roughly 3 minutes of rendering single-threaded, or 7 with PNG — which is why
+  rendering on the fly beats caching, and the figure to check against if a loader ever looks slow.
+- **2026-11-14** — `zlib` compression level 9 cost 2.647 ms per image against the default's
+  0.312 ms, for 875 bytes against 1,134 — 8.5× the time for 23% fewer bytes. A sketch is long runs
+  of one byte, deflate's worst case for the effort. `to_png` uses the default; the level was the
+  single largest cost in the whole strokes-to-bytes path before this was measured.
+- **2026-11-14** — The disc stamp does **not** equalise stroke weight at the shipped
+  `line_width: 3`, contrary to the obvious argument for using one. At radius 1 the "disc" is a
+  five-cell plus: a horizontal stroke lays down 3.0 pixels of ink per pixel of length, a diagonal
+  2.1, and a 3×3 square stamp would give 3.5 — 29% thin against 18% thick. The disc is kept
+  because the gap closes as the radius grows and a square's does not, but it is a choice, not a
+  result; S6c is the first slice that can say whether it costs accuracy.
+- **2026-11-14** — A malformed drawing is refused rather than rendered as something plausible:
+  empty stroke lists, mismatched x/y runs, empty strokes, coordinates off the grid and NaN all
+  raise, and JSON text raises a `TypeError` naming `json.loads` — the `strokes` column is stored as
+  JSON, so passing it unparsed is the likely call-site mistake. Config errors raise at construction
+  rather than at the first drawing, including an even `line_width`, ink equal to background, and
+  padding too small for the stroke width to stay on the canvas.
 
 ## Open questions
 
