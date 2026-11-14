@@ -126,9 +126,10 @@ whether a number means anything (questions 2 and 3 below).
   is and how its limbs are arranged, never what it is. The only labelled drawing data is still Quick,
   Draw! strokes, so top-5 accuracy on a Quick, Draw! split still says nothing about a photographed
   crayon drawing. — *Vision lead with the Data lead*
-- ~~Does the golden set carry safety cases?~~ **Settled.** `configs/golden/scenarios.jsonl` holds 100
-  scenarios, 80 `book` and 20 `safety`, so "zero safety violations on the golden set" now measures
-  something rather than restating an empty set.
+- ~~Does the golden set carry safety cases?~~ **Settled for text.** `configs/golden/scenarios.jsonl`
+  holds 100 scenarios, 80 `book` and 20 `safety`, so "zero safety violations on the golden set" now
+  measures something rather than restating an empty set. All 20 are text cases, so the question
+  reopens for images — see the next line.
 - **Do we fine-tune a safety classifier, or stay pretrained plus a blocklist?** Recommended: stay
   pretrained for the MVP, as §5.3 already allows. Worth being explicit that an off-the-shelf toxicity
   model does not cover "unsafe for a four-year-old": scary, violent or sad-ending content scores clean.
@@ -137,7 +138,8 @@ whether a number means anything (questions 2 and 3 below).
   from serving after `illustrate()`, counted by `safety_violations_golden`. Today `build_book` checks
   the request prompt and the story text and returns illustrations that nothing has looked at, while
   the scoping doc requires a filter at the image stage and an alert on the image flag rate.
-  `SafetyClassifier.check` takes only `text`. — *Language lead with the Illustration lead*
+  `SafetyClassifier.check` takes only `text`. The golden set needs safety scenarios whose *image* is
+  the problem; the 20 it has are all text. — *Safety owner, with the serving owner wiring it*
 - **Has MyST access been requested?** Recommended: request it now or drop the ASR word-error-rate
   target from §7 until it arrives. The corpus is access-by-request and has no pipeline, so the stretch
   goal currently cannot even be evaluated, let alone fine-tuned. — *Speech lead*
@@ -152,9 +154,10 @@ Each needs a Jira key before anyone starts it; `loop-worker` skips slices withou
   with a category each, as a held-out set. The ingestion half is done (PR #10); what is missing is the
   label, which `CHARACTER_DRAWINGS` does not carry. Usable on its own: it is the first honest number for
   how any recogniser behaves on real child-style art.
-- **B2 · Safety scenarios in the golden set.** *Done* — 20 of the 100 scenarios in
+- **B2 · Safety scenarios in the golden set.** *Text half done* — 20 of the 100 scenarios in
   `configs/golden/scenarios.jsonl` are `kind: safety`, which turned `safety_violations_golden == 0`
-  from a tautology into a measurement.
+  from a tautology into a measurement. The image half is not: all 20 are text cases, so an unsafe
+  *picture* from a harmless prompt still passes. Goes with the image check in the stage 4 question.
 - **B3 · Stroke-to-raster rendering.** One helper used by both the recogniser's training and its request
   path, so the two cannot drift apart. Goes with S6; cannot be retrofitted cheaply once a model has
   trained on one rendering and serving uses another.
