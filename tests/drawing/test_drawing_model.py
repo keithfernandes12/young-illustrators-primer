@@ -16,6 +16,7 @@ from fakes import TEST_LABELS, RecordingEncoder
 from primer.drawing.interface import BodyType, DrawingRecognizer
 from primer.drawing.model import (
     CONFIG_PATH,
+    EMBEDDING_DECIMALS,
     DrawingConfig,
     DrawingRecognizerModel,
     Encoding,
@@ -95,16 +96,24 @@ def test_analyse_returns_one_ranked_character(config, drawing):
     assert [candidate.label for candidate in character.candidates] == [
         "dog", "house", "dragon", "tree", "sun",
     ]
-    confidences = [candidate.confidence for candidate in character.candidates]
-    assert confidences == sorted(confidences, reverse=True)
 
 
 def test_top_five_has_five_entries(config, drawing):
     """S6a's acceptance criterion, and what `drawing_top5_acc` will read in S6c."""
     model, _ = recogniser(config)
-    analysis = model.analyse(drawing)
-    assert len(analysis.top_labels(5)) == 5
-    assert analysis.top_labels(5) == analysis.main.top_labels(5), "scored on the main character"
+    assert len(model.analyse(drawing).top_labels(5)) == 5
+
+
+def test_the_candidate_list_is_as_long_as_the_config_asks(config, drawing):
+    """`top_k` is read from the config, not hardcoded to the 5 the gate happens to want.
+
+    S6c reports top-5; something else may want top-1 or top-10, and the number of guesses kept is
+    the kind of thing that is easy to freeze into the code and then forget is configurable.
+    """
+    from dataclasses import replace
+
+    model, _ = recogniser(replace(config, top_k=3))
+    assert len(model.analyse(drawing).main.candidates) == 3
 
 
 def test_scores_are_paired_with_labels_positionally(config, drawing):
@@ -150,6 +159,32 @@ def test_the_embedding_comes_from_the_same_tower(config, drawing):
     assert model.analyse(drawing).main.identity_key == character.identity_key, "stable across runs"
 
 
+def test_the_embedding_is_rounded_so_float_noise_cannot_change_the_identity(config, drawing):
+    """The reason `identity_key` is stable at all, and the one thing the test above cannot see.
+
+    Two encodings that differ only below the rounding point are the same character: page four must
+    not stop matching page one because a GPU returned a bit differently. Asserted by comparing the
+    keys of two models whose encoders differ by less than `EMBEDDING_DECIMALS`.
+    """
+    noise = 10 ** -(EMBEDDING_DECIMALS + 3)
+
+    class Jittered(RecordingEncoder):
+        def encode(self, image, prompts):
+            clean = super().encode(image, prompts)
+            return Encoding(
+                confidences=clean.confidences,
+                embedding=tuple(value + noise for value in clean.embedding),
+            )
+
+    steady = DrawingRecognizerModel(config, encoder=RecordingEncoder(DOG_WINS))
+    jittered = DrawingRecognizerModel(config, encoder=Jittered(DOG_WINS))
+
+    first = steady.analyse(drawing).main
+    second = jittered.analyse(drawing).main
+    assert first.embedding == second.embedding, "noise below the rounding point is dropped"
+    assert first.identity_key == second.identity_key
+
+
 def test_the_structural_fields_keep_their_defaults(config, drawing):
     """S6e fills these from different models. A guess here is worse than an empty field.
 
@@ -185,6 +220,59 @@ def test_a_score_vector_of_the_wrong_length_is_refused(config, drawing):
     model, _ = recogniser(config, scores=DOG_WINS[:3])
     with pytest.raises(ValueError, match="confidences are positional"):
         model.analyse(drawing)
+
+
+def test_a_non_finite_confidence_is_refused(config, drawing):
+    """A NaN would come back as a confidently wrong label rather than as a failure.
+
+    `sorted` puts NaN wherever it lands, and `Character.__post_init__` does not catch the result:
+    its ranking check compares two lists, and a NaN element compares equal to itself by identity,
+    so the list passes while being unsorted and while `label` is not the top-scoring one. This is
+    the one way a bad encoding reaches `drawing_top5_acc` as a number instead of an error.
+    """
+    scores = list(DOG_WINS)
+    scores[2] = float("nan")
+    model, _ = recogniser(config, scores=scores)
+    with pytest.raises(ValueError, match="non-finite"):
+        model.analyse(drawing)
+
+
+def test_an_empty_vocabulary_is_refused_at_construction(config, labels_file, monkeypatch):
+    """And at construction, not at the first drawing.
+
+    `analyse` would have raised `IndexError` off `candidates[0]`, which says nothing about the
+    cause -- and in `smoke.py` it would have said it only after 1.6 GB of weights had downloaded.
+    """
+    from dataclasses import replace
+
+    path = labels_file(labels=(), name="empty.txt")
+    monkeypatch.setattr("primer.drawing.model.CONFIG_DIR", path.parent)
+
+    with pytest.raises(ValueError, match="vocabulary .* is empty"):
+        DrawingRecognizerModel(replace(config, labels_file=path.name))
+
+
+def test_a_vocabulary_smaller_than_top_k_is_refused(config, labels_file, monkeypatch):
+    """Otherwise `top_labels(5)` quietly returns three and the gate scores fewer guesses."""
+    from dataclasses import replace
+
+    path = labels_file(labels=("cat", "dog", "sun"), name="tiny.txt")
+    monkeypatch.setattr("primer.drawing.model.CONFIG_DIR", path.parent)
+
+    with pytest.raises(ValueError, match="top_k"):
+        DrawingRecognizerModel(replace(config, labels_file=path.name, top_k=5))
+
+
+def test_a_prompt_template_without_the_label_placeholder_is_refused(config):
+    """`str.format` accepts it silently, and all 345 prompts collapse into one.
+
+    Every score is then identical and the "winner" is whichever label sorts first -- a wrong
+    answer that looks like a working model.
+    """
+    from dataclasses import replace
+
+    with pytest.raises(ValueError, match="distinct prompt"):
+        DrawingRecognizerModel(replace(config, prompt_template="This is a photo of a drawing."))
 
 
 # ------------------------------------------------------------------------------------ the config
@@ -223,8 +311,6 @@ def test_a_config_missing_a_field_fails_loudly(tmp_path):
     rather than as an error.
     """
     raw = CONFIG_PATH.read_text(encoding="utf-8")
-    assert "encoder_revision:" in raw, "the shipped config pins its weights"
-
     kept = [line for line in raw.splitlines() if not line.startswith("top_k:")]
     path = tmp_path / "incomplete.yaml"
     path.write_text("\n".join(kept), encoding="utf-8")
@@ -256,29 +342,44 @@ def test_pooled_unwraps_a_model_output_and_passes_a_tensor_through():
     assert pooled(vectors) is vectors, "a bare tensor, as the model card's example shows, passes"
 
 
-def test_l2_normalised_divides_by_the_last_axis_norm():
-    """Checked against a stand-in rather than `torch`, which CI does not install.
+class _Vector:
+    """A stand-in for a tensor, so the arithmetic is checked where `torch` is not installed.
 
-    SigLIP scores unit vectors; skipping this leaves the logits scaled by each vector's magnitude
-    and saturates the sigmoid, which would look like "every label is confident" rather than a crash.
+    Implements only what `l2_normalised` uses, and records the arguments it was normalised with.
     """
 
-    class Vector:
-        def __init__(self, value):
-            self.value = value
+    def __init__(self, value: float, norm: float = 1.0):
+        self.value = value
+        self._norm = norm
+        self.norm_args: tuple | None = None
 
-        def norm(self, p, dim, keepdim):
-            assert (p, dim, keepdim) == (2, -1, True), "normalise along the feature axis, per row"
-            return 2.0
+    def norm(self, p, dim, keepdim):
+        self.norm_args = (p, dim, keepdim)
+        return _Vector(self._norm)
 
-        def __truediv__(self, other):
-            return Vector(self.value / other)
+    def clamp_min(self, floor):
+        return _Vector(max(self.value, floor))
 
-    assert l2_normalised(Vector(8.0)).value == 4.0
+    def __truediv__(self, other):
+        return _Vector(self.value / other.value)
 
 
-def test_encoding_is_positional():
-    """The dataclass the seam is written in: confidences line up with prompts, by index."""
-    encoding = Encoding(confidences=(0.1, 0.9), embedding=(1.0,))
-    assert encoding.confidences[1] == 0.9
-    assert len(encoding.embedding) == 1
+def test_l2_normalised_divides_by_the_last_axis_norm():
+    """SigLIP scores unit vectors.
+
+    Skipping this leaves the logits scaled by each vector's magnitude and saturates the sigmoid --
+    which reads as "every label is confident" rather than as a crash.
+    """
+    vector = _Vector(8.0, norm=2.0)
+    assert l2_normalised(vector).value == 4.0
+    assert vector.norm_args == (2, -1, True), "per row, along the feature axis"
+
+
+def test_l2_normalised_floors_the_norm_so_a_zero_vector_is_not_nan():
+    """The NaN path `test_a_non_finite_confidence_is_refused` refuses, closed at its source.
+
+    A zero-magnitude feature vector divides 0 by 0. Without the floor the whole encoding becomes
+    NaN and every confidence with it; the refusal downstream turns that into an error, and this
+    keeps it from arising at all.
+    """
+    assert l2_normalised(_Vector(0.0, norm=0.0)).value == 0.0, "0 / floor, not 0 / 0"

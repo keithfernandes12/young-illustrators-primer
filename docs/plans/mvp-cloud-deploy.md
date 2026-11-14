@@ -392,9 +392,37 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   execute `SiglipEncoder`. Fixed by pulling the one version-dependent assumption into
   `model.pooled`, which *is* unit-tested, and pinning the extra to `transformers>=5,<6` because
   that is the only API actually exercised.
+- **2026-11-14 — S6a: the CUDA path was broken and is fixed but still unrun.** *Hypothesis:* a
+  CPU smoke run proves the encoder works. *Result:* no. A self-review found that the processor
+  returns float32 `pixel_values` and `BatchFeature.to(device)` moves without casting, so on CUDA —
+  where `load()` puts the tower in fp16 — the first matmul raises `mat1 and mat2 must have the
+  same dtype`. Fixed by passing the dtype as well (`.to(device, dtype)`, which `BatchFeature`
+  forwards to `Tensor.to`, verified against the installed source). **Not executed on a GPU:** this
+  machine has `torch 2.15.0+cpu`. The first GPU run of `smoke.py` is still an untested path, and
+  whoever makes it should expect to find something.
+- **2026-11-14 — S6a: a NaN confidence survived every guard.** With a NaN among the scores,
+  `sorted` produced an arbitrary order and `Character.__post_init__` accepted it — its ranking
+  check compares two lists, and a NaN element compares equal to itself by identity, so an unsorted
+  list whose `label` was not the top-scoring one passed validation. A mislabelled character would
+  have reached `drawing_top5_acc` as a number rather than an error. Closed at both ends: a floor on
+  the norm in `l2_normalised` (the 0/0 that produces it) and an explicit non-finite check in
+  `analyse`. The contract-level hole in `interface.py` is left alone — see Open questions.
 
 ## Open questions
 
+- **Should `Character.__post_init__` reject non-finite confidences?** Its ranking check passes on a
+  list containing NaN, because CPython's list comparison short-circuits on identity, so the
+  invariant `drawing_top5_acc` is scored from is not actually enforced. S6a guards its own side in
+  `drawing/model.py`, but every other producer of a `Character` — the Fake, S6d, anything KAN-42
+  builds — has the same hole. *Recommended:* add the check in `interface.py` where the invariant is
+  declared, rather than in each caller. *Decides:* the KAN-38 owner; it touches a shared contract,
+  so it should not ride along inside a model slice.
+- **`DrawingRecognizer.analyse`'s docstring says it fills every field except `reference_image_ref`
+  and `approved`, which the real model does not do.** S6a deliberately leaves `description`,
+  `body_type`, `crop_ref`, `mask_ref` and `keypoints` at their defaults for S6e, and `build_book`
+  accepts `description=""` without complaint — so the first person to see a book built on an empty
+  description will see it in serving. *Recommended:* say in the Protocol which fields may be unset
+  before S6e lands, rather than discovering it downstream. *Decides:* KAN-38 with KAN-42.
 - Which region has L4 GPU quota for the team's projects? Recommended: request quota in `us-central1`
   now; the team lead decides.
 - Does the course's GCP credit cover Claude models on Vertex AI? Recommended: check the billing account's

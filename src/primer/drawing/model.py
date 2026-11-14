@@ -24,6 +24,7 @@ S6d has to beat.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -41,6 +42,10 @@ CONFIG_PATH = CONFIG_DIR / "drawing_baseline.yaml"
 #: is not changed by float noise that means nothing.
 CONFIDENCE_DECIMALS = 4
 EMBEDDING_DECIMALS = 6
+
+#: The smallest norm `l2_normalised` will divide by. Guards the 0/0 that turns a whole encoding
+#: into NaN; far below any real feature magnitude, so it never changes a genuine vector.
+NORM_FLOOR = 1e-12
 
 
 def pooled(output: Any) -> Any:
@@ -62,8 +67,14 @@ def l2_normalised(features: Any) -> Any:
 
     SigLIP's score is a dot product of unit vectors, so this is not cosmetic: skipping it leaves
     the logits scaled by each vector's magnitude and the sigmoid saturates.
+
+    The norm is floored before dividing. ``Siglip2Model.forward`` does not bother, but a
+    zero-magnitude row there is a NaN that propagates into every confidence, and a NaN ranks
+    arbitrarily rather than loudly -- `analyse` would return a mislabelled character that
+    `Character.__post_init__` does not reject, because NaN compares equal to itself by identity.
+    An fp16 overflow on the CUDA path reaches the same place.
     """
-    return features / features.norm(p=2, dim=-1, keepdim=True)
+    return features / features.norm(p=2, dim=-1, keepdim=True).clamp_min(NORM_FLOOR)
 
 
 @dataclass(frozen=True)
@@ -142,8 +153,11 @@ class SiglipEncoder:
         self.device = device
         self._model: Any = None
         self._processor: Any = None
-        self._text_features: Any = None
-        self._prompts: tuple[str, ...] = ()
+        self._dtype: Any = None
+        #: (prompts, their features) or None. One field rather than two so the pair is swapped in
+        #: a single assignment: with two, a reader between them sees new features under the old
+        #: prompts, which is stale scoring with no error anywhere.
+        self._text_cache: tuple[tuple[str, ...], Any] | None = None
 
     def load(self) -> None:
         if self._model is not None:
@@ -153,14 +167,17 @@ class SiglipEncoder:
 
         if self.device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        # fp32 on CPU: fp16 arithmetic there is slow or unsupported. The tower is ~0.4B parameters,
-        # so even fp32 is about 1.6 GB and fits the 8 GB target machine with room for a batch.
-        dtype = torch.float16 if self.device == "cuda" else torch.float32
+        # fp32 on CPU: fp16 arithmetic there is slow or unsupported. Measured, the weights are
+        # 1.398 GB in fp32 and 0.699 GB in fp16; what that costs in VRAM alongside activations has
+        # not been measured, and is S6d's to find out.
+        self._dtype = torch.float16 if self.device == "cuda" else torch.float32
         self._processor = AutoProcessor.from_pretrained(
             self.config.encoder, revision=self.config.encoder_revision
         )
+        # `dtype`, not `torch_dtype`: the latter is deprecated in transformers 5 and warns on
+        # every load.
         self._model = AutoModel.from_pretrained(
-            self.config.encoder, revision=self.config.encoder_revision, torch_dtype=dtype
+            self.config.encoder, revision=self.config.encoder_revision, dtype=self._dtype
         ).to(self.device)
         self._model.eval()
 
@@ -168,20 +185,22 @@ class SiglipEncoder:
         """The text features for `prompts`, computed once and reused while they stay the same."""
         import torch
 
-        if self._text_features is not None and self._prompts == tuple(prompts):
-            return self._text_features
+        wanted = tuple(prompts)
+        cached = self._text_cache
+        if cached is not None and cached[0] == wanted:
+            return cached[1]
+        # `input_ids` are integers, so only the device matters here, not the dtype.
         inputs = self._processor(
-            text=list(prompts),
+            text=list(wanted),
             padding=self.config.text_padding,
             max_length=self.config.text_max_length,
             truncation=True,
             return_tensors="pt",
         ).to(self.device)
         with torch.no_grad():
-            features = pooled(self._model.get_text_features(**inputs))
-        self._text_features = l2_normalised(features)
-        self._prompts = tuple(prompts)
-        return self._text_features
+            features = l2_normalised(pooled(self._model.get_text_features(**inputs)))
+        self._text_cache = (wanted, features)
+        return features
 
     def encode(self, image: bytes, prompts: Sequence[str]) -> Encoding:
         import io
@@ -194,7 +213,11 @@ class SiglipEncoder:
         # RGB: the tower expects three channels, and a child's drawing arrives as anything from a
         # 1-bit PNG to an RGBA screenshot.
         drawing = Image.open(io.BytesIO(image)).convert("RGB")
-        inputs = self._processor(images=drawing, return_tensors="pt").to(self.device)
+        # The dtype as well as the device. The processor always returns float32 `pixel_values`, and
+        # `BatchFeature.to(device)` moves them without casting, so on CUDA -- where the tower is
+        # fp16 -- the first matmul raises "mat1 and mat2 must have the same dtype". The CPU path
+        # never sees it, which is why a CPU smoke run cannot prove the GPU one.
+        inputs = self._processor(images=drawing, return_tensors="pt").to(self.device, self._dtype)
         with torch.no_grad():
             normalised = l2_normalised(pooled(self._model.get_image_features(**inputs)))
             # The same arithmetic `Siglip2Model.forward` does for `logits_per_image`: unit vectors,
@@ -223,6 +246,30 @@ class DrawingRecognizerModel:
     def __init__(self, config: DrawingConfig | None = None, encoder: Encoder | None = None) -> None:
         self.config = config or DrawingConfig.from_yaml()
         self._encoder = encoder
+        # Read and checked here, not inside `analyse`. These are the failures a bad config causes,
+        # and every one of them is cheaper to hit now than after `smoke.py` has pulled 1.6 GB of
+        # weights off the network. Reading a few KB of text keeps construction effectively free.
+        self._labels = self.config.labels()
+        self._prompts = self.config.prompts()
+        if not self._labels:
+            raise ValueError(
+                f"the vocabulary in {self.config.labels_file} is empty; "
+                "there is nothing to score the drawing against"
+            )
+        if len(self._labels) < self.config.top_k:
+            raise ValueError(
+                f"{self.config.labels_file} has {len(self._labels)} labels but top_k is "
+                f"{self.config.top_k}; drawing_top5_acc would be scored over fewer guesses than "
+                "it reports"
+            )
+        if len(set(self._prompts)) != len(self._prompts):
+            # Two labels sharing a prompt score identically, and the winner becomes whichever
+            # sorts first. The usual cause is a `prompt_template` with no `{label}` in it, which
+            # `str.format` accepts silently and which collapses all 345 prompts into one.
+            raise ValueError(
+                f"prompt_template {self.config.prompt_template!r} does not give every label a "
+                "distinct prompt; a template without {label} makes every score identical"
+            )
 
     @property
     def encoder(self) -> Encoder:
@@ -240,16 +287,26 @@ class DrawingRecognizerModel:
         if not image:
             raise ValueError("analyse needs the drawing's bytes; got none")
 
-        labels = self.config.labels()
-        encoding = self.encoder.encode(image, self.config.prompts())
-        if len(encoding.confidences) != len(labels):
+        encoding = self.encoder.encode(image, self._prompts)
+        if len(encoding.confidences) != len(self._labels):
             raise ValueError(
-                f"the encoder scored {len(encoding.confidences)} prompts for {len(labels)} labels; "
-                "confidences are positional, so a length mismatch would mislabel every candidate"
+                f"the encoder scored {len(encoding.confidences)} prompts for "
+                f"{len(self._labels)} labels; confidences are positional, so a length mismatch "
+                "would mislabel every candidate"
+            )
+        if not all(math.isfinite(confidence) for confidence in encoding.confidences):
+            # NaN sorts arbitrarily and compares equal to itself by identity, so it survives
+            # `Character.__post_init__` and comes back as a confidently wrong label rather than as
+            # an error. Refusing it here is the difference between a crash and a bad number.
+            raise ValueError(
+                "the encoder returned a non-finite confidence; a NaN ranks arbitrarily and would "
+                "be reported as a label rather than as a failure"
             )
 
         ranked = sorted(
-            zip(labels, encoding.confidences, strict=True), key=lambda pair: pair[1], reverse=True
+            zip(self._labels, encoding.confidences, strict=True),
+            key=lambda pair: pair[1],
+            reverse=True,
         )
         candidates = tuple(
             Candidate(label, round(confidence, CONFIDENCE_DECIMALS))

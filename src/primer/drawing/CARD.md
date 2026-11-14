@@ -16,12 +16,27 @@ checkpoint until S6d. Fill the blanks below in those slices rather than guessing
 ## Why this base model
 
 `docs/briefs/drawing-recognition-model-candidates.md` compares SigLIP 2, OpenCLIP, DINOv2 and
-DINOv3 for this output. SigLIP 2 wins on quality among the Apache-2.0 candidates; the **base** tower
-rather than a larger one is the local-GPU rule in `AGENTS.md` — the member machine this is iterated
-on is an 8 GB laptop, and S6d has to fine-tune whatever is chosen here, not only run it.
+DINOv3 for this output. SigLIP 2 wins on quality among the Apache-2.0 candidates; the **base**
+checkpoint rather than a larger one is the local-GPU rule in `AGENTS.md` — the member machine this
+is iterated on is an 8 GB laptop, and S6d has to fine-tune whatever is chosen here, not only run it.
 
 DINOv3 was not taken: its custom licence is a product risk the brief flags, and nothing it offers
 over SigLIP 2 is worth taking that on for a course MVP.
+
+## Size, measured
+
+Loaded and counted, not estimated (2026-11-14):
+
+| | Parameters | fp32 | bf16/fp16 |
+|---|---|---|---|
+| Whole model | 375,187,970 | 1.398 GB | 0.699 GB |
+| Vision tower (what S6d fine-tunes) | 92,884,224 | 0.346 GB | 0.173 GB |
+| Text tower | 282,303,744 | 1.052 GB | 0.526 GB |
+
+**VRAM has not been measured.** The run that produced these numbers was on CPU — PyPI's Windows
+`torch` wheel is CPU-only — so `smoke.py`'s `peak_vram_gb` returned `null`. AGENTS.md asks for a
+measured VRAM figure before a candidate is trusted on the 8 GB machine; producing it needs a CUDA
+build and belongs to S6d, which is also the slice where it actually binds.
 
 ## Metrics
 
