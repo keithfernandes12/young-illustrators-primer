@@ -7,7 +7,8 @@ comparison between a model and a rasteriser. So do not add a second one -- no ``
 a data loader, no quick redraw in a test fixture, no "just for the demo" copy.
 ``tests/drawing/test_render.py`` asserts this rather than trusting it.
 
-Every setting that changes a pixel lives in `configs/drawing_render.yaml`, read into
+Every setting that changes a pixel lives in `src/primer/drawing/configs/drawing_render.yaml` --
+this area's config folder, not the repository's top-level `configs/` -- read into
 `RenderConfig`, never as a default at a call site. Same strokes and same config give the same array
 on any machine: one float multiply scales each coordinate and everything after it -- Bresenham, the
 stamp, the PNG -- is integer and exact. IEEE-754 multiply and floor are correctly rounded, so the
@@ -63,7 +64,7 @@ WHOLE_NUMBERS = ("size", "line_width", "padding", "background", "ink", "source_g
 
 @dataclass(frozen=True)
 class RenderConfig:
-    """The rasterisation settings, read from `configs/drawing_render.yaml`.
+    """The rasterisation settings, read from `src/primer/drawing/configs/drawing_render.yaml`.
 
     Validated on construction rather than at the first render: every one of these can be wrong in a
     way that produces a plausible blank or clipped image instead of an error, and a loader finds

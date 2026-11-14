@@ -308,7 +308,9 @@ def test_a_malformed_drawing_is_refused(strokes, message, tiny):
         ({"line_width": 5}, "padding of at least"),
         ({"ink": 255}, "every render would be blank"),
         ({"padding": 5}, "at least 2"),
-        ({"size": 1}, "at least 2"),
+        # Matched on the whole message: "at least 2" alone also matches the padding check, which
+        # fires for `size: 1` anyway, so loosening `size < 2` to `size < 1` would pass unnoticed.
+        ({"size": 1}, "size must be at least 2"),
         ({"padding": -1}, "cannot be negative"),
         ({"background": 256}, "0-255"),
         ({"source_grid": 1}, "source_grid"),
@@ -327,17 +329,24 @@ def test_a_config_that_would_render_something_misleading_is_refused(override, me
         RenderConfig(**{**vars(TINY), **override})
 
 
-def test_the_drift_guard_fires_when_the_scale_and_the_validation_disagree(tiny, monkeypatch):
+@pytest.mark.parametrize("scale", [100.0, -0.25])
+def test_the_drift_guard_fires_when_the_scale_and_the_validation_disagree(tiny, monkeypatch, scale):
     """`render_strokes`'s closing guard is unreachable through any valid config, by design.
 
     It is there because numpy indexing wraps on a negative index: a future change that desynced
     the coordinate check from the scale would draw onto the opposite edge with no error at all.
     Nothing else can reach it, so this forces the two apart rather than leaving the branch untested.
+
+    Run at a stroke width rather than at `tiny`'s 1px, and with a scale that undershoots as well
+    as one that overshoots. At radius 0 the guard's two radius terms are indistinguishable from
+    plain `0` and `size`; the undershooting case is the one that reaches a centre inside the
+    canvas whose *stamp* does not, which is precisely the silent wraparound.
     """
-    monkeypatch.setattr(RenderConfig, "scale", property(lambda self: 100.0))
+    thick = RenderConfig(**{**vars(tiny), "line_width": 3})
+    monkeypatch.setattr(RenderConfig, "scale", property(lambda self: scale))
 
     with pytest.raises(RuntimeError, match="drifted apart"):
-        render_strokes([[[0, 4], [0, 0]]], tiny)
+        render_strokes([[[0, 4], [0, 0]]], thick)
 
 
 def chunks(encoded: bytes) -> list[tuple[bytes, bytes]]:

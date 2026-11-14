@@ -341,7 +341,8 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   receptive field is truncated. The whole 0–255 grid is mapped with one scale factor for both axes
   rather than each drawing's bounding box, because the simplified format has already been aligned
   and scaled with aspect ratio preserved, and re-fitting per drawing would stretch each one
-  differently. All of it lives in `configs/drawing_render.yaml`: these settings travel with a
+  differently. All of it lives in `src/primer/drawing/configs/drawing_render.yaml` — the area's own
+  config folder, not the repository's top-level `configs/`: these settings travel with a
   measured `drawing_top5_acc`, since a number taken at one stroke weight is not comparable with one
   taken at another. **Decided by the loop, not with the vision teammate KAN-87 names** — none of it
   is expensive to reverse before S6b2 renders a split, so push back on the PR.
@@ -382,7 +383,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   the first and last drawable pixels of a 224px canvas with 8px padding. Pinned by
   `tests/drawing/test_render.py`, which asserts the exact inked pixels of horizontal, vertical,
   45°, shallow, steep and downhill diagonal, tie-breaking and single-point strokes on a 10×10
-  canvas rather than only their shape — the interior of a segment, not only its endpoints. 64
+  canvas rather than only their shape — the interior of a segment, not only its endpoints. 65
   tests, all but one running on `numpy` alone, so CI covers the whole path.
 - **2026-11-14** — `render_strokes` accepts numpy arrays in its type signature, not only at run
   time. `ndarray` is not a `Sequence`, so the original alias made the loader S6b2 is going to
