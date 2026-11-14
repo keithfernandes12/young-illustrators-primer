@@ -9,6 +9,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+# Illustration depends on drawing, one way and by design: the consistency model consumes the
+# recogniser's output. Nothing in drawing imports illustration, so there is no cycle.
+from primer.drawing.interface import Character
+
 
 @dataclass(frozen=True)
 class Illustration:
@@ -19,15 +23,39 @@ class Illustration:
     alt_text: str
     #: What the page was conditioned on, so consistency can be scored against the drawing.
     subject: str | None = None
+    #: Whether the child's sketch reached the model for this page (ControlNet structure).
+    conditioned_on_sketch: bool = False
+    #: The character identity this page was conditioned on (IP-Adapter). Derived from child data:
+    #: never log it or name an object after it.
+    character_embedding: tuple[float, ...] = ()
 
 
 @runtime_checkable
 class Illustrator(Protocol):
     """Illustrate pages and keep the character consistent. Gated on `clip_consistency`.
 
-    ``subject`` and ``drawing_ref`` are the conditioning signal: the child's own drawing is what
-    the illustrations have to look like. Without them an illustrator can only read the page text,
-    and drawing-to-pages consistency cannot be scored at all.
+    KAN-42 conditions on two different things, and they do different jobs:
+
+    - ``sketch`` -- the child's drawing itself, for ControlNet (scribble/lineart). This is the
+      **structure**: what the page should be shaped like.
+    - ``characters`` -- the recogniser's output, carrying one embedding per main character, for
+      IP-Adapter. This is the **identity**: who the character is, so page four looks like page one.
+
+    Both are optional in the signature because an illustrator may implement only one of them, and a
+    page may have no recognised character at all. Neither is optional in practice for a good book:
+    without the sketch the page ignores the drawing's shape, and without the embeddings
+    `clip_consistency` has nothing to hold a character to.
+
+    ``sketch`` is raw image bytes from a child. Keep it in memory, pass it to the model, and do not
+    log it, name an object after it, or persist it outside a path the parent opted into.
+
+    ``drawing_ref`` is a **URI of the original upload that the illustrator can read** -- a
+    ``gs://`` object in the drawings bucket, or a ``file://`` path in local development. It is the
+    durable handle for the same image ``sketch`` carries in memory: use it to re-read the drawing
+    on a retry, to attribute a page to its source, or to avoid holding bytes across a queue.
+    ``build_book`` requires it whenever a drawing was given, so an implementation may assume it is
+    present and non-empty. The ``fixture://`` scheme appears only in test fixtures and resolves to
+    nothing; do not emit it from product code.
     """
 
     def illustrate(
@@ -37,12 +65,20 @@ class Illustrator(Protocol):
         style: str,
         subject: str | None = None,
         drawing_ref: str | None = None,
+        sketch: bytes | None = None,
+        characters: tuple[Character, ...] = (),
     ) -> Illustration:
         """One illustration for one page."""
         ...
 
-    def consistency(self, illustrations: list[Illustration]) -> float:
-        """How alike the illustrations are, 0..1. The whole point of a picture book."""
+    def consistency(
+        self, illustrations: list[Illustration], characters: tuple[Character, ...] = ()
+    ) -> float:
+        """How alike the illustrations are, 0..1. The whole point of a picture book.
+
+        `characters` is what they are supposed to be alike *to*: a real scorer compares each page
+        against the character embeddings it was conditioned on, not only against the other pages.
+        """
         ...
 
 
@@ -59,18 +95,34 @@ class FakeIllustrator:
         style: str,
         subject: str | None = None,
         drawing_ref: str | None = None,
+        sketch: bytes | None = None,
+        characters: tuple[Character, ...] = (),
     ) -> Illustration:
         return Illustration(
             page_index=page_index,
             image_ref=f"fake://{style}/{subject or 'unknown'}/page-{page_index}",
             alt_text=page_text[:60],
             subject=subject,
+            # Recorded, not stored: a test can see whether serving actually conditioned the page.
+            conditioned_on_sketch=sketch is not None,
+            character_embedding=characters[0].embedding if characters else (),
         )
 
-    def consistency(self, illustrations: list[Illustration]) -> float:
+    def consistency(
+        self, illustrations: list[Illustration], characters: tuple[Character, ...] = ()
+    ) -> float:
+        """0 unless every page was conditioned on the same character identity.
+
+        A real scorer compares images. This compares what each page was conditioned on, so a
+        serving bug that drops the embedding shows up as a failing metric rather than silently.
+        """
         if not illustrations:
             return 0.0
-        # A real scorer compares images; the fake reports perfect consistency only when every page
-        # was conditioned on the same subject, so serving failing to thread it through is visible.
-        subjects = {illustration.subject for illustration in illustrations}
-        return self.consistency_score if len(subjects) == 1 else 0.0
+        if len({illustration.subject for illustration in illustrations}) != 1:
+            return 0.0
+        embeddings = {illustration.character_embedding for illustration in illustrations}
+        if len(embeddings) != 1 or not next(iter(embeddings)):
+            return 0.0
+        if characters and next(iter(embeddings)) != characters[0].embedding:
+            return 0.0
+        return self.consistency_score

@@ -13,7 +13,12 @@ from pathlib import Path
 
 import pytest
 
-from primer.drawing.interface import DrawingRecognizer, FakeDrawingRecognizer, Prediction
+from primer.drawing.interface import (
+    Character,
+    DrawingAnalysis,
+    DrawingRecognizer,
+    FakeDrawingRecognizer,
+)
 from primer.illustration.interface import FakeIllustrator, Illustration, Illustrator
 from primer.readability.interface import FakeReadabilityScorer, ReadabilityScorer
 from primer.safety.interface import FakeSafetyClassifier, SafetyClassifier
@@ -165,6 +170,7 @@ def test_serving_builds_a_complete_fake_book(request_for_a_cat):
     book = build_book(
         request=request_for_a_cat,
         drawing=b"not-a-real-png",
+        drawing_ref="gs://yip-drawings/test/cat.png",
         recognizer=FakeDrawingRecognizer(label="cat"),
         writer=FakeStoryWriter(),
         scorer=FakeReadabilityScorer(grade_value=1.2),
@@ -174,7 +180,9 @@ def test_serving_builds_a_complete_fake_book(request_for_a_cat):
     )
 
     assert book.complete
-    assert book.subject == Prediction(label="cat", confidence=1.0)
+    assert book.subject.label == "cat"
+    assert book.subject.has_embedding, "the illustrator needs an identity to condition on"
+    assert "cat" in book.description
     assert book.pages == len(book.story.pages) > 0
     assert len(book.illustrations) == book.pages
     assert len(book.narration) == book.pages
@@ -189,6 +197,8 @@ def test_serving_builds_a_complete_fake_book(request_for_a_cat):
 def build(request: StoryRequest, **overrides):
     """build_book on fakes, with sensible defaults so each test states only what it varies."""
     parts = {
+        "drawing": b"x",
+        "drawing_ref": "gs://yip-drawings/test/cat.png",
         "recognizer": FakeDrawingRecognizer(label="cat"),
         "writer": FakeStoryWriter(),
         "scorer": FakeReadabilityScorer(),
@@ -197,7 +207,7 @@ def build(request: StoryRequest, **overrides):
         "synthesizer": FakeSpeechSynthesizer(),
     }
     parts.update(overrides)
-    return build_book(request=request, drawing=b"x", **parts)
+    return build_book(request=request, **parts)
 
 
 def test_an_unsafe_request_is_refused_before_anything_is_generated():
@@ -264,23 +274,140 @@ def test_the_recognised_subject_reaches_the_writer_and_the_illustrator(request_f
 def test_consistency_collapses_when_pages_disagree():
     """The fake scores 0 when pages were conditioned differently, so a threading bug is visible."""
     illustrator = FakeIllustrator()
+    cat = Character(label="cat", confidence=1.0, embedding=(0.1, 0.2))
+    dog = Character(label="dog", confidence=1.0, embedding=(0.9, 0.8))
     mixed = [
-        illustrator.illustrate(0, "page one", "crayon", "cat"),
-        illustrator.illustrate(1, "page two", "crayon", "dog"),
+        illustrator.illustrate(0, "page one", "crayon", "cat", characters=(cat,)),
+        illustrator.illustrate(1, "page two", "crayon", "dog", characters=(dog,)),
     ]
     assert illustrator.consistency(mixed) == 0.0
-    assert illustrator.consistency(mixed[:1]) > 0.0
+    assert illustrator.consistency(mixed[:1], (cat,)) > 0.0
 
 
-def test_no_predictions_is_an_error(request_for_a_cat):
+def test_the_sketch_reaches_the_illustrator(request_for_a_cat):
+    """KAN-42 conditions ControlNet on the child's drawing, so the bytes have to arrive.
+
+    Requested by the illustration owner on PR #11. This is the structure half of the handoff; the
+    identity half is the character embeddings, covered below.
+    """
+    received: dict[int, bytes | None] = {}
+
+    class RecordingIllustrator(FakeIllustrator):
+        def illustrate(self, page_index, page_text, style, subject=None, drawing_ref=None,
+                       sketch=None, characters=()):
+            received[page_index] = sketch
+            return super().illustrate(
+                page_index, page_text, style, subject, drawing_ref, sketch, characters
+            )
+
+    sketch = b"\x89PNG\r\n\x1a\n fake scribble"
+    book = build(request_for_a_cat, illustrator=RecordingIllustrator(), drawing=sketch)
+
+    assert received, "the illustrator was never called"
+    assert all(value == sketch for value in received.values()), "every page gets the sketch"
+    assert all(illustration.conditioned_on_sketch for illustration in book.illustrations)
+
+
+def test_the_drawing_ref_reaches_every_illustrate_call(request_for_a_cat):
+    """Serving must not drop the durable handle on the way to illustration.
+
+    The existing subject test asserted `drawing_ref` reached the *writer* only, and
+    `FakeIllustrator` discarded it, so replacing the argument with None in `book.py` left every
+    test green. This fails under exactly that mutation.
+    """
+    received: list[str | None] = []
+
+    class RecordingIllustrator(FakeIllustrator):
+        def illustrate(self, page_index, page_text, style, subject=None, drawing_ref=None,
+                       sketch=None, characters=()):
+            received.append(drawing_ref)
+            return super().illustrate(
+                page_index, page_text, style, subject, drawing_ref, sketch, characters
+            )
+
+    ref = "gs://yip-drawings/child-42/cat.png"
+    book = build(request_for_a_cat, illustrator=RecordingIllustrator(), drawing_ref=ref)
+
+    assert len(received) == book.pages > 0, "every page calls the illustrator"
+    assert received == [ref] * book.pages, "every page gets the same reference build_book was given"
+
+
+def test_a_drawing_without_a_reference_is_refused(request_for_a_cat):
+    """An implementation may assume drawing_ref is present, so serving has to guarantee it."""
+    with pytest.raises(ValueError, match="drawing_ref is required"):
+        build(request_for_a_cat, drawing_ref="")
+
+
+def test_the_character_embedding_reaches_the_illustrator(request_for_a_cat):
+    """The identity half: IP-Adapter conditions on the recogniser's character embedding."""
+    received: list[tuple[Character, ...]] = []
+
+    class RecordingIllustrator(FakeIllustrator):
+        def illustrate(self, page_index, page_text, style, subject=None, drawing_ref=None,
+                       sketch=None, characters=()):
+            received.append(characters)
+            return super().illustrate(
+                page_index, page_text, style, subject, drawing_ref, sketch, characters
+            )
+
+    book = build(request_for_a_cat, illustrator=RecordingIllustrator())
+
+    assert received, "the illustrator was never called"
+    for characters in received:
+        assert characters, "every page is told which characters it must look like"
+        assert characters[0].label == "cat"
+        assert characters[0].has_embedding
+    # Every page carried the same identity, so the fake's consistency score is non-zero.
+    assert book.consistency > 0
+
+
+def test_the_description_reaches_the_writer():
+    """The recogniser's other output: the story is about what the child drew, not just the prompt."""
+    seen: dict[str, object] = {}
+
+    class RecordingWriter(FakeStoryWriter):
+        def write(self, request: StoryRequest) -> Story:
+            seen["description"] = request.description
+            return super().write(request)
+
+    build(
+        StoryRequest(prompt="a quiet afternoon", age=5, target_words=("cat",)),
+        writer=RecordingWriter(),
+        recognizer=FakeDrawingRecognizer(label="cat", also=("dog",)),
+    )
+    assert seen["description"] and "cat" in str(seen["description"])
+
+
+def test_several_characters_survive_recognition():
+    """A drawing with a child, a dog and a house is three characters, not one winner."""
+    analysis = FakeDrawingRecognizer(label="child", also=("dog", "house")).analyse(b"x")
+    assert [character.label for character in analysis.characters] == ["child", "dog", "house"]
+    assert analysis.main is not None and analysis.main.label == "child"
+    assert analysis.top_labels(5) == ["child", "dog", "house"]
+    # Distinct identities, so the illustrator can tell them apart.
+    assert len({character.embedding for character in analysis.characters}) == 3
+
+
+def test_consistency_is_zero_without_an_identity_to_hold_to():
+    """No embedding means nothing was conditioned, so the pages cannot be judged consistent."""
+    illustrator = FakeIllustrator()
+    pages = [
+        illustrator.illustrate(0, "page one", "crayon", "cat"),
+        illustrator.illustrate(1, "page two", "crayon", "cat"),
+    ]
+    assert illustrator.consistency(pages) == 0.0
+
+
+def test_no_characters_is_an_error(request_for_a_cat):
     class Empty:
-        def top_k(self, image: bytes, k: int = 5) -> list[Prediction]:
-            return []
+        def analyse(self, image: bytes) -> DrawingAnalysis:
+            return DrawingAnalysis()
 
-    with pytest.raises(ValueError, match="no predictions"):
+    with pytest.raises(ValueError, match="no characters"):
         build_book(
             request=request_for_a_cat,
             drawing=b"x",
+            drawing_ref="gs://yip-drawings/test/cat.png",
             recognizer=Empty(),
             writer=FakeStoryWriter(),
             scorer=FakeReadabilityScorer(),

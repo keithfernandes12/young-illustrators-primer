@@ -24,6 +24,9 @@ class StoryRequest:
     target_words: tuple[str, ...] = ()
     subject: str | None = None
     drawing_ref: str | None = None
+    #: The recogniser's description of the whole drawing. The writer needs this to write about what
+    #: the child actually drew rather than about the prompt alone.
+    description: str | None = None
 
 
 @dataclass(frozen=True)
