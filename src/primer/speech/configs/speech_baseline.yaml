@@ -1,42 +1,5 @@
-# Candidate recognisers for the read-aloud stage, versioned with the code. `train.py --config` reads
-# this; `evaluate.py --model <name> --config` evaluates one entry.
-#
-# ASR is a pretrained stage: "training" here is choosing a frozen configuration (checkpoint, revision,
-# decoding settings) by measurement. Pin `revision` to a commit sha before the result is registered;
-# "main" moves.
-name: speech-candidates
-owner: kush
-
-data:
-  dataset: speechocean762           # fallback until MyST access arrives (KAN-101); see data.py
-  hf_id: mispeech/speechocean762
-  revision: main
-  split: test                       # the official split is already by speaker
-  max_clips: 500                    # null for all 2,500 test clips
-  misread_rate: 0.7                 # share of clips given one synthetic misread or skip
-  seed: 0
-
-# The first candidate is the baseline every later one must beat (KAN-96): the frozen configuration.
-baseline: whisper-small-en
-
-selection:
-  max_wer: 0.25                     # scoping §7 target
-  max_rtf: 0.5                      # transcribe time / audio time; at most half real time
-  rank_by: asr_misread_f1           # what the learner profile sees; WER alone rewards auto-correction
-
-candidates:
-  - {name: whisper-small-en, family: whisper, checkpoint: openai/whisper-small.en}
-  - {name: whisper-small-en-beam5, family: whisper, checkpoint: openai/whisper-small.en, beam_size: 5}
-  - {name: whisper-small-en-prompted, family: whisper, checkpoint: openai/whisper-small.en, prompt_with_page: true}
-  - {name: whisper-tiny-en, family: whisper, checkpoint: openai/whisper-tiny.en}
-  - {name: whisper-base-en, family: whisper, checkpoint: openai/whisper-base.en}
-  - {name: distil-small-en, family: whisper, checkpoint: distil-whisper/distil-small.en}
-  # The same checkpoints with the runaway guards (see model.RecognizerConfig): a length cap from the
-  # clip's duration, and no repeated 3-token runs. The unguarded ones stay to measure what they fix.
-  - {name: whisper-small-en-guarded, family: whisper, checkpoint: openai/whisper-small.en, max_tokens_per_second: 6, no_repeat_ngram_size: 3}
-  - {name: whisper-base-en-guarded, family: whisper, checkpoint: openai/whisper-base.en, max_tokens_per_second: 6, no_repeat_ngram_size: 3}
-  - {name: distil-small-en-guarded, family: whisper, checkpoint: distil-whisper/distil-small.en, max_tokens_per_second: 6, no_repeat_ngram_size: 3}
-  # 809M parameters: slow on CPU. Run it on a GPU or Apple MPS, or leave it out with --only.
-  - {name: whisper-large-v3-turbo, family: whisper, checkpoint: openai/whisper-large-v3-turbo}
-  - {name: whisper-large-v3-turbo-prompted, family: whisper, checkpoint: openai/whisper-large-v3-turbo, prompt_with_page: true}
-  - {name: wav2vec2-base-960h, family: wav2vec2, checkpoint: facebook/wav2vec2-base-960h}
+# Hyperparameter search space for the speech stage, versioned with the code.
+# Stub: `train.py --config` reads this.
+name: speech-baseline
+data_version: unpinned
+search_space: {}

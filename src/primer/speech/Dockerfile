@@ -1,8 +1,8 @@
 # The speech area. One image runs locally and on Vertex AI, which is what makes a registered
-# run reproducible (docs/adrs/bounded-local-training-for-agents.md).
+# run reproducible (docs/adrs/where-model-training-happens.md).
 #
-# CPU image: the selected candidates are small enough to evaluate on CPU. For the large-v3-turbo
-# candidates, swap in a CUDA base that matches the driver and drop the CPU torch index below.
+# Stub: pick a CUDA base that matches the driver on the member machines and add the area's own
+# dependencies. The layout below is not a stub -- it is the part that has to be right.
 FROM python:3.11-slim
 
 WORKDIR /work
@@ -15,8 +15,7 @@ COPY src ./src
 
 # No `|| true`. A failed install must stop the build rather than leave an image that looks fine
 # and has nothing installed.
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch \
- && pip install --no-cache-dir -e ".[dev,speech]"
+RUN pip install --no-cache-dir -e ".[dev]"
 
 # Keep the model cache on a mount: these downloads are gigabytes, and on Windows hosts a long
 # default path hits the 260-character limit (docs/engineering/model-containers-on-windows.md).

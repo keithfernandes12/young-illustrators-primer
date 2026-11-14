@@ -34,8 +34,6 @@ dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.10"]
 # `BaseModelOutputWithPooling` from `get_text_features`, where the model card's 4.x example shows a
 # bare tensor. `model.pooled` handles both, but only the 5.x path has been exercised.
 drawing = ["torch>=2.4", "transformers>=5.0,<6", "pillow>=10.0"]
-# Read-aloud ASR (src/primer/speech). Not needed for tests, which never load weights.
-speech = ["torch>=2.4", "transformers>=5.0,<6", "soundfile>=0.12", "mlflow>=2.14", "matplotlib>=3.8"]
 
 [project.scripts]
 primer-data = "primer.data.cli:main"

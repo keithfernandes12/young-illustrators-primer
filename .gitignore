@@ -49,7 +49,6 @@ data/*
 # Experiment tracking
 mlruns/
 mlartifacts/
-mlflow.db
 wandb/
 
 # Notebooks
