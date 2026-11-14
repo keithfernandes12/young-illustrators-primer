@@ -5,30 +5,35 @@ Claude Code runs this after guard_bash.py, before every Bash or PowerShell tool 
 (see .claude/settings.json).
 
 There is no staging/production split to guard. "Production" here is the live serving path, not a
-project id: the risky act is sending traffic to a revision, deleting something, or touching IAM.
+project id: the risky act is moving traffic, deleting something, or touching IAM.
 
 Six members build six model areas in parallel, so a session may legitimately name two projects
 (docs/engineering/model-development.md section 6):
 
 - ``YIP_SHARED_PROJECT`` -- the team project. Durable state only: the data bucket, Artifact
-  Registry, the models bucket and the MLflow server. Builds push here.
+  Registry, the models bucket, MLflow, and the served Cloud Run revision. Builds push here.
 - ``YIP_COMPUTE_PROJECT`` -- this member's own project. Compute only: Vertex AI custom jobs and
-  Cloud Run GPU jobs, burning that member's own credits. No durable state.
+  Cloud Run GPU jobs, burning that member's own credits.
 
-Two rules, in order:
+The rules, in order:
 
-1. Every project the command names must be one of ours. Only the *value* of ``--project`` /
+1. **Every project the command names must be ours.** Only the *value* of ``--project`` /
    ``--project=``, ``gcloud config set project`` and ``CLOUDSDK_CORE_PROJECT`` is compared -- never
    the command text. The shared project id is also the repository name, so a substring match would
-   refuse ``cd .../young-illustrators-primer`` and ``cat young-illustrators-primer/AGENTS.md``.
-   Set both in .claude/settings.local.json. ``YIP_PROJECT`` (or the older
-   ``YIP_STAGING_PROJECT``) still works on its own for a single-project setup.
+   refuse ``cd .../young-illustrators-primer``. A value written as a shell variable
+   (``--project "$YIP_SHARED_PROJECT"``) is resolved against the environment first, because that is
+   the form every skill document uses; a reference that cannot be resolved is refused.
+2. **A mutating command must establish its target project.** If it names none, the inherited
+   ``CLOUDSDK_CORE_PROJECT`` is the effective target and must be ours. With no target at all, a
+   mutating command is refused rather than sent wherever gcloud happens to point.
+3. **Some operations are refused whatever the project**: any traffic change, deploying without
+   ``--no-traffic``, deletes, service-account keys and any IAM policy write.
 
-2. Some operations are refused whatever the project: sending 100% of traffic to a revision,
-   deploying without ``--no-traffic``, deletes, service-account keys and IAM policy changes.
+Compound commands are checked segment by segment, nested shells (``bash -c '...'``) are checked
+recursively, and the deployment helper scripts are checked by what they do -- a hook never sees the
+``gcloud`` call inside a script, so ``bash promote.sh`` has to be refused by name.
 
-Commands that invoke no cloud tool are not this hook's business and pass straight through.
-A person deliberately doing one of these starts the session with YIP_ALLOW_PROD=1, or types the
+A person doing one of these deliberately starts the session with YIP_ALLOW_PROD=1, or types the
 command with the ``!`` prefix, which does not pass through hooks.
 Exit 0 to allow; print the reason to stderr and exit 2 to refuse, like guard_bash.py.
 """
@@ -44,8 +49,11 @@ import sys
 # Tools whose commands can change Google Cloud. Anything else is none of our business.
 CLOUD_TOOLS = {"gcloud", "gsutil", "bq", "terraform"}
 
-# gcloud verbs that only read. Used to decide whether an unverifiable project is worth refusing;
-# anything genuinely destructive is caught by RISKY below regardless of this list.
+# Shells that take a command string, so the real command is one level down.
+SHELL_WRAPPERS = {"bash", "sh", "zsh", "dash", "ash", "pwsh", "powershell"}
+
+# Operations that only read. Compared against the parsed operation and against flag NAMES, never
+# against flag values -- `--display-name list` must not make a job creation look like a read.
 READ_ONLY_VERBS = {
     "list",
     "describe",
@@ -54,6 +62,7 @@ READ_ONLY_VERBS = {
     "get-iam-policy",
     "info",
     "version",
+    "help",
     "tail",
     "print-access-token",
     "print-identity-token",
@@ -63,12 +72,22 @@ READ_ONLY_VERBS = {
     "show",
     "output",
     "state",
+    "cat",
+    "du",
+    "ls",
+}
+
+#: Deployment helpers that perform a refused operation inside themselves. Hooks do not run again
+#: for what a script does, so the script has to be recognised by name.
+HELPER_SCRIPTS = {
+    "promote.sh": "runs a traffic promotion, which is how a change goes live",
+    "rollback.sh": "shifts live traffic between revisions",
 }
 
 RISKY = [
     (
-        re.compile(r"\brun\s+services\s+update-traffic\b(?=.*(--to-latest|=100\b))"),
-        "sends all traffic to a revision, which is how a change goes live",
+        re.compile(r"\brun\s+services\s+update-traffic\b"),
+        "changes which revision serves live traffic",
     ),
     (
         re.compile(r"\brun\s+deploy\b(?!.*--no-traffic)"),
@@ -84,8 +103,8 @@ RISKY = [
         "creates a long-lived service-account key",
     ),
     (
-        re.compile(r"\b(add|remove|set)-iam-policy-binding\b"),
-        "changes an IAM policy binding",
+        re.compile(r"\b(add|remove|set)-iam-policy-binding\b|\bset-iam-policy\b"),
+        "writes an IAM policy",
     ),
     (re.compile(r"\bterraform\b.*\bdestroy\b"), "destroys terraform-managed infrastructure"),
     (
@@ -99,47 +118,15 @@ DEPLOY_ENV_PROD = re.compile(
     r"(?:(?:^|\s)YIP_DEPLOY_ENV=|\$env:YIP_DEPLOY_ENV\s*=\s*['\"]?)prod\b", re.IGNORECASE
 )
 
-PROJECT_FLAG = re.compile(r"--project[= ]\s*([A-Za-z0-9][A-Za-z0-9-]*)")
-CONFIG_SET_PROJECT = re.compile(r"\bgcloud\b[^|;&]*\bconfig\s+set\s+project\s+([A-Za-z0-9][A-Za-z0-9-]*)")
-CORE_PROJECT_ENV = re.compile(r"CLOUDSDK_CORE_PROJECT\s*=\s*['\"]?([A-Za-z0-9][A-Za-z0-9-]*)")
+CONFIG_SET_PROJECT = re.compile(r"\bconfig\s+set\s+project\s+(\S+)")
+CORE_PROJECT_ASSIGNMENT = re.compile(r"CLOUDSDK_CORE_PROJECT\s*=\s*(\S+)")
 
+#: ``$NAME``, ``${NAME}``, ``$env:NAME`` (PowerShell) and ``%NAME%`` (cmd).
+VARIABLE_REF = re.compile(
+    r"^(?:\$\{(?P<braced>\w+)\}|\$env:(?P<ps>\w+)|\$(?P<bare>\w+)|%(?P<cmd>\w+)%)$"
+)
 
-def _tokens(command: str) -> list[str]:
-    """Best-effort tokenisation. PowerShell syntax is not POSIX, so fall back to whitespace."""
-    try:
-        return shlex.split(command, posix=True)
-    except ValueError:
-        return command.split()
-
-
-def uses_cloud_tool(tokens: list[str]) -> bool:
-    for token in tokens:
-        name = token.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-        if name in CLOUD_TOOLS or name in {f"{t}.cmd" for t in CLOUD_TOOLS}:
-            return True
-    return False
-
-
-def named_projects(command: str, tokens: list[str]) -> set[str]:
-    """Every project id the command explicitly names, from flags and env vars only."""
-    found: set[str] = set()
-    for index, token in enumerate(tokens):
-        if token.startswith("--project="):
-            found.add(token.split("=", 1)[1])
-        elif token == "--project" and index + 1 < len(tokens):
-            found.add(tokens[index + 1])
-    for pattern in (PROJECT_FLAG, CONFIG_SET_PROJECT, CORE_PROJECT_ENV):
-        found.update(match.group(1) for match in pattern.finditer(command))
-    return {p.strip("'\"") for p in found if p and not p.startswith("-")}
-
-
-def is_read_only(tokens: list[str]) -> bool:
-    """True when the command names a verb that only reads. Flags count: `gcloud --version` reads."""
-    return any(token.lstrip("-") in READ_ONLY_VERBS for token in tokens)
-
-
-#: In precedence order, the variables that name a project this session may touch. The compute and
-#: shared pair is the normal setup; YIP_PROJECT alone still works for a single-project checkout.
+#: In precedence order, the variables that name a project this session may touch.
 PROJECT_VARS: tuple[str, ...] = (
     "YIP_COMPUTE_PROJECT",
     "YIP_SHARED_PROJECT",
@@ -147,28 +134,185 @@ PROJECT_VARS: tuple[str, ...] = (
     "YIP_STAGING_PROJECT",
 )
 
+UNRESOLVED = "\x00unresolved"
+
 
 def allowed_projects(environ: dict[str, str]) -> set[str]:
     """Every project id this session is configured for. Empty means nothing is configured."""
     return {value.strip() for var in PROJECT_VARS if (value := environ.get(var, "")).strip()}
 
 
-def check(command: str, environ: dict[str, str]) -> str | None:
-    """Return why `command` must be refused, or None to allow it."""
-    if environ.get("YIP_ALLOW_PROD") == "1" or not command.strip():
+def split_segments(command: str) -> list[str]:
+    """Split on &&, ||, ;, | and newlines that appear outside quotes."""
+    segments: list[str] = []
+    current: list[str] = []
+    quote = ""
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if quote:
+            current.append(char)
+            if char == "\\" and quote == '"' and index + 1 < len(command):
+                current.append(command[index + 1])
+                index += 2
+                continue
+            if char == quote:
+                quote = ""
+        elif char in "\"'":
+            quote = char
+            current.append(char)
+        elif char in ";\n" or command.startswith(("&&", "||"), index) or char == "|":
+            segments.append("".join(current))
+            current = []
+            index += 2 if command.startswith(("&&", "||"), index) else 1
+            continue
+        else:
+            current.append(char)
+        index += 1
+    segments.append("".join(current))
+    return [segment.strip() for segment in segments if segment.strip()]
+
+
+def _tokens(segment: str) -> list[str]:
+    """Best-effort tokenisation. PowerShell syntax is not POSIX, so fall back to whitespace."""
+    try:
+        return shlex.split(segment, posix=True)
+    except ValueError:
+        return segment.split()
+
+
+def _basename(token: str) -> str:
+    return token.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+
+
+def resolve_project_ref(raw: str, environ: dict[str, str]) -> str:
+    """A literal project id stays itself; a variable reference is expanded from `environ`.
+
+    Returns UNRESOLVED when the token is a variable the environment does not define, so the caller
+    can fail closed instead of comparing a literal dollar sign against the allowlist.
+    """
+    match = VARIABLE_REF.match(raw)
+    if not match:
+        return raw
+    name = next(value for value in match.groupdict().values() if value)
+    value = environ.get(name, "").strip()
+    return value or UNRESOLVED
+
+
+def uses_cloud_tool(tokens: list[str]) -> bool:
+    return any(_basename(token).removesuffix(".cmd") in CLOUD_TOOLS for token in tokens)
+
+
+def nested_command(tokens: list[str]) -> str | None:
+    """The command string a wrapping shell was asked to run, if any."""
+    for index, token in enumerate(tokens):
+        if _basename(token).removesuffix(".exe") not in SHELL_WRAPPERS:
+            continue
+        for offset in range(index + 1, len(tokens) - 1):
+            if tokens[offset] in {"-c", "-Command", "-command"}:
+                return tokens[offset + 1]
+    return None
+
+
+def helper_refusal(tokens: list[str]) -> str | None:
+    """Deployment helpers are refused by name: a hook never sees the gcloud call inside them."""
+    for token in tokens:
+        reason = HELPER_SCRIPTS.get(_basename(token))
+        if reason:
+            return f"this command {reason}."
+    return None
+
+
+def operation_and_flags(tokens: list[str]) -> tuple[list[str], list[str]]:
+    """Split a segment into its operation words and its flag names.
+
+    A flag written without ``=`` consumes the next token, so that value is neither an operation
+    word nor a flag. That is what keeps ``--display-name list`` from looking like a read.
+    """
+    operation: list[str] = []
+    flags: list[str] = []
+    skip_next = False
+    for index, token in enumerate(tokens):
+        if skip_next:
+            skip_next = False
+            continue
+        if token.startswith("-"):
+            name, _, inline_value = token.partition("=")
+            flags.append(name.lstrip("-"))
+            skip_next = not inline_value and index + 1 < len(tokens)
+            continue
+        operation.append(token)
+    return operation, flags
+
+
+def is_read_only(tokens: list[str]) -> bool:
+    operation, flags = operation_and_flags(tokens)
+    return bool((set(operation) | set(flags)) & READ_ONLY_VERBS)
+
+
+def named_projects(segment: str, tokens: list[str], environ: dict[str, str]) -> set[str]:
+    """Every project the segment explicitly names, resolved through the environment."""
+    raw: set[str] = set()
+    skip_next = False
+    for index, token in enumerate(tokens):
+        if skip_next:
+            skip_next = False
+            continue
+        if token.startswith("--project="):
+            raw.add(token.split("=", 1)[1])
+        elif token == "--project" and index + 1 < len(tokens):
+            raw.add(tokens[index + 1])
+            skip_next = True
+        elif token.startswith("CLOUDSDK_CORE_PROJECT="):
+            raw.add(token.split("=", 1)[1])
+    for pattern in (CONFIG_SET_PROJECT, CORE_PROJECT_ASSIGNMENT):
+        raw.update(match.group(1).strip("'\"") for match in pattern.finditer(segment))
+    return {resolve_project_ref(value, environ) for value in raw if value and not value.startswith("-")}
+
+
+def _check_text(text: str, environ: dict[str, str], depth: int = 0) -> str | None:
+    """Check one command line.
+
+    Environment assignments and project selections apply to the whole line, not to the segment they
+    appear in -- `CLOUDSDK_CORE_PROJECT=x; gcloud ...` and `$env:YIP_DEPLOY_ENV = "prod"; gcloud ...`
+    both target what the earlier segment set. So those are read across the line, while the
+    operations themselves are judged segment by segment.
+    """
+    segments = split_segments(text)
+    token_sets = [_tokens(segment) for segment in segments]
+
+    for tokens in token_sets:
+        inner = nested_command(tokens)
+        if inner and depth < 4:
+            reason = _check_text(inner, environ, depth + 1)
+            if reason:
+                return reason
+
+    for tokens in token_sets:
+        reason = helper_refusal(tokens)
+        if reason:
+            return reason
+
+    if not any(uses_cloud_tool(tokens) for tokens in token_sets):
+        # Not a cloud command. The shared project id is also the repository name, so this branch is
+        # what keeps `cd .../young-illustrators-primer` out of the guard entirely.
         return None
 
-    tokens = _tokens(command)
-    if not uses_cloud_tool(tokens):
-        # Not a cloud command. The project id is also the repo name, so this branch is what keeps
-        # `cd .../young-illustrators-primer` and `gh pr list --repo .../young-illustrators-primer`
-        # out of the guard entirely.
-        return None
+    if DEPLOY_ENV_PROD.search(text):
+        return "this command sets YIP_DEPLOY_ENV=prod."
 
     allowed = allowed_projects(environ)
-    named = named_projects(command, tokens)
+    named: set[str] = set()
+    for segment, tokens in zip(segments, token_sets, strict=True):
+        named |= named_projects(segment, tokens, environ)
 
-    foreign = sorted(p for p in named if p not in allowed)
+    if UNRESOLVED in named:
+        return (
+            "this command names a project through a variable that is not set, so the target "
+            "cannot be checked. Set YIP_COMPUTE_PROJECT and YIP_SHARED_PROJECT."
+        )
+
+    foreign = sorted(project for project in named if project not in allowed)
     if allowed and foreign:
         ours = ", ".join(sorted(allowed))
         return (
@@ -176,20 +320,40 @@ def check(command: str, environ: dict[str, str]) -> str | None:
             f"ours ({ours})."
         )
 
-    for pattern, why in RISKY:
-        if pattern.search(command):
-            return f"this command {why}."
-
-    if DEPLOY_ENV_PROD.search(command):
-        return "this command sets YIP_DEPLOY_ENV=prod."
-
-    if not allowed and not is_read_only(tokens):
-        return (
-            "no Google Cloud project is configured, so this command cannot be checked. Set "
-            "YIP_COMPUTE_PROJECT and YIP_SHARED_PROJECT in .claude/settings.local.json."
-        )
-
+    for segment, tokens in zip(segments, token_sets, strict=True):
+        if not uses_cloud_tool(tokens):
+            continue
+        for pattern, why in RISKY:
+            if pattern.search(segment):
+                return f"this command {why}."
+        if is_read_only(tokens):
+            continue
+        # A mutating command must establish where it is going.
+        if not allowed:
+            return (
+                "no Google Cloud project is configured, so this command cannot be checked. Set "
+                "YIP_COMPUTE_PROJECT and YIP_SHARED_PROJECT in .claude/settings.local.json."
+            )
+        if not named:
+            inherited = environ.get("CLOUDSDK_CORE_PROJECT", "").strip()
+            if inherited and inherited not in allowed:
+                return (
+                    f"this command would target {inherited!r} through CLOUDSDK_CORE_PROJECT, "
+                    "which is not one of ours."
+                )
+            if not inherited:
+                return (
+                    "this command changes cloud state without naming a project, so its target "
+                    "cannot be established. Pass --project explicitly."
+                )
     return None
+
+
+def check(command: str, environ: dict[str, str]) -> str | None:
+    """Return why `command` must be refused, or None to allow it."""
+    if environ.get("YIP_ALLOW_PROD") == "1" or not command.strip():
+        return None
+    return _check_text(command, environ)
 
 
 SHELL_TOOLS = {"Bash", "PowerShell"}
@@ -208,8 +372,8 @@ def main() -> int:
     if reason:
         print(
             f"BLOCKED by .claude/hooks/guard_cloud.py: {reason} Agents may read cloud state and "
-            "deploy canaries with --no-traffic; a person makes a change live. Run it yourself, or "
-            "start the session with YIP_ALLOW_PROD=1.",
+            "deploy canaries with --no-traffic; a person moves traffic. Run it yourself, or start "
+            "the session with YIP_ALLOW_PROD=1.",
             file=sys.stderr,
         )
         return 2

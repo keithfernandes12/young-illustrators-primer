@@ -183,6 +183,121 @@ def test_compute_project_alone_is_enough():
     assert guard_cloud.check(f"gcloud builds submit --project {PROJECT} .", env)
 
 
+# ------------------------------------------------- findings from the Copilot review of PR #11
+#
+# Each case below was a confirmed bypass or a confirmed false refusal before the guard was
+# rewritten. They are the reason the rewrite exists, so they are pinned individually.
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Every skill document writes the project this way. The hook sees unexpanded shell text,
+        # so before the rewrite the literal "$YIP_SHARED_PROJECT" counted as a foreign project and
+        # the documented build and training commands were refused by our own guard.
+        'gcloud builds submit --project "$YIP_SHARED_PROJECT" --tag img .',
+        "gcloud ai custom-jobs create --project $YIP_COMPUTE_PROJECT --region us-central1 --config j.yaml",
+        "gcloud run services list --project ${YIP_SHARED_PROJECT}",
+        'gcloud run services list --project "$env:YIP_SHARED_PROJECT"',
+    ],
+)
+def test_project_written_as_a_variable_is_resolved(command):
+    assert guard_cloud.check(command, SPLIT_ENV) is None, command
+
+
+def test_an_unset_project_variable_fails_closed():
+    """A reference we cannot resolve is not evidence that the target is ours."""
+    reason = guard_cloud.check("gcloud builds submit --project $YIP_NOT_SET --tag img .", SPLIT_ENV)
+    assert reason and "not set" in reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        f"gcloud run services update-traffic yip-api --project {PROJECT} --to-tags canary=10",
+        f"gcloud run services update-traffic yip-api --project {PROJECT} --to-revisions yip-api-2=50",
+        f"gcloud run services update-traffic yip-api --project {PROJECT} --to-latest",
+    ],
+)
+def test_any_traffic_change_is_refused_not_only_full_promotion(command):
+    """10% of live requests is still live requests; the boundary is traffic, not percentage."""
+    assert guard_cloud.check(command, SPLIT_ENV)
+
+
+def test_replacing_a_whole_iam_policy_is_refused():
+    """set-iam-policy replaces everything, which the binding-only pattern never matched."""
+    assert guard_cloud.check(f"gcloud projects set-iam-policy {PROJECT} policy.json", SPLIT_ENV)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "bash .claude/skills/deploy-cloud-run/scripts/promote.sh yip-api",
+        "bash .claude/skills/deploy-cloud-run/scripts/rollback.sh yip-api",
+        "./.claude/skills/deploy-cloud-run/scripts/promote.sh yip-api",
+    ],
+)
+def test_deployment_helpers_are_refused_by_name(command):
+    """A hook never sees the gcloud call inside a script, so the script must be refused itself."""
+    assert guard_cloud.check(command, SPLIT_ENV), command
+
+
+def test_a_nested_shell_does_not_launder_the_command():
+    inner = f"gcloud run services update-traffic yip-api --project {PROJECT} --to-latest"
+    assert guard_cloud.check(f"bash -c '{inner}'", SPLIT_ENV)
+    assert guard_cloud.check(f'sh -c "{inner}"', SPLIT_ENV)
+
+
+def test_canary_deploy_is_still_allowed():
+    """The fix must not take away what the loops legitimately do."""
+    command = f"gcloud run deploy yip-api --project {PROJECT} --no-traffic --tag canary --image x"
+    assert guard_cloud.check(command, SPLIT_ENV) is None
+
+
+def test_inherited_core_project_is_the_effective_target():
+    """Configuring an allowed YIP_* project does not configure gcloud's actual target."""
+    env = {**SPLIT_ENV, "CLOUDSDK_CORE_PROJECT": "another-team-prod"}
+    reason = guard_cloud.check("gcloud builds submit --tag img .", env)
+    assert reason and "another-team-prod" in reason
+    # Our own project inherited the same way is fine.
+    ours = {**SPLIT_ENV, "CLOUDSDK_CORE_PROJECT": PROJECT}
+    assert guard_cloud.check("gcloud builds submit --tag img .", ours) is None
+
+
+def test_a_mutation_must_name_its_target():
+    reason = guard_cloud.check("gcloud builds submit --tag img .", SPLIT_ENV)
+    assert reason and "cannot be established" in reason
+
+
+def test_a_flag_value_cannot_disguise_a_mutation_as_a_read():
+    """`--display-name list` once made a job creation look read-only and skip the fail-closed check.
+
+    Creating a job in our own compute project is allowed, so the bypass only mattered where
+    read-only status is what exempts a command: an unconfigured session, and one with no target.
+    """
+    command = "gcloud ai custom-jobs create --config job.yaml --display-name list"
+    assert guard_cloud.check(command, {}), "unconfigured session must still refuse"
+    assert guard_cloud.check(command, SPLIT_ENV), "no project named, so the target is unknown"
+    # The genuine read is still a read, and the genuine creation in our project is still allowed.
+    assert guard_cloud.check(f"gcloud ai custom-jobs list --project {COMPUTE}", SPLIT_ENV) is None
+    assert guard_cloud.check(f"{command} --project {COMPUTE}", SPLIT_ENV) is None
+
+
+def test_every_segment_of_a_compound_command_is_checked():
+    safe = f"gcloud run services list --project {PROJECT}"
+    risky = f"gcloud run services delete yip-api --project {PROJECT}"
+    assert guard_cloud.check(f"{safe} && {risky}", SPLIT_ENV)
+    assert guard_cloud.check(f"{safe} ; {safe}", SPLIT_ENV) is None
+
+
+def test_an_env_assignment_in_an_earlier_segment_still_counts():
+    """`CLOUDSDK_CORE_PROJECT=x; gcloud ...` targets x, even though the segments are separate."""
+    assert guard_cloud.check(
+        f"CLOUDSDK_CORE_PROJECT=another-team-prod; gcloud run services list --project {PROJECT}",
+        SPLIT_ENV,
+    )
+
+
 def test_override_allows_everything():
     env = {**ENV, "YIP_ALLOW_PROD": "1"}
     assert guard_cloud.check(f"gcloud run services delete yip-api --project {PROJECT}", env) is None
