@@ -50,6 +50,16 @@ the agent will ask you to run it. To check by hand: `git config core.hooksPath` 
 `primer-data sources` runs; in Claude Code, `/hooks` lists the two hooks and `/mcp` shows
 `atlassian` connected.
 
+**Run Python through the project's virtualenv, not through whatever `python` is on `PATH`.** After
+`pip install -e ".[dev,dvc]"` the dependencies live in `.venv`, and the agent's shell does not
+inherit an activation — its state does not survive between commands, so `source .venv/…/activate`
+in one call is gone by the next. Bare `python -m pytest` therefore fails at `tests/conftest.py`
+with `ModuleNotFoundError: gcsfs` while `.venv/Scripts/python.exe -m pytest` passes. Name the
+interpreter explicitly (`.venv/Scripts/python.exe` on Windows, `.venv/bin/python` elsewhere);
+`permissions.allow` carries both spellings for the gates, so an unattended loop is not stopped by a
+prompt on every `verify`. Launching Claude Code from an already-activated shell also works, because
+the process inherits `PATH`.
+
 Once per clone, also check that the permission rules load: in a session in Manual permission mode,
 ask the agent to run `git tag --list`. It should ask you before running it, because
 `Bash(git tag:*)` is in `permissions.ask`. If it runs without asking, the `permissions` block in
