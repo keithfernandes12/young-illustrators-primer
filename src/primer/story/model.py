@@ -8,7 +8,7 @@ from __future__ import annotations
 
 
 class StoryWriterModel:
-    """The production story implementation. Satisfies ``interface.StoryWriter``."""
+    """The production story implementation. Will satisfy ``interface.StoryWriter``."""
 
     def __init__(self, model_uri: str | None = None) -> None:
         self._model_uri = model_uri

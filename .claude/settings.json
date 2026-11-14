@@ -51,13 +51,7 @@
       "mcp__atlassian__updateConfluencePage",
       "Bash(gcloud builds submit:*)",
       "Bash(gcloud run deploy:*)",
-      "Bash(gcloud run services update-traffic:*)",
-      "Bash(gcloud run jobs execute:*)",
-      "Bash(gcloud ai custom-jobs create:*)",
-      "Bash(gcloud ai custom-jobs cancel:*)",
       "Bash(bash .claude/skills/deploy-cloud-run/scripts/deploy_canary.sh:*)",
-      "Bash(bash .claude/skills/deploy-cloud-run/scripts/promote.sh:*)",
-      "Bash(bash .claude/skills/deploy-cloud-run/scripts/rollback.sh:*)",
       "Bash(terraform -chdir=infra apply:*)",
       "Bash(terraform -chdir=infra init:*)"
     ],
@@ -84,7 +78,19 @@
       "PowerShell(terraform destroy *)",
       "PowerShell(terraform -chdir=infra destroy *)",
       "PowerShell(gcloud iam service-accounts keys create *)",
-      "PowerShell(gcloud projects add-iam-policy-binding *)"
+      "PowerShell(gcloud projects add-iam-policy-binding *)",
+      "Bash(gcloud run services update-traffic:*)",
+      "PowerShell(gcloud run services update-traffic *)",
+      "Bash(gcloud run jobs execute:*)",
+      "PowerShell(gcloud run jobs execute *)",
+      "Bash(gcloud ai custom-jobs create:*)",
+      "PowerShell(gcloud ai custom-jobs create *)",
+      "Bash(gcloud ai custom-jobs cancel:*)",
+      "PowerShell(gcloud ai custom-jobs cancel *)",
+      "Bash(bash .claude/skills/deploy-cloud-run/scripts/promote.sh:*)",
+      "PowerShell(bash .claude/skills/deploy-cloud-run/scripts/promote.sh *)",
+      "Bash(bash .claude/skills/deploy-cloud-run/scripts/rollback.sh:*)",
+      "PowerShell(bash .claude/skills/deploy-cloud-run/scripts/rollback.sh *)"
     ]
   },
   "hooks": {

@@ -64,13 +64,13 @@ def run(name: str, cmd: list[str], cwd: Path = ROOT) -> bool:
     return result.returncode == 0
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--quick", action="store_true", help="pytest only the areas you changed"
     )
     ap.add_argument("--no-privacy", action="store_true")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     py = sys.executable
     failed: list[str] = []
 

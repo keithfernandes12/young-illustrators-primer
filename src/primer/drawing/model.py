@@ -8,7 +8,7 @@ from __future__ import annotations
 
 
 class DrawingRecognizerModel:
-    """The production drawing implementation. Satisfies ``interface.DrawingRecognizer``."""
+    """The production drawing implementation. Will satisfy ``interface.DrawingRecognizer``."""
 
     def __init__(self, model_uri: str | None = None) -> None:
         self._model_uri = model_uri

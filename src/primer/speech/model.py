@@ -8,7 +8,7 @@ from __future__ import annotations
 
 
 class SpeechSynthesizerModel:
-    """The production speech implementation. Satisfies ``interface.SpeechSynthesizer``."""
+    """The production speech implementation. Will satisfy ``interface.SpeechSynthesizer``."""
 
     def __init__(self, model_uri: str | None = None) -> None:
         self._model_uri = model_uri

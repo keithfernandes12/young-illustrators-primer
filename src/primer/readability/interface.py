@@ -19,7 +19,7 @@ class ReadabilityScorer(Protocol):
 
 
 class FakeReadabilityScorer:
-    """Returns a fixed grade, or `follow` if given, so a test can pin the error exactly."""
+    """Returns a fixed grade, so a test can pin the reading-level error exactly."""
 
     def __init__(self, grade_value: float = 1.0) -> None:
         self.grade_value = grade_value

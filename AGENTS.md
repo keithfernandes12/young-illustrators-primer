@@ -171,7 +171,7 @@ PR, review yourself with `review-pr`, then open the PR. Before asking for review
 | `privacy-guard` | lint for child PII in logs, URLs, object names and stored audio |
 | `loop-worker` | run one unattended engineering-loop iteration on a plan (for `/goal`, `/loop`, Ralph) |
 | `train-vertex` | launch and track a Vertex AI training job |
-| `deploy-cloud-run` | canary, smoke-test or roll back a Cloud Run service; a person promotes |
+| `deploy-cloud-run` | canary and smoke-test a Cloud Run service; a person promotes and rolls back |
 
 Loop prompts for `/goal`, `/loop` and Ralph live in `.claude/loops/`; a bare `/loop` reads
 `.claude/loop.md`. Unattended work follows `docs/plans/autonomous-loops.md`. Google Cloud is one

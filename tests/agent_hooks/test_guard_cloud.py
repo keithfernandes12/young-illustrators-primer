@@ -357,6 +357,90 @@ def test_reading_a_job_is_still_allowed():
         assert guard_cloud.check(command, SPLIT_ENV) is None, command
 
 
+# --------------------------------- findings from an independent review-pr pass on 689fd6b
+
+
+@pytest.mark.parametrize("track", ["beta", "alpha"])
+@pytest.mark.parametrize(
+    "rest",
+    [
+        "run deploy yip-api --image IMG",
+        "ai custom-jobs create --config j.yaml",
+        "ai hp-tuning-jobs create --config j.yaml",
+        "run jobs execute yip-eval",
+        "batch jobs submit j",
+    ],
+)
+def test_a_release_track_does_not_defeat_the_token_rules(track, rest):
+    """`gcloud beta run deploy` is the same operation, but it shifted every prefix by one.
+
+    The regex rules survived because they search the whole segment; all four token-prefix rules
+    did not, so deploy-without---no-traffic and every training launch were allowed.
+    """
+    command = f"gcloud {track} {rest} --project {PROJECT}"
+    assert guard_cloud.check(command, SPLIT_ENV), command
+
+
+def test_a_boolean_flag_does_not_swallow_the_next_flag():
+    """Making flag values unable to vote made every valueless flag eat the flag after it.
+
+    The command below is the GPU example from deploy_canary.sh's own header, and the guard was
+    refusing it while telling the caller to use --no-traffic.
+    """
+    gpu = (
+        f"gcloud run deploy yip-story --image IMG --gpu 1 --gpu-type nvidia-l4 --cpu 8 "
+        f"--memory 32Gi --no-cpu-throttling --no-gpu-zonal-redundancy --max-instances 2 "
+        f"--min-instances 0 --no-allow-unauthenticated --no-traffic --tag canary "
+        f"--project {PROJECT} --region us-central1"
+    )
+    assert guard_cloud.check(gpu, SPLIT_ENV) is None, gpu
+    # The value-cannot-vote fix it came from still holds.
+    sneaky = f"gcloud run deploy yip-api --image IMG --project {PROJECT} --labels=n=--no-traffic"
+    assert guard_cloud.check(sneaky, SPLIT_ENV)
+
+
+@pytest.mark.parametrize("command", ["terraform -chdir=infra apply", "terraform -chdir=infra init"])
+def test_terraform_is_not_asked_for_a_flag_it_does_not_have(command):
+    """terraform has no --project, so demanding one made infra work impossible to run."""
+    assert guard_cloud.check(command, SPLIT_ENV) is None, command
+
+
+def test_bigquery_deletes_are_refused():
+    """bq has its own delete verbs and none of the words the resource pattern looks for."""
+    env = {**SPLIT_ENV, "CLOUDSDK_CORE_PROJECT": PROJECT}
+    assert guard_cloud.check(f"bq rm -r -f {PROJECT}:primer_metrics", env)
+
+
+def test_inline_interpreter_code_naming_a_cloud_tool_is_refused():
+    """An interpreter can reach the cloud without the guard ever seeing a command.
+
+    Partial by construction: the payload is code, not a command line. It stops the obvious shape.
+    """
+    inner = "import subprocess; subprocess.run(['gcloud','run','services','update-traffic','x'])"
+    assert guard_cloud.check(f'python -c "{inner}"', SPLIT_ENV)
+    assert guard_cloud.check(f"python3 -c '{inner}'", SPLIT_ENV)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'python -c "print(1)"',
+        "python -I scripts/gen_golden_scenarios.py configs/golden/scenarios.jsonl",
+        "python -m pytest -q",
+        "python -m primer.evaluation.golden --split golden --fake-models --out m.json",
+    ],
+)
+def test_ordinary_python_is_not_blocked(command):
+    """The repo runs Python constantly; the interpreter rule must not get in the way."""
+    assert guard_cloud.check(command, SPLIT_ENV) is None, command
+
+
+def test_cancelling_a_job_is_refused_for_its_own_reason():
+    """Not "agents never train" -- cancelling may stop someone else's run."""
+    reason = guard_cloud.check(f"gcloud ai custom-jobs cancel 42 --project {COMPUTE}", SPLIT_ENV)
+    assert reason and "someone else" in reason
+
+
 def test_override_allows_everything():
     env = {**ENV, "YIP_ALLOW_PROD": "1"}
     assert guard_cloud.check(f"gcloud run services delete yip-api --project {PROJECT}", env) is None
