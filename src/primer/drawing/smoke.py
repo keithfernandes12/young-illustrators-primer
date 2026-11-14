@@ -67,11 +67,18 @@ def main(argv: list[str] | None = None) -> int:
     encoder = SiglipEncoder(config, device=args.device)
     model = DrawingRecognizerModel(config, encoder=encoder)
 
+    drawing = Path(args.drawing).read_bytes()
     reset_vram_peak()
     started = time.perf_counter()
     encoder.load()
     loaded = time.perf_counter()
-    analysis = model.analyse(Path(args.drawing).read_bytes())
+    analysis = model.analyse(drawing)
+    first = time.perf_counter()
+    # Twice, and both reported. The first analyse encodes all 345 prompts, which is most of its
+    # cost and happens once per process; the second is what a drawing actually costs, and is the
+    # number KAN-71's latency budget is about. Reporting only the first -- as this did -- puts a
+    # one-time cost under a name every reader takes as per-drawing.
+    model.analyse(drawing)
     finished = time.perf_counter()
 
     character = analysis.main
@@ -92,7 +99,8 @@ def main(argv: list[str] | None = None) -> int:
                 "encoder_revision": config.encoder_revision,
                 "device": encoder.device,
                 "load_seconds": round(loaded - started, 1),
-                "analyse_seconds": round(finished - loaded, 1),
+                "first_analyse_seconds": round(first - loaded, 1),
+                "warm_analyse_seconds": round(finished - first, 2),
                 "peak_vram_gb": peak_vram_gb(encoder.device),
             },
             indent=2,

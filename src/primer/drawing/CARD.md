@@ -27,7 +27,7 @@ over SigLIP 2 is worth taking that on for a course MVP.
 
 Loaded and counted, not estimated (2026-11-14):
 
-| | Parameters | fp32 | bf16/fp16 |
+| | Parameters | fp32 | bf16 (the CUDA path) |
 |---|---|---|---|
 | Whole model | 375,187,970 | 1.398 GB | 0.699 GB |
 | Vision tower (what S6d fine-tunes) | 92,884,224 | 0.346 GB | 0.173 GB |

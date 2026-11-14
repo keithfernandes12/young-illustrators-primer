@@ -38,8 +38,13 @@ CONFIG_DIR = Path(__file__).parent / "configs"
 CONFIG_PATH = CONFIG_DIR / "drawing_baseline.yaml"
 
 #: How many decimals a confidence and an embedding component keep. Rounding is monotonic, so a
-#: ranked list stays ranked; it exists so that `Character.identity_key`, which hashes the embedding,
-#: is not changed by float noise that means nothing.
+#: ranked list stays ranked.
+#:
+#: The embedding is rounded so that `Character.identity_key`, which hashes it, is not changed by
+#: float noise that means nothing. The confidence is rounded for a weaker reason -- a character
+#: sheet is serialised, compared and read by people, and seventeen significant digits of a sigmoid
+#: are noise in all three -- and four decimals is chosen to keep two significant figures on the
+#: tail of a zero-shot ranking, where the fifth candidate scores around 0.002.
 #:
 #: **It does not make the key portable across dtypes.** The tower runs in fp16 on CUDA and fp32 on
 #: CPU, and near a unit vector's typical component (1/sqrt(768) is about 0.036) one fp16 step is
@@ -180,10 +185,13 @@ class SiglipEncoder:
 
         if self.device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        # fp32 on CPU: fp16 arithmetic there is slow or unsupported. Measured, the weights are
-        # 1.398 GB in fp32 and 0.699 GB in fp16; what that costs in VRAM alongside activations has
-        # not been measured, and is S6d's to find out.
-        self._dtype = torch.float16 if self.device == "cuda" else torch.float32
+        # bf16 on CUDA, fp32 on CPU, where reduced precision is slow or unsupported. bf16 rather
+        # than fp16 because `AGENTS.md` names it for local GPU work and S6d will fine-tune in it,
+        # so inference and training agree -- and because it keeps fp32's exponent range, which is
+        # the half of the precision question that produces NaN rather than drift. Measured, the
+        # weights are 1.398 GB in fp32 and 0.699 GB in either half format; what that costs in VRAM
+        # alongside activations has not been measured, and is S6d's to find out.
+        self._dtype = torch.bfloat16 if self.device == "cuda" else torch.float32
         self._processor = AutoProcessor.from_pretrained(
             self.config.encoder, revision=self.config.encoder_revision
         )

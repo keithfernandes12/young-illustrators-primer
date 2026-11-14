@@ -129,7 +129,8 @@ zero-shot and fills one `Character` — `label`, `confidence`, the ranked `candi
 measured from, and an `embedding` from the same tower. One character per drawing for now: the whole
 image is the subject. Tests use a recording fake encoder, so CI installs no weights and reaches no
 network; `python -m primer.drawing.smoke` produces one analysis from a synthetic drawing with
-cached weights, mirroring `primer.illustration.smoke`.
+cached weights. (An earlier draft of this line said it mirrors `primer.illustration.smoke`; no such
+module exists — S6a's is the first smoke module in the repository, and the pattern is its to set.)
 
 - **Why separate** — it needs no dataset. Recognition takes image bytes, so the baseline can be
   built and proved before S6b renders anything, and it is the slice everything else in S6 builds on.
@@ -367,7 +368,11 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   `python -m primer.drawing.smoke --drawing <a synthetic house>` on
   `google/siglip2-base-patch16-224` @ `75de2d55…` returned `house` at 0.1255, with `barn` 0.0284,
   `square` 0.0028, `church` 0.0027, `tent` 0.0023 behind it; 345 labels scored, a 768-dimension
-  embedding, 9.6 s to load and 11.3 s to analyse on **CPU**. The input was a crude house drawn with
+  embedding, 9.9 s to load on **CPU**, then 10.5 s for the first analyse and **0.12 s for the
+  second**. Almost all of that first figure is encoding the 345 prompts once; the warm number is
+  what a drawing costs and what KAN-71's budget is about. An earlier version of this fact said
+  "11.3 s to analyse", which was the cold number under a name everyone reads as per-drawing.
+  The input was a crude house drawn with
   the standard library, so the ranking is evidence that the label/score pairing and the prompt
   template are right — a shifted pairing would not have put four buildings in the top five.
   **This is evidence about wiring, not about model quality:** it is one synthetic image, and no
@@ -426,6 +431,18 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   passed construction and died on `candidates[0]`. Nothing checked that a confidence is in 0–1, so
   deleting `torch.sigmoid` from the encoder left every ranking test green while an unbounded logit
   flowed out under a name three documents call a probability. All closed.
+- **2026-11-14 — S6a: the text tower's normalisation was the last unguarded line in the scoring
+  path.** A second review round found that replacing it with the raw features left all 38 tests
+  green, because the stub's text rows were already unit length. Against the real checkpoint the
+  text norms are 18–26, so skipping it scales every logit by about twenty, all 345 sigmoids
+  saturate to 1.0, and the winner becomes whichever label sorts first — `The Eiffel Tower`, for
+  every drawing. Neither guard catches it: the 0–1 check passes because a saturated sigmoid is in
+  range, and the ranking check passes because all-equal is sorted. The stub's rows are now five
+  units long, so that mutation fails, and a six-prompt case exercises a zero text row.
+- **2026-11-14 — S6a: the CUDA path now picks bf16, not fp16.** `AGENTS.md` names bf16 for local
+  GPU work and S6d will fine-tune in it, while `CARD.md` and these facts already said bf16 and the
+  code said fp16 — one of the two was wrong. bf16 also keeps fp32's exponent range, which is the
+  half of the precision question that produces a NaN rather than a drift. **Still unrun on a GPU.**
 
 ## Open questions
 

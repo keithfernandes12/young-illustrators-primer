@@ -75,7 +75,11 @@ class StubTower(torch.nn.Module):
     def get_text_features(self, **inputs):
         self.text_calls += 1
         count = inputs["input_ids"].shape[0]
-        return Pooling(torch.eye(count, DIMENSIONS, dtype=self.dtype_out))
+        # Five units long, not one. With unit rows the text-side L2 normalisation is a no-op and
+        # deleting it changes nothing in this file -- while against the real checkpoint the text
+        # norms are 18-26, so skipping it scales every logit by about twenty and all 345 sigmoids
+        # saturate to 1.0, making the winner whichever label sorts first.
+        return Pooling(torch.eye(count, DIMENSIONS, dtype=self.dtype_out) * 5.0)
 
     def get_image_features(self, **inputs):
         self.seen_dtype = inputs["pixel_values"].dtype
@@ -157,6 +161,20 @@ def test_encode_returns_a_sigmoid_score_per_prompt(encoder, png):
     ]
     assert list(encoding.confidences) == expected
     assert encoding.confidences[1] > encoding.confidences[0] > encoding.confidences[3]
+
+
+def test_a_text_row_with_no_features_does_not_poison_every_other_score(encoder, png):
+    """Six prompts over four feature dimensions, so the stub's last two rows are zero vectors.
+
+    A zero text row divides 0 by 0 without the norm floor, and one NaN anywhere in the text matrix
+    makes *every* confidence NaN rather than only that prompt's. The four-prompt tests cannot
+    reach this: `PROMPTS` is exactly `DIMENSIONS` long, so no row is ever zero.
+    """
+    encoding = encoder.encode(png, (*PROMPTS, "a boat.", "a kite."))
+
+    assert len(encoding.confidences) == 6
+    assert all(math.isfinite(value) for value in encoding.confidences)
+    assert encoding.confidences[1] == max(encoding.confidences), "the real prompts still rank"
 
 
 def test_the_pixels_are_cast_to_the_towers_dtype(half, png):
