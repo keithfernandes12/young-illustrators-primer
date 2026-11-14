@@ -181,8 +181,40 @@ renderer, with KAN-31's paper/crayon augmentation applied at training time only.
 the `primer.evaluation.contract` shape, and report the gated key per slice as well as overall.
 
 - **Acceptance** — `check_gate.py --only drawing` returns a verdict rather than `metric missing`,
-  and the baseline number is recorded as a dated Verified fact whether or not it clears 0.85.
+  and the baseline number is recorded as a dated Verified fact whether or not it clears 0.85. The
+  fact has to say what the number is over: top-5 on **rendered Quick, Draw!**, which is the gate's
+  number and not the product's. KAN-64 delivers a photograph. S6c2 measures the difference, and
+  until it has, "clears 0.85" means the gate passed, not that the stage works.
 - **Depends on** — S6a, S6b2. **Jira** — KAN-38.
+
+### S6c2 · Photographed eval split
+
+*size: medium · person-only for the labelling*
+
+A held-out set of **real** child drawings, labelled by hand and scored under three preprocessings,
+so the distance between the gate's number and the product's is measured rather than assumed. The
+drawings come from Amateur Drawings, which KAN-24 already ingested.
+
+- **Why separate** — S6c measures rendered Quick, Draw!, and every input the product actually
+  receives is a photograph of crayon on paper. `CHARACTER_DRAWINGS` carries a bounding box, 17 COCO
+  joints and a segmentation polygon and **no category at all**, so the labels do not exist anywhere
+  and have to be made. That is the one part of this stage no agent can do.
+- **What a person does** — hand-label ~400 rows with a Quick, Draw! category. A captioning VLM may
+  propose and a human dispose, but the labels must not come from a VLM alone: every candidate is
+  photo-trained like the recogniser, so labeller and subject would fail on the same drawings in the
+  same direction and the set would score the model correct exactly where both are confused. Record
+  the agreement rate, and label one slice cold as a control for anchoring.
+- **What an agent does** — freeze the labelled set under a data version, add the test that keeps it
+  out of every training and augmentation path, and build the three-variant scoring: as uploaded
+  (colour photograph), converted to greyscale (isolates colour), and cropped and binarised
+  (isolates photography, lighting and paper texture). The binarise step is KAN-31's preprocessing
+  module, so this measures the real inference path rather than a test rig.
+- **Acceptance** — three numbers from one MLflow run with S6a's baseline evaluated on each, named
+  so none can be mistaken for `drawing_top5_acc`. **The gaps between them are the deliverable**,
+  not any single number.
+- **Depends on** — S6a, S6b2, and a person for the labelling. KAN-110 (kiddraw) would add a fourth,
+  natively-digital rung if its licence clears; it is an accelerator and this slice does not wait
+  for it. **Jira** — KAN-109.
 
 ### S6d · Fine-tune the recogniser
 
@@ -197,8 +229,13 @@ before an agent may run training at all, and no area has them yet.
   number. A capped local run proves the wiring; the run that gets registered is a person's, on
   Vertex AI, from the area's container against the frozen data version.
 - **Acceptance** — a capped local run completes and logs an MLflow run; `drawing_top5_acc` from
-  S6c is compared with the S6a baseline in Verified facts, against the 0.85 target.
-- **Depends on** — S6b2, S6c. **Jira** — KAN-38.
+  S6c is compared with the S6a baseline in Verified facts, against the 0.85 target. S6c2's
+  photographed numbers go in the same run and are compared with the baseline's too. **A gain on
+  rendered Quick, Draw! together with a loss on photographs is the outcome this stage most needs to
+  catch**, and recording only the gated number makes it invisible. If S6c2 has not produced numbers
+  yet, this slice may still run, but its Verified fact has to say the result is unvalidated against
+  photographs rather than leaving the reader to assume otherwise.
+- **Depends on** — S6b2, S6c; S6c2 for the second half of its acceptance. **Jira** — KAN-38.
 
 ### S6e · The rest of the character sheet
 
@@ -306,10 +343,11 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S4 | not started | | |
 | S5 | not started | | |
 | S5b | not started | | Vertex GPU job |
-| S6a | in review | [#18](https://github.com/keithfernandes12/young-illustrators-primer/pull/18) | zero-shot SigLIP 2 baseline; no measured number until S6c |
+| S6a | merged | [#18](https://github.com/keithfernandes12/young-illustrators-primer/pull/18) | zero-shot SigLIP 2 baseline; no measured number until S6c |
 | S6b | merged | [#19](https://github.com/keithfernandes12/young-illustrators-primer/pull/19) | `render_strokes` + config + PNG; numpy only, so CI covers it. KAN-87 |
-| S6b2 | not started | | |
-| S6c | not started | | |
+| S6b2 | not started | | ready: S6b is merged. Needs the frozen QuickDraw version |
+| S6c | not started | | the gate's number, over rendered Quick, Draw! — not the product's |
+| S6c2 | not started | | person-only for the labelling; the product's number. KAN-109 |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap |
 | S6e | not started | | unblocks KAN-42's reposing and IP-Adapter branches |
 | S7 | not started | | needs GPU quota in region |
@@ -600,6 +638,27 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   recommended, and this branch picks it up in the merge rather than duplicating it. Nothing builds
   a wheel today, so it was latent either way.
 
+- **2026-11-14 — The recogniser sees colour at inference and never during training.** `model.py`
+  converts every upload with `.convert("RGB")`, so a colour photograph reaches the tower intact,
+  while `render_strokes` writes a 2-D array holding two grey levels and its config validates
+  `background`/`ink` as single 0–255 integers, so a colour cannot be expressed there at all.
+  Nothing stores one either: `Character` has no colour field and neither do the data schemas,
+  although KAN-38 lists "colors and features (k-means + Florence-2)" as a character-sheet output.
+  Zero-shot the asymmetry is probably mild, since SigLIP 2 was trained on photographs; after S6d it
+  is a way for the fine-tune to regress on colour drawings invisibly, because the gate is scored on
+  greyscale renders.
+- **2026-11-14 — kiddraw is black-stroke only, so it does not answer the colour question.**
+  Measured from the repository rather than the paper: `experiments/museumstation/trial-sequence.js`
+  sets `path.strokeColor = 'black'`, `strokeCap = 'round'`, `strokeWidth = 10`, and the analysis
+  code measures ink from the alpha channel (`img[:,:,3]`), which only works when every stroke is one
+  colour on a transparent ground. It is still the only source found with drawings by real children
+  **and** category labels: 37,770 drawings, ages 2–10, 48 categories of which 44 map onto our 345
+  (39 exact, 5 by clear synonym), checked against `src/primer/drawing/configs/quickdraw_categories.txt`.
+  It carries no licence file and so cannot be ingested as it stands — KAN-110. No PNG was opened;
+  the colour finding is from source code. Searching also turned up **no public dataset of labelled
+  colour children's drawings**, which is why S6c2 decomposes the gap by varying preprocessing rather
+  than by finding more data.
+
 ## Open questions
 
 - **Should CI run any line of `SiglipEncoder`?** **Tracked as KAN-106.** Today it runs none: CI installs `.[dev]`, `torch`
@@ -618,6 +677,14 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   only. `docs/engineering/model-development.md` still has an open question about who hosts the
   shared MLflow server, so there is nowhere to log to yet. *Recommended:* settle the host before
   S6c produces the first `drawing_top5_acc`, which is a number that genuinely needs comparing.
+- **Does the recogniser see colour, or greyscale?** The pipeline answers this inconsistently today
+  — see the Verified fact above — and nothing has measured what the inconsistency costs.
+  *Recommended:* give the recogniser greyscale, since KAN-31's preprocessing module has to produce
+  it anyway, and keep colour for the character sheet and KAN-42, where it matters far more than it
+  does for naming an object; Quick, Draw! is the existence proof that 345 categories are separable
+  from outline alone. That needs a colour field on `Character`, which does not exist. S6c2's
+  greyscale variant measures the cost either way. *Decides:* the KAN-38 owner with the KAN-31 owner,
+  before S6d.
 
 - **Should `Character.__post_init__` reject non-finite confidences?** Its ranking check passes on a
   list containing NaN, because CPython's list comparison short-circuits on identity, so the
