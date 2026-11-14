@@ -140,20 +140,37 @@ cached weights, mirroring `primer.illustration.smoke`.
   any measured `drawing_top5_acc` (S6c, which needs S6b's dataset).
 - **Depends on** — nothing. **Jira** — KAN-38.
 
-### S6b · Rendered QuickDraw split for the recogniser
+### S6b · `render_strokes`, the one QuickDraw renderer
+
+*size: small*
+
+The shared function KAN-87 asks for: strokes on the 0–255 grid in, a deterministic image out, with
+size, line width and padding from config rather than from a call site. **One** implementation,
+imported by both the training loader and inference, because two renderers that drift is the exact
+failure this ticket exists to prevent. `license` and `attribution` stay on every rendered record.
+
+- **Why separate** — it is a pure function with no model and no frozen data, testable on fixed
+  strokes, and three later slices import it. It is also the one piece of S6 that another area may
+  want, so it should land on its own and early.
+- **Acceptance** — a known stroke list renders to the expected pixels in a test with no bucket
+  access; the same strokes and settings give identical output across runs; training and inference
+  import the same function, asserted by a test rather than by convention.
+- **Decide while building** — render on the fly in the loader, or cache per frozen version. If
+  cached, write under `processed/` with a record of the settings, never into `raw/`. Record the
+  choice as a dated Decision.
+- **Depends on** — nothing. **Jira** — KAN-87.
+
+### S6b2 · Rendered QuickDraw split for the recogniser
 
 *size: medium*
 
-`src/primer/drawing/data.py`: train/val/test over the frozen QuickDraw version, reading images
-through KAN-87's shared `render_strokes` so training and inference cannot drift, with KAN-31's
-paper/crayon augmentation applied at training time only.
+`src/primer/drawing/data.py`: train/val/test over the frozen QuickDraw version through S6b's
+renderer, with KAN-31's paper/crayon augmentation applied at training time only.
 
-- **Why separate** — it is the only slice in S6 that needs frozen data on disk and the render
-  function, and both belong to another member's ticket.
+- **Why separate** — it is the first slice that needs frozen data on disk, which S6b does not.
 - **Acceptance** — the loader returns the three splits for a pinned version, no record appears in
   two splits, and augmentation is off for val and test.
-- **Depends on** — **KAN-87** (`render_strokes`, assigned to another member) and KAN-31.
-  **Jira** — KAN-87.
+- **Depends on** — S6b, and KAN-31 for the augmentation set. **Jira** — KAN-38.
 
 ### S6c · `drawing_top5_acc` from the golden split
 
@@ -164,7 +181,7 @@ the `primer.evaluation.contract` shape, and report the gated key per slice as we
 
 - **Acceptance** — `check_gate.py --only drawing` returns a verdict rather than `metric missing`,
   and the baseline number is recorded as a dated Verified fact whether or not it clears 0.85.
-- **Depends on** — S6a, S6b. **Jira** — KAN-38.
+- **Depends on** — S6a, S6b2. **Jira** — KAN-38.
 
 ### S6d · Fine-tune the recogniser
 
@@ -180,7 +197,7 @@ before an agent may run training at all, and no area has them yet.
   Vertex AI, from the area's container against the frozen data version.
 - **Acceptance** — a capped local run completes and logs an MLflow run; `drawing_top5_acc` from
   S6c is compared with the S6a baseline in Verified facts, against the 0.85 target.
-- **Depends on** — S6b, S6c. **Jira** — KAN-38.
+- **Depends on** — S6b2, S6c. **Jira** — KAN-38.
 
 ### S6e · The rest of the character sheet
 
@@ -289,7 +306,8 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S5 | not started | | |
 | S5b | not started | | Vertex GPU job |
 | S6a | not started | | ready: needs no dataset |
-| S6b | not started | | person-only until KAN-87 lands; another member owns `render_strokes` |
+| S6b | not started | | ready: pure function, no data. KAN-87, taken over by this stage |
+| S6b2 | not started | | |
 | S6c | not started | | |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap |
 | S6e | not started | | unblocks KAN-42's reposing and IP-Adapter branches |
@@ -304,6 +322,13 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 
 ## Decisions
 
+- **2026-11-14** — The drawing stage takes over **KAN-87** (`render_strokes`), which was assigned
+  elsewhere and unstarted since 2026-11-08 — no branch, no PR, no `render_strokes` in the tree. It
+  is the hard dependency of every measured slice in S6, so leaving it where it was left S6c and S6d
+  blocked behind work nobody had begun. Split out as S6b, a pure function with no frozen data, and
+  deliberately kept as **one** renderer imported by training and inference alike: KAN-87's whole
+  point is that the two cannot drift, and that reason survives the change of owner. The dataset
+  split that was S6b is now S6b2. **Tell the previous assignee before starting S6b.**
 - **2026-11-14** — S6 split into S6a–S6e so a loop can take one at a time, and each slice given the
   Jira key that already covers it (KAN-38, or KAN-87 for the render dependency) rather than new
   issues: `loop-worker` skips a slice with no key, and creating issues is an `ask` rule that would
