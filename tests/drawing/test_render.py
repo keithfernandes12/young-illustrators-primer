@@ -124,6 +124,18 @@ def test_the_tie_break_between_two_equally_close_pixels_is_pinned(tiny):
     assert inked(image, tiny) == {(1, 5), (2, 6), (3, 6)}
 
 
+def test_the_other_tie_break_is_pinned_too(tiny):
+    """`_line` breaks two ties, and pinning one of them is not pinning the other.
+
+    A tie in the second branch needs an even `dx`, and every other stroke in this file has `dx` of
+    7 or 0 -- so loosening `doubled <= dx` to `doubled < dx` moved 36 of this grid's 625
+    coordinate pairs while the whole suite stayed green.
+    """
+    image = render_strokes([[[0, 2], [0, 1]]], tiny)
+
+    assert inked(image, tiny) == {(1, 1), (2, 2), (2, 3), (3, 4), (3, 5)}
+
+
 def test_a_coordinate_exactly_between_two_pixels_rounds_up(tiny):
     """Half up, not to even. At this scale coordinate 2 falls 4.5 pixels past the padding edge."""
     half = RenderConfig(**{**vars(tiny), "size": 12})  # content 10, so the scale is 9/4
@@ -251,12 +263,23 @@ def test_a_config_missing_a_setting_says_which_one(tmp_path):
         RenderConfig.from_yaml(partial)
 
 
+@pytest.mark.parametrize(("text", "message"), [("", "an empty document"), ("- 1\n- 2\n", "list")])
+def test_a_config_that_is_not_a_mapping_says_so(tmp_path, text, message):
+    """A commented-out or empty file parses to None, and iterating that names NoneType, not it."""
+    odd = tmp_path / "drawing_render.yaml"
+    odd.write_text(text, encoding="utf-8")
+
+    with pytest.raises(TypeError, match=message):
+        RenderConfig.from_yaml(odd)
+
+
 @pytest.mark.parametrize(
     ("strokes", "message"),
     [
         ("[[[0],[0]]]", "json.loads"),
         ([["12", "34"]], "x run is text"),
         ([[[0], "34"]], "y run is text"),
+        ([{"x": [0], "y": [0]}], "is a mapping"),
         ([[["a"], ["b"]]], "could not convert string to float"),
         ([[[0, None], [0, 1]]], "not sequences of numbers"),
         (None, "null for image sources"),
@@ -312,6 +335,7 @@ def chunks(encoded: bytes) -> list[tuple[bytes, bytes]]:
         found.append((tag, payload))
         offset += 12 + length
     assert offset == len(encoded), "the chunks account for every byte of the file"
+    assert found[-1] == (b"IEND", b""), "IEND comes last and carries nothing"
     return found
 
 
@@ -332,6 +356,13 @@ def test_png_is_well_formed_and_carries_the_pixels_it_was_given(tiny):
     assert len(body) == 10 * 11 and all(row[0] == 0 for row in rows), "filter byte 0 on every row"
     pixels = np.frombuffer(b"".join(row[1:] for row in rows), dtype=np.uint8)
     assert np.array_equal(pixels.reshape(10, 10), image)
+
+
+def test_png_records_width_and_height_the_right_way_round():
+    """Every other image here is square, so swapping the two in the IHDR pack would survive."""
+    found = chunks(to_png(np.zeros((3, 7), dtype=np.uint8)))
+
+    assert struct.unpack(">II", found[0][1][:8]) == (7, 3), "IHDR is width then height"
 
 
 def test_a_corrupted_png_does_not_pass_the_chunk_check(tiny):
@@ -367,19 +398,21 @@ def test_png_refuses_an_array_it_cannot_encode():
 
 
 def owned_python_files() -> list[Path]:
-    """Every Python file this repository owns.
+    """Every Python file this repository owns, pruning as it walks.
 
-    The excluded directories are pruned at the top level rather than filtered afterwards, because
-    walking into `.venv` costs more than parsing everything we keep.
+    Pruned rather than filtered afterwards because walking into `.venv` costs more than parsing
+    everything that is kept. A directory with its own `.git` is pruned too: an agent worktree
+    under `.claude/worktrees` holds a second copy of this repository, which would report every
+    module twice on a developer's machine while CI, which has no worktrees, stayed green.
     """
     found = list(REPO.glob("*.py"))
-    for root in REPO.iterdir():
-        if root.is_dir() and root.name not in NOT_OURS:
-            found.extend(
-                path
-                for path in root.rglob("*.py")
-                if not NOT_OURS & set(path.relative_to(REPO).parts)
-            )
+    unvisited = [path for path in REPO.iterdir() if path.is_dir()]
+    while unvisited:
+        directory = unvisited.pop()
+        if directory.name in NOT_OURS or (directory / ".git").exists():
+            continue
+        found.extend(directory.glob("*.py"))
+        unvisited.extend(child for child in directory.iterdir() if child.is_dir())
     return found
 
 
@@ -406,7 +439,10 @@ def test_render_strokes_is_defined_exactly_once():
         )
     ]
 
-    assert [path.name for path in defined] == ["render.py"]
+    # Repo-relative, not basenames: when this fails it has to say *where* the second one is.
+    assert [path.relative_to(REPO).as_posix() for path in defined] == [
+        "src/primer/drawing/render.py"
+    ]
 
 
 #: Modules that exist to turn geometry into pixels. `PIL.Image` is not one of them -- opening and

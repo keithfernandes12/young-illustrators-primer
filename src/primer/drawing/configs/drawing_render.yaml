@@ -28,8 +28,10 @@ size: 224
 # no model has scored a rendered drawing yet, and S6c is the first slice that can say whether this
 # is the right weight.
 line_width: 3
-# Blank margin in pixels on every side. Quick, Draw! strokes run to the edge of their grid, and a
-# stroke lying on the canvas border is half outside a convolution's receptive field.
+# Margin in pixels from the canvas edge to a stroke's *centre line*, on every side. The blank
+# border is narrower by the stroke's radius -- at `line_width: 3` the outermost ink sits one pixel
+# inside this. Quick, Draw! strokes run to the edge of their grid, and a stroke lying on the canvas
+# border is half outside a convolution's receptive field.
 padding: 8
 # Greyscale levels: paper and ink. Dark ink on light paper, like the crayon drawings this stage
 # actually has to recognise. Not a binary mask -- the values are what KAN-31's paper and crayon

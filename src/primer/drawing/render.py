@@ -34,7 +34,7 @@ import itertools
 import math
 import struct
 import zlib
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
 from functools import lru_cache
 from pathlib import Path
@@ -128,6 +128,11 @@ class RenderConfig:
     @classmethod
     def from_yaml(cls, path: Path = CONFIG_PATH) -> RenderConfig:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            # An empty or commented-out file parses to None, and iterating that below would raise
+            # a TypeError naming NoneType rather than the file.
+            kind = "an empty document" if raw is None else type(raw).__name__
+            raise TypeError(f"{path.name} should be a mapping of settings, not {kind}")
         missing = [f.name for f in fields(cls) if f.name not in raw]
         if missing:
             raise ValueError(f"{path.name} does not set {', '.join(missing)}")
@@ -204,6 +209,13 @@ def _runs(stroke: Stroke, index: int) -> tuple[list[float], list[float]]:
     Materialised rather than iterated twice so that validating a run and then drawing it cannot see
     two different sequences, and so that numpy arrays, tuples and `range` objects all behave.
     """
+    if isinstance(stroke, Mapping):
+        # `list(a_dict)` gives its keys, so without this a record-shaped stroke falls through to
+        # the text check below and is told to parse itself with `json.loads` -- advice that is
+        # exactly wrong for the thing that arrived.
+        raise TypeError(
+            f"stroke {index} is a mapping; a stroke is two runs, [[x...], [y...]], not a record"
+        )
     try:
         runs = list(stroke)
     except TypeError as error:

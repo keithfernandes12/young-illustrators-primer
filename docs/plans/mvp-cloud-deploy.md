@@ -382,12 +382,21 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   the first and last drawable pixels of a 224px canvas with 8px padding. Pinned by
   `tests/drawing/test_render.py`, which asserts the exact inked pixels of horizontal, vertical,
   45°, shallow, steep and downhill diagonal, tie-breaking and single-point strokes on a 10×10
-  canvas rather than only their shape — the interior of a segment, not only its endpoints. 53
+  canvas rather than only their shape — the interior of a segment, not only its endpoints. 58
   tests, all but one running on `numpy` alone, so CI covers the whole path.
-- **2026-11-14** — The geometry tests were checked against two mutations rather than assumed to
-  bite. Loosening `_line`'s tie-break from `>=` to `>`, and swapping half-up rounding for Python's
-  round-half-to-even, each passed the suite as it stood at 45 tests; each now fails exactly one
-  test. Those are the two edits that move pixels without looking like they would.
+- **2026-11-14** — The geometry tests are checked against mutations rather than assumed to bite.
+  Three edits that move pixels without looking like they would have been found so far: loosening
+  `_line`'s first tie-break from `>=` to `>`, swapping half-up rounding for round-half-to-even,
+  and loosening the *second* tie-break from `<=` to `<`. The first two were caught in one round
+  and the third survived it — a tie in that branch needs an even `dx`, and every stroke pinned at
+  the time had `dx` of 7 or 0. Each now fails exactly one test. **Not a proof that no fourth
+  exists**, which is the honest status of any mutation check.
+- **2026-11-14** — The single-renderer guard scanned `src/primer` while claiming the repository,
+  and widening it introduced a second bug: a `.claude/worktrees` checkout made it report
+  `render.py` twice, so it failed on a developer's machine and passed in CI, which has no
+  worktrees. It now prunes any directory with its own `.git` and asserts repository-relative
+  paths, so a genuine second renderer is located rather than merely counted. Verified by dropping
+  a copy of the branch under `.claude/worktrees` and re-running.
 - **2026-11-14** — The same strokes and config give byte-identical PNGs across calls, and the
   hand-written encoder's output is a real PNG: Pillow opens it as mode `L` at the right size and
   the array it decodes equals the array that was encoded. That one check is skipped wherever
@@ -430,6 +439,18 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   whether Pillow happens to be installed? Recommended: once S6a lands the `drawing` extra, add
   `pillow` to it and point the skip at that, so the check can be opted into rather than only
   arriving by accident through `transformers`. Whoever merges S6a.
+- **Half of S6b's acceptance is deferred to S6b2, and the acceptance line does not say so.** "Training
+  and inference import the same function, asserted by a test" is asserted today as "defined exactly
+  once and nothing else draws", because nothing imports it yet; and "`license` and `attribution`
+  stay on every rendered record" belongs to the slice that handles records. Both are the right
+  calls, but S6b2 inherits them. *Recommended:* S6b2 adds the import assertion and the column
+  check, and this line moves with them.
+- **What should the S6b2 loader do when `render_strokes` raises mid-epoch?** The renderer refuses a
+  malformed drawing rather than rendering something plausible, and it will be called once per
+  record across hundreds of thousands. `preprocess` filters on `valid_strokes` before writing, so
+  processed records should never trip it — but "should never" is not a policy. Related: `valid_strokes`
+  accepts three runs (the raw format's timings) where the renderer requires two, so the two
+  definitions of a valid stroke have already diverged. *Recommended:* S6b2 decides, and says so.
 - Should the renderer's per-record cost be re-measured over the real S6b2 split? Recommended: yes,
   as part of S6b2 — the 0.356 ms figure is 50 drawings of one sparse category, and the obvious
   optimisation (indexing the canvas from the point list instead of building a list of tuples) has

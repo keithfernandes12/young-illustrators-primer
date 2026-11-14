@@ -34,9 +34,11 @@ primer-data = "primer.data.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
-# Every model area loads its settings with `Path(__file__).parent / "configs"`, which an editable
-# install and the area Dockerfiles satisfy but a built wheel would not: without this, the YAML is
-# left out of the distribution and the first call raises FileNotFoundError.
+# `primer.drawing.render` loads its settings with `Path(__file__).parent / "configs"`, and every
+# other area ships a `configs/` YAML waiting for the same treatment. An editable install and the
+# area Dockerfiles satisfy that, but a built wheel would not: without this the YAML is left out of
+# the distribution and the first call raises FileNotFoundError. The `*.txt` glob is for the
+# vocabulary file S6a adds alongside.
 [tool.setuptools.package-data]
 "*" = ["configs/*.yaml", "configs/*.txt"]
 
