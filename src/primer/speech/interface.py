@@ -6,9 +6,10 @@ stay cheap and must not load weights -- ``model.py`` does that, lazily.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol, runtime_checkable
+
+from numpy.typing import ArrayLike
 
 
 @dataclass(frozen=True)
@@ -102,8 +103,15 @@ class ReadingResult:
 class SpeechRecognizer(Protocol):
     """Listen to a child read. Audio is processed in memory and discarded."""
 
-    def transcribe(self, samples: Sequence[float], sample_rate: int = SAMPLE_RATE) -> Transcript:
-        """Transcribe one utterance of mono samples."""
+    def transcribe(
+        self, samples: ArrayLike, sample_rate: int = SAMPLE_RATE, prompt: str | None = None
+    ) -> Transcript:
+        """Transcribe one utterance of mono samples.
+
+        `prompt` is text the recogniser may condition on, such as the page being read. It lowers word
+        error rate but makes a misreading easier to auto-correct, so whether to pass it is a
+        configuration choice measured in ``train.py``, not a default.
+        """
         ...
 
 
@@ -115,7 +123,9 @@ class FakeSpeechRecognizer:
         self.word_s = word_s
         self.confidence = confidence
 
-    def transcribe(self, samples: Sequence[float], sample_rate: int = SAMPLE_RATE) -> Transcript:
+    def transcribe(
+        self, samples: ArrayLike, sample_rate: int = SAMPLE_RATE, prompt: str | None = None
+    ) -> Transcript:
         words = tuple(
             Word(text, round(i * self.word_s, 2), round((i + 1) * self.word_s, 2), self.confidence)
             for i, text in enumerate(self.heard.split())
