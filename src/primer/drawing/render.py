@@ -38,6 +38,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -47,8 +48,12 @@ CONFIG_DIR = Path(__file__).parent / "configs"
 CONFIG_PATH = CONFIG_DIR / "drawing_render.yaml"
 
 #: One stroke as Quick, Draw! stores it: ``[[x, x, ...], [y, y, ...]]``, two equal-length runs.
-Stroke = Sequence[Sequence[float]]
-Strokes = Sequence[Stroke]
+#:
+#: A numpy array is admitted alongside a sequence because `ndarray` is not a `Sequence`, and the
+#: loader S6b2 builds -- the primary caller -- holds its strokes as arrays. Without the union its
+#: one honest call site is a mypy error, and the usual answer to that is a `# type: ignore`.
+Stroke = Sequence[Sequence[float]] | npt.NDArray[Any]
+Strokes = Sequence[Stroke] | npt.NDArray[Any]
 
 Image = npt.NDArray[np.uint8]
 
@@ -251,6 +256,13 @@ def _points(strokes: Strokes, config: RenderConfig) -> npt.NDArray[np.int64]:
         # The `strokes` column is JSON text (`primer.data.schemas`), so this is the likely mistake
         # at a call site, and iterating a string would otherwise fail somewhere far less obvious.
         raise TypeError("strokes is JSON text; parse it with json.loads before rendering")
+    if isinstance(strokes, Mapping):
+        # The whole record rather than its `strokes` column. Without this it iterates the dict's
+        # keys, and the first key's *length* is reported as a run count -- so a one-character slip
+        # at the call site comes back as advice about the raw format's timings.
+        raise TypeError(
+            "strokes is a mapping; pass the record's parsed `strokes` column, not the record"
+        )
     try:
         count = len(strokes)
     except TypeError as error:
@@ -271,7 +283,13 @@ def _points(strokes: Strokes, config: RenderConfig) -> npt.NDArray[np.int64]:
         if not xs:
             raise ValueError(f"stroke {index} has no points")
         for value in (*xs, *ys):
-            if not math.isfinite(value) or not 0 <= value <= limit:
+            # Two checks rather than one `or`: a chained comparison against NaN is already False,
+            # so folding them together leaves the first looking load-bearing while the second
+            # silently does the work -- and reports a NaN as "outside the source grid", which is
+            # not what is wrong with it.
+            if not math.isfinite(value):
+                raise ValueError(f"stroke {index} has the non-finite coordinate {value}")
+            if not 0 <= value <= limit:
                 raise ValueError(
                     f"stroke {index} has the coordinate {value}, outside the 0-{limit} source grid"
                 )

@@ -291,8 +291,9 @@ def test_a_config_that_is_not_a_mapping_says_so(tmp_path, text, message):
         ([[[], []]], "no points"),
         ([[[0], [5]]], "source grid"),
         ([[[0], [-1]]], "source grid"),
-        ([[[0], [float("nan")]]], "source grid"),
-        ([[[0], [float("inf")]]], "source grid"),
+        ([[[0], [float("nan")]]], "non-finite coordinate"),
+        ([[[0], [float("inf")]]], "non-finite coordinate"),
+        ({"record_id": "r1", "strokes": [[[0], [0]]]}, "pass the record's parsed"),
     ],
 )
 def test_a_malformed_drawing_is_refused(strokes, message, tiny):
@@ -309,15 +310,34 @@ def test_a_malformed_drawing_is_refused(strokes, message, tiny):
         ({"padding": 5}, "at least 2"),
         ({"size": 1}, "at least 2"),
         ({"padding": -1}, "cannot be negative"),
-        ({"background": 300}, "0-255"),
+        ({"background": 256}, "0-255"),
         ({"source_grid": 1}, "source_grid"),
         ({"size": 224.0}, "whole number"),
         ({"padding": True}, "whole number"),
+        # One row per name in WHOLE_NUMBERS: dropping any of them from that tuple is a mutation
+        # the table would otherwise miss, and a float there fails much later inside numpy.
+        ({"line_width": 3.0}, "whole number"),
+        ({"ink": 0.5}, "whole number"),
+        ({"background": 255.0}, "whole number"),
+        ({"source_grid": 5.5}, "whole number"),
     ],
 )
 def test_a_config_that_would_render_something_misleading_is_refused(override, message):
     with pytest.raises((ValueError, TypeError), match=message):
         RenderConfig(**{**vars(TINY), **override})
+
+
+def test_the_drift_guard_fires_when_the_scale_and_the_validation_disagree(tiny, monkeypatch):
+    """`render_strokes`'s closing guard is unreachable through any valid config, by design.
+
+    It is there because numpy indexing wraps on a negative index: a future change that desynced
+    the coordinate check from the scale would draw onto the opposite edge with no error at all.
+    Nothing else can reach it, so this forces the two apart rather than leaving the branch untested.
+    """
+    monkeypatch.setattr(RenderConfig, "scale", property(lambda self: 100.0))
+
+    with pytest.raises(RuntimeError, match="drifted apart"):
+        render_strokes([[[0, 4], [0, 0]]], tiny)
 
 
 def chunks(encoded: bytes) -> list[tuple[bytes, bytes]]:

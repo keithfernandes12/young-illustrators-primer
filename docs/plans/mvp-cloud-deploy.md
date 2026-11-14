@@ -382,8 +382,15 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   the first and last drawable pixels of a 224px canvas with 8px padding. Pinned by
   `tests/drawing/test_render.py`, which asserts the exact inked pixels of horizontal, vertical,
   45°, shallow, steep and downhill diagonal, tie-breaking and single-point strokes on a 10×10
-  canvas rather than only their shape — the interior of a segment, not only its endpoints. 58
+  canvas rather than only their shape — the interior of a segment, not only its endpoints. 64
   tests, all but one running on `numpy` alone, so CI covers the whole path.
+- **2026-11-14** — `render_strokes` accepts numpy arrays in its type signature, not only at run
+  time. `ndarray` is not a `Sequence`, so the original alias made the loader S6b2 is going to
+  build — which holds strokes as arrays, and is the function's primary caller — a mypy error at
+  its one honest call site. Verified both ways: before the widening a list of arrays failed
+  `mypy` with `incompatible type … expected Sequence[Sequence[Sequence[float]]]`; after it, a
+  caller passing a list of arrays and one passing a single array both type-check. The usual
+  answer to that error is a `# type: ignore`, which `AGENTS.md` treats as weakening CI.
 - **2026-11-14** — The geometry tests are checked against mutations rather than assumed to bite.
   Three edits that move pixels without looking like they would have been found so far: loosening
   `_line`'s first tie-break from `>=` to `>`, swapping half-up rounding for round-half-to-even,
