@@ -20,12 +20,22 @@ dependencies = [
     "great_expectations>=1.0,<2",  # profiling.py uses the 1.x API (data_sources, batch definitions)
     "fairlearn>=0.15",
     "scikit-learn>=1.5",
+    "pillow>=10.3",  # illustration: reading drawings and building the ControlNet control image
 ]
 
 [project.optional-dependencies]
 dashboard = ["streamlit>=1.40"]
 dvc = ["dvc[gs]>=3.50"]
 dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.10"]
+# The diffusion stack for illustration/model.py. Gigabytes with CUDA wheels, so CI does not install it:
+# the tests use a fake pipeline, and only the smoke run and the GPU worker need the real one.
+illustration = [
+    "torch>=2.4",
+    "diffusers>=0.30",
+    "transformers>=4.44",
+    "accelerate>=0.33",
+    "safetensors>=0.4",
+]
 
 [project.scripts]
 primer-data = "primer.data.cli:main"
