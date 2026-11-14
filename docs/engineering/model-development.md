@@ -2,9 +2,10 @@
 title: How six people build six models at once
 type: engineering
 created: 2026-11-12
-updated: 2026-11-13
+updated: 2026-11-14
 status: active
 author: rishiparekh
+jira: [KAN-93]
 tags: [models, mlops, gcp, parallel, process]
 related: [engineering-loop, ci, mvp-cloud-deploy, model-stages-and-data-coverage]
 ---
@@ -46,7 +47,8 @@ compared, gated or served. Three of the four prerequisites are done; the fourth 
 one agents cannot do.
 
 1. **`src/primer/evaluation/`** — *done.* The metrics contract, the golden-set runner and
-   `configs/golden/scenarios.jsonl`. `check_gate.py` now returns PASS or FAIL, so
+   `configs/golden/scenarios.jsonl`. `check_gate.py` now returns `PASS`, `FAIL`,
+   `INCONCLUSIVE` or `FAKE-PASS`/`FAKE-FAIL` whenever it has something to judge, so
    `GATE_RESULT: SKIP` means exactly one thing: the metrics file is missing.
 2. **The area skeleton** — *done.* All six areas exist with the layout in section 2 (stage 6 lives
    inside `illustration/`, which is why seven stages need six directories).
@@ -155,7 +157,7 @@ guidelines ask for (bar plot across candidates, confusion matrix where the task 
 - **Concurrency** is capped by `YIP_MAX_TRAIN_JOBS` (default 4 launches per goal), with at most one
   GPU job per component at a time. Never cancel another member's job.
 
-## 3. The seven steps, identical for every stage
+## 3. The eight steps, identical for every stage
 
 One PR per step. Steps 0 and 1 land in the first week, for all six areas at once.
 

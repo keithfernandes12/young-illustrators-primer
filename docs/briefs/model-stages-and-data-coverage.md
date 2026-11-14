@@ -2,10 +2,10 @@
 title: Which pipeline stages need a model, and whether the data supports them
 type: brief
 created: 2026-11-12
-updated: 2026-11-13
+updated: 2026-11-14
 status: draft
 author: rishiparekh
-jira: []
+jira: [KAN-93]
 tags: [models, data, mvp, scoping]
 related: [mvp-cloud-deploy]
 ---
