@@ -382,7 +382,9 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   each score is "does this label fit" independently — but it means a confidence threshold tuned as
   if it were a softmax probability would reject nearly everything. Ranking, which is all
   `drawing_top5_acc` reads, is unaffected.
-- **2026-11-14 — S6a: SigLIP 2 base fits the 8 GB rule, measured.** Loaded and counted rather than
+- **2026-11-14 — S6a: SigLIP 2 base's parameter count and weight footprint, measured.** (The
+  heading used to say "fits the 8 GB rule, measured", which a reader skimming headings would take
+  as a VRAM measurement. It is not one — see the end of this bullet.) Loaded and counted rather than
   estimated: 375,187,970 parameters total, **1.398 GB in fp32 / 0.699 GB in bf16**, split as a
   92,884,224-parameter vision tower (0.346 GB fp32) and a 282,303,744-parameter text tower
   (1.052 GB fp32). S6d fine-tunes the **vision** tower, so the figure that matters there is 93 M
@@ -443,10 +445,34 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   GPU work and S6d will fine-tune in it, while `CARD.md` and these facts already said bf16 and the
   code said fp16 — one of the two was wrong. bf16 also keeps fp32's exponent range, which is the
   half of the precision question that produces a NaN rather than a drift. **Still unrun on a GPU.**
+- **2026-11-14 — S6a: that dtype switch was unasserted, and it silently decoupled three tests
+  from the code.** A third review round found that `load()`'s dtype choice could be set to fp16,
+  or to plain fp32 giving up reduced precision on CUDA entirely, with the whole suite green —
+  while the three tests added to close the CUDA gap still said "what `load()` picks on CUDA" and
+  ran float16. `load()` now has a test of its own, the first it has ever had, covering the dtype,
+  the device and the `from_pretrained` keywords against a stubbed factory; and the
+  reduced-precision fixture runs both fp16 and bf16, because the norm-floor regression only shows
+  in fp16 while the production path is bf16. Mutation-checked: setting the dtype to fp16 now fails
+  one test. The same round found the **text**-side norm floor unpinned — only the image side's was
+  — which is the side where one NaN ruins every confidence rather than one encoding.
+- **2026-11-14 — S6a: comments and card carried fp16 numbers after the switch.** The cross-dtype
+  cache-key warning said one step is "about thirty times" the rounding step, true of fp16; in
+  bf16 it is around 2.8e-4, some **280 times**. `CARD.md` contradicted itself on one page. The
+  justification for making the norm floor a parameter also claimed clamping to 1e-12 fails "on the
+  CUDA path", which is false for bf16 — it keeps fp32's exponent range and represents 1e-12
+  exactly. Corrected in all four places; the parameter stays, because the point is not to depend
+  on which dtype someone picks.
 
 ## Open questions
 
-- **Should CI run any line of `SiglipEncoder`?** Today it runs none: CI installs `.[dev]`, `torch`
+- **S6a should land after S6b, or carry S6b's `package-data` fix.** A wheel built from this branch
+  contains no `configs/` YAML at all, so `DrawingRecognizerModel()` raises `FileNotFoundError` from
+  a wheel install — editable installs and the area `Dockerfile` both hide it, which is why the
+  tests, `verify` and the smoke run all pass. PR #19 already adds the
+  `[tool.setuptools.package-data]` block that fixes it for every area, so duplicating it here
+  would only conflict on merge. *Recommended:* merge #19 first. Nothing builds a wheel today, so
+  this is latent either way.
+- **Should CI run any line of `SiglipEncoder`?** **Tracked as KAN-106.** Today it runs none: CI installs `.[dev]`, `torch`
   is only in the `drawing` extra, and `tests/drawing/test_siglip_encoder.py` skips wholesale. Both
   bugs this slice found, and both the review found, lived in exactly that region. *Recommended:* a
   separate, non-blocking CI job that installs the extra and runs that file on CPU — a few minutes
@@ -457,7 +483,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   checkpoint sha is pinned precisely so a rerun reproduces a measured number, and `model.pooled`
   exists because the return shape changed between majors — a minor is the same class of risk
   against the same numbers. *Recommended:* add the extra to the pinned set when CI installs it.
-- **Where does a zero-shot number get logged?** `AGENTS.md` requires every model comparison to go
+- **Where does a zero-shot number get logged?** **Tracked as KAN-107.** `AGENTS.md` requires every model comparison to go
   to MLflow, and nothing from S6a is in one: the baseline's figures live in these Verified facts
   only. `docs/engineering/model-development.md` still has an open question about who hosts the
   shared MLflow server, so there is nowhere to log to yet. *Recommended:* settle the host before

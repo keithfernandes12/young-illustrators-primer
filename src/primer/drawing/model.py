@@ -43,15 +43,18 @@ CONFIG_PATH = CONFIG_DIR / "drawing_baseline.yaml"
 #: The embedding is rounded so that `Character.identity_key`, which hashes it, is not changed by
 #: float noise that means nothing. The confidence is rounded for a weaker reason -- a character
 #: sheet is serialised, compared and read by people, and seventeen significant digits of a sigmoid
-#: are noise in all three -- and four decimals is chosen to keep two significant figures on the
-#: tail of a zero-shot ranking, where the fifth candidate scores around 0.002.
+#: are noise in all three. Four decimals keeps one or two significant figures on the tail of a
+#: zero-shot ranking: measured across two drawings the fifth candidate scored 0.0023 and 0.00045,
+#: so on a weak drawing the tail rounds coarsely and candidates can tie. Ties are legal, and the
+#: gate reads ranking rather than magnitude -- but anything that comes to depend on the tail's
+#: precision should raise this rather than assume it.
 #:
-#: **It does not make the key portable across dtypes.** The tower runs in fp16 on CUDA and fp32 on
-#: CPU, and near a unit vector's typical component (1/sqrt(768) is about 0.036) one fp16 step is
-#: around 3e-5 -- thirty times this rounding step -- so the same drawing analysed on a GPU and on a
-#: CPU keys to two different cache entries. No rounding fixes that; it is a difference in what the
-#: tower computed, not noise on top of it. Anything that shares a KAN-71 cache between devices has
-#: to say which dtype the key was taken at.
+#: **It does not make the key portable across dtypes.** The tower runs in bf16 on CUDA and fp32 on
+#: CPU, and near a unit vector's typical component (1/sqrt(768) is about 0.036) one bf16 step is
+#: around 2.8e-4 -- some 280 times this rounding step -- so the same drawing analysed on a GPU and
+#: on a CPU keys to two different cache entries. No rounding fixes that; it is a difference in what
+#: the tower computed, not noise on top of it. Anything that shares a KAN-71 cache between devices
+#: has to say which dtype the key was taken at.
 CONFIDENCE_DECIMALS = 4
 EMBEDDING_DECIMALS = 6
 
@@ -83,9 +86,11 @@ def l2_normalised(features: Any, floor: float) -> Any:
     `Character.__post_init__` does not reject, because NaN compares equal to itself by identity.
 
     ``floor`` is a parameter rather than a constant because the right value depends on the dtype
-    the tower is running in, and a fixed one makes the guard a no-op exactly where it matters: a
-    float16's smallest normal is about 6e-5, so clamping to 1e-12 on the CUDA path clamps to 0.0
-    and the 0/0 happens regardless. Call sites pass ``torch.finfo(features.dtype).tiny``.
+    the tower is running in. float16's smallest normal is about 6e-5, so a fixed 1e-12 clamps to
+    0.0 there and the 0/0 happens regardless -- the guard is a no-op in the dtype it most needs to
+    work in. bfloat16, which the CUDA path now selects, keeps fp32's exponent range and would be
+    fine with a constant; the parameter is what stops that from being an accident of the dtype
+    anyone happens to pick. Call sites pass ``torch.finfo(features.dtype).tiny``.
     """
     return features / features.norm(p=2, dim=-1, keepdim=True).clamp_min(floor)
 
@@ -236,9 +241,9 @@ class SiglipEncoder:
         # 1-bit PNG to an RGBA screenshot.
         drawing = Image.open(io.BytesIO(image)).convert("RGB")
         # The dtype as well as the device. The processor always returns float32 `pixel_values`, and
-        # `BatchFeature.to(device)` moves them without casting, so on CUDA -- where the tower is
-        # fp16 -- the first matmul raises "mat1 and mat2 must have the same dtype". The CPU path
-        # never sees it, which is why a CPU smoke run cannot prove the GPU one.
+        # `BatchFeature.to(device)` moves them without casting, so on CUDA -- where the tower is in
+        # reduced precision -- the first matmul raises "mat1 and mat2 must have the same dtype".
+        # The CPU path never sees it, which is why a CPU smoke run cannot prove the GPU one.
         inputs = self._processor(images=drawing, return_tensors="pt").to(self.device, self._dtype)
         with torch.no_grad():
             raw = pooled(self._model.get_image_features(**inputs))

@@ -85,6 +85,12 @@ class StubTower(torch.nn.Module):
         self.seen_dtype = inputs["pixel_values"].dtype
         return Pooling(torch.tensor([self.weights], dtype=self.dtype_out))
 
+    def to(self, *args, **kwargs):
+        # Overrides `nn.Module.to` so that `load()` can be tested against a CUDA device on a
+        # CPU-only torch: the real one would raise before the dtype could be asserted.
+        self.moved_to = args
+        return self
+
     def eval(self):
         return self
 
@@ -94,11 +100,13 @@ class StubProcessor:
 
     def __init__(self):
         self.text_kwargs: dict = {}
+        self.image_mode: str | None = None
 
     def __call__(self, text=None, images=None, **kwargs):
         if text is not None:
             self.text_kwargs = kwargs
             return Batch({"input_ids": torch.zeros(len(text), 3, dtype=torch.long)})
+        self.image_mode = getattr(images, "mode", None)
         return Batch({"pixel_values": torch.zeros(1, 3, 8, 8)})
 
 
@@ -130,14 +138,16 @@ def encoder(config):
     return stubbed(config, torch.float32)
 
 
-@pytest.fixture
-def half(config):
-    """A tower in float16 -- what `load()` picks on CUDA, and what no test could reach before.
+@pytest.fixture(params=[torch.float16, torch.bfloat16], ids=["float16", "bfloat16"])
+def half(config, request):
+    """A tower in reduced precision. Both of them, deliberately.
 
-    Every fp16 bug in this file's history lived here: the processor returns float32 pixels, the
-    norm floor has to come from the dtype, and nothing on a CPU-only machine exercises either.
+    `load()` picks **bfloat16** on CUDA, so that is the dtype the production path runs in. float16
+    is kept because it is the dtype where a fixed norm floor breaks -- bf16 keeps fp32's exponent
+    range and represents 1e-12 exactly, so a bf16-only test would not catch that regression.
+    Every reduced-precision bug in this file's history lived in one or the other.
     """
-    return stubbed(config, torch.float16)
+    return stubbed(config, request.param)
 
 
 PROMPTS = ("a cat.", "a dog.", "a sun.", "a tree.")
@@ -163,18 +173,62 @@ def test_encode_returns_a_sigmoid_score_per_prompt(encoder, png):
     assert encoding.confidences[1] > encoding.confidences[0] > encoding.confidences[3]
 
 
-def test_a_text_row_with_no_features_does_not_poison_every_other_score(encoder, png):
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
+def test_a_text_row_with_no_features_does_not_poison_every_other_score(config, png, dtype):
     """Six prompts over four feature dimensions, so the stub's last two rows are zero vectors.
 
     A zero text row divides 0 by 0 without the norm floor, and one NaN anywhere in the text matrix
     makes *every* confidence NaN rather than only that prompt's. The four-prompt tests cannot
     reach this: `PROMPTS` is exactly `DIMENSIONS` long, so no row is ever zero.
+
+    Run in reduced precision as well as fp32 because the floor on the **text** side is otherwise
+    unpinned: at fp32 a hard-coded 1e-12 is a perfectly good floor, so only the fp16 case fails
+    when someone puts one back. The text side is the one where a single NaN ruins every
+    confidence rather than one encoding.
     """
-    encoding = encoder.encode(png, (*PROMPTS, "a boat.", "a kite."))
+    built = stubbed(config, dtype)
+
+    encoding = built.encode(png, (*PROMPTS, "a boat.", "a kite."))
 
     assert len(encoding.confidences) == 6
     assert all(math.isfinite(value) for value in encoding.confidences)
     assert encoding.confidences[1] == max(encoding.confidences), "the real prompts still rank"
+
+
+@pytest.mark.parametrize(("device", "dtype"), [("cuda", "bfloat16"), ("cpu", "float32")])
+def test_load_selects_the_dtype_that_goes_with_the_device(config, monkeypatch, device, dtype):
+    """The dtype is a decision `AGENTS.md` names, and nothing asserted it.
+
+    Before this, setting it to float16 -- or to plain float32, giving up reduced precision on CUDA
+    entirely -- left the whole suite green. This is also the only coverage `load()` has at all:
+    every other test here assigns `_model` and `_processor` directly and never runs it.
+    """
+    import transformers
+
+    tower, passed = StubTower(weights=[0.0] * DIMENSIONS), {}
+
+    def fake_model(name, **kwargs):
+        passed.update(kwargs)
+        passed["name"] = name
+        return tower
+
+    def fake_processor(name, **kwargs):
+        return StubProcessor()
+
+    # The factory methods rather than the `transformers` attributes: `load()` does
+    # `from transformers import AutoModel`, and that name resolves through the package's lazy
+    # module, so replacing the attribute does not reliably reach what `load()` ends up calling.
+    monkeypatch.setattr(transformers.AutoModel, "from_pretrained", fake_model)
+    monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", fake_processor)
+    built = SiglipEncoder(config, device=device)
+
+    built.load()
+
+    assert built._dtype is getattr(torch, dtype)
+    assert passed["dtype"] is getattr(torch, dtype), "the tower is loaded in it, not just recorded"
+    assert passed["revision"] == config.encoder_revision, "the pinned weights, not the branch head"
+    assert passed["name"] == config.encoder
+    assert tower.moved_to == (device,)
 
 
 def test_the_pixels_are_cast_to_the_towers_dtype(half, png):
@@ -185,14 +239,15 @@ def test_the_pixels_are_cast_to_the_towers_dtype(half, png):
     """
     half.encode(png, PROMPTS)
 
-    assert half._model.seen_dtype == torch.float16
+    assert half._model.seen_dtype == half._dtype
 
 
-def test_a_zero_feature_vector_is_not_nan_in_float16(half, png):
+def test_a_zero_feature_vector_is_not_nan_in_reduced_precision(half, png):
     """The norm floor has to come from the dtype, not from a constant.
 
     float16's smallest normal is about 6e-5, so `clamp_min(1e-12)` on an fp16 norm clamps to
-    exactly 0.0 and the 0/0 still happens -- on the only path that ever runs in fp16.
+    exactly 0.0 and the 0/0 still happens. bfloat16 keeps fp32's exponent range and would not
+    show it, which is why the fixture covers both rather than only the production dtype.
     """
     half._model.weights = [0.0, 0.0, 0.0, 0.0]
 
@@ -200,6 +255,13 @@ def test_a_zero_feature_vector_is_not_nan_in_float16(half, png):
 
     assert all(math.isfinite(value) for value in encoding.confidences)
     assert all(math.isfinite(value) for value in encoding.embedding)
+
+
+def test_the_drawing_is_converted_to_three_channels(encoder, png):
+    """The tower expects RGB, and a child's drawing arrives as anything from 1-bit to RGBA."""
+    encoder.encode(png, PROMPTS)
+
+    assert encoder._processor.image_mode == "RGB", "the 8-bit greyscale fixture was converted"
 
 
 def test_encode_returns_a_unit_length_embedding(encoder, png):

@@ -72,9 +72,15 @@ Per-slice results for the keys in `slices.py`, and what was done about any gap. 
 - **The embedding is a cache key (KAN-71), not the consistency signal.** KAN-48 measures
   consistency in DINOv2 + CLIP space. Reusing this one there would measure the encoder against
   itself.
-- **That cache key is bound to the dtype it was taken at.** The tower runs in fp16 on CUDA and
-  fp32 on CPU, and near a unit vector's typical component one fp16 step is about thirty times the
+- **That cache key is bound to the dtype it was taken at.** The tower runs in bf16 on CUDA and
+  fp32 on CPU, and near a unit vector's typical component one bf16 step is some 280 times the
   rounding `model.py` applies — so the same drawing analysed on a GPU and on a CPU produces two
   different `identity_key`s and two cache entries. Rounding cannot fix it: the two runs computed
   different numbers, rather than the same number with noise on top. Anything sharing a KAN-71
   cache across devices has to record which dtype the key came from.
+- **The embedding is unit length in fp32, approximately so in bf16.** Measured on the real
+  checkpoint, a bf16 embedding's norm is 1.0018 rather than 1.0 — the normalisation is exact in
+  the arithmetic it is done in, and bf16 has eight bits of mantissa. Nothing here depends on the
+  norm being exactly 1 (the ranking is a dot product of two vectors scaled the same way), but a
+  consumer that assumes a unit vector should know it holds to three decimals, not to float
+  precision.

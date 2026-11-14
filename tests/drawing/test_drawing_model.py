@@ -159,6 +159,29 @@ def test_the_embedding_comes_from_the_same_tower(config, drawing):
     assert model.analyse(drawing).main.identity_key == character.identity_key, "stable across runs"
 
 
+def test_confidences_are_rounded_to_the_documented_precision(config, drawing):
+    """Deleting the rounding left every other assertion here green, so it had no guard at all.
+
+    It matters less than the embedding's rounding -- `identity_key` does not hash a confidence --
+    but a character sheet is serialised, compared and read by people, and seventeen significant
+    digits of a sigmoid help none of the three.
+    """
+    # cat, dog, house, dragon, tree, sun, boat -- two of them with more digits than survive.
+    scores = [0.123456789, 0.987654321, 0.5, 0.25, 0.125, 0.0625, 0.03125]
+
+    model, _ = recogniser(config, scores=scores)
+    character = model.analyse(drawing).characters[0]
+
+    assert character.confidence == 0.9877
+    assert [candidate.confidence for candidate in character.candidates] == [
+        0.9877,
+        0.5,
+        0.25,
+        0.125,
+        0.1235,
+    ]
+
+
 def test_the_embedding_is_rounded_so_float_noise_cannot_change_the_identity(config, drawing):
     """The reason `identity_key` is stable at all, and the one thing the test above cannot see.
 
