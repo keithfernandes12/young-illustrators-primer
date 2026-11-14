@@ -2,14 +2,23 @@
 title: Agents never train; members train locally; registered runs are reproducible on Vertex AI
 type: adr
 created: 2026-11-13
-status: accepted
+updated: 2026-11-14
+status: superseded
 author: rishiparekh
 jira: [KAN-89]
 tags: [agents, models, training, gcp, mlflow]
+superseded_by: [bounded-local-training-for-agents]
 related: [autonomous-loops, mvp-cloud-deploy]
 ---
 
 # Agents never train; members train locally; registered runs are reproducible on Vertex AI
+
+> **Superseded on 2026-11-14 by `bounded-local-training-for-agents`.** Clause 1 below drew the line
+> around the actor — "not locally, not on Vertex" — but both reasons this ADR gives are about paid
+> cloud compute and about registration, neither of which covers a free, interruptible run on the
+> machine the session is already on. The successor keeps clause 1 for cloud jobs, keeps clause 3
+> untouched, and lets an agent train locally inside a step and wall-clock cap. The text below is
+> kept as written, as the record of what was decided on 2026-11-13.
 
 ## Context
 

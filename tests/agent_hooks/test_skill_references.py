@@ -65,20 +65,34 @@ def test_nothing_claims_to_be_vendored_unless_it_is(skill_file):
         )
 
 
-ADR = REPO_ROOT / "docs" / "adrs" / "where-model-training-happens.md"
+ADR = REPO_ROOT / "docs" / "adrs" / "bounded-local-training-for-agents.md"
+SUPERSEDED_ADR = REPO_ROOT / "docs" / "adrs" / "where-model-training-happens.md"
 AGENT_INSTRUCTIONS = sorted((REPO_ROOT / ".claude").glob("*/*.md")) + SKILL_FILES
 
-#: Phrases that tell an agent to start training. The ADR says agents never do.
+#: Phrases that budget cloud training launches for an agent. The ADR keeps those with people.
 LAUNCH_BUDGET = re.compile(
     r"jobs have been launched|launches per /goal|launch (?:up to )?\d+ (?:vertex|training|gpu)",
     re.IGNORECASE,
 )
 
 
-def test_the_training_adr_exists_and_says_agents_do_not_train():
+def test_the_training_adr_keeps_cloud_launches_and_registration_with_people():
+    """The two clauses that still bind after local training was allowed inside a cap.
+
+    Clause 1 is the one with money behind it, and the one `guard_cloud.py` enforces; clause 4 is
+    what keeps a registered number reproducible. Local training moved; these did not.
+    """
     assert ADR.exists()
     text = ADR.read_text(encoding="utf-8")
-    assert "Agent sessions never train" in text
+    assert "Agents never launch a cloud training job" in text
+    assert "A registered run must be reproducible" in text
+
+
+def test_the_superseded_adr_points_at_its_successor():
+    """An agent that opens the old path must be sent on, not told the old rule."""
+    text = SUPERSEDED_ADR.read_text(encoding="utf-8")
+    assert "status: superseded" in text
+    assert "bounded-local-training-for-agents" in text
 
 
 @pytest.mark.parametrize("path", AGENT_INSTRUCTIONS, ids=lambda p: f"{p.parent.name}/{p.name}")
@@ -92,7 +106,8 @@ def test_nothing_tells_an_agent_to_launch_training(path):
         if LAUNCH_BUDGET.search(line) and "person" not in line.lower():
             raise AssertionError(
                 f"{path.relative_to(REPO_ROOT)}:{number} sets an agent training budget, but "
-                f"docs/adrs/where-model-training-happens.md says agents never train:\n  {line.strip()}"
+                "docs/adrs/bounded-local-training-for-agents.md keeps cloud launches with "
+                f"people:\n  {line.strip()}"
             )
 
 
