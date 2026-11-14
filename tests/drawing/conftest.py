@@ -50,6 +50,7 @@ def config(labels_file):
         text_max_length=64,
         text_padding="max_length",
         top_k=5,
+        alpha_background=255,
         config_dir=path.parent,
     )
 

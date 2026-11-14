@@ -62,6 +62,11 @@ Per-slice results for the keys in `slices.py`, and what was done about any gap. 
   "does this label fit", independent of the others. They do not sum to 1. Ranking is unaffected,
   which is all `drawing_top5_acc` reads, but anything that later thresholds a confidence must know
   which of the two it holds.
+- **A transparent upload is composited onto white before scoring**, not flattened. `alpha_background`
+  in `drawing_baseline.yaml` sets the grey level, and white is chosen to match what the model is
+  measured on: the Quick, Draw! split is rendered as dark ink on white, and a photograph of a
+  paper drawing is too. An upload composited onto anything else would be inverted relative to the
+  split, so this is a setting that moves every confidence, not a display choice.
 - **One character per drawing.** The whole image is the subject. A drawing with a child, a dog and
   a house returns one character until S6e adds detection, so the other two are silently lost.
 - **The structural fields are empty**, not guessed: `body_type` stays `UNKNOWN`, which KAN-42 reads

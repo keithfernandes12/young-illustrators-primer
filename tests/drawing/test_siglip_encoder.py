@@ -13,12 +13,13 @@ so the test is hermetic wherever it does run.
 
 from __future__ import annotations
 
+import io
 import math
 from typing import Any
 
 import pytest
 
-from primer.drawing.model import SiglipEncoder
+from primer.drawing.model import SiglipEncoder, flattened
 
 torch = pytest.importorskip("torch", reason="torch comes from the `drawing` extra; CI omits it")
 Image = pytest.importorskip("PIL.Image", reason="pillow comes from the `drawing` extra too")
@@ -37,11 +38,50 @@ def png() -> bytes:
     does `Image.open(...).convert("RGB")`. Generated rather than committed, and an eight-pixel
     square rather than a drawing: the stub tower ignores the pixels entirely.
     """
-    import io
+
 
     buffer = io.BytesIO()
     Image.new("L", (8, 8), 255).save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def as_png(image) -> bytes:
+    """`image` through a real PNG round trip, the way a drawing actually arrives.
+
+    Saved and reopened rather than handed over in memory, because that is where transparency
+    changes shape: a palette image keeps it in ``info`` rather than in a channel, and only the
+    reopened file has the ``info`` the production path sees.
+    """
+
+
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def ink_on_transparent(mode: str):
+    """A black stroke on a fully transparent canvas -- what a canvas app exports.
+
+    The trap this fixture exists for: the ink and the background have the *same* RGB value and
+    differ only in alpha, so dropping alpha loses the drawing completely rather than partly.
+    """
+    if mode == "RGBA":
+        image = Image.new("RGBA", (4, 4), (0, 0, 0, 0))
+        image.putpixel((1, 1), (0, 0, 0, 255))
+    elif mode == "LA":
+        image = Image.new("LA", (4, 4), (0, 0))
+        image.putpixel((1, 1), (0, 255))
+    else:
+        image = Image.new("P", (4, 4), 1)
+        image.putpalette([0, 0, 0] * 256)
+        image.putpixel((1, 1), 2)
+        image.info["transparency"] = 1
+    return image
+
+
+@pytest.fixture
+def transparent_png() -> bytes:
+    return as_png(ink_on_transparent("RGBA"))
 
 
 class Pooling:
@@ -100,18 +140,51 @@ class StubTower(torch.nn.Module):
         return self
 
 
+class CountingTensor(torch.Tensor):
+    """A tensor that counts every crossing from its own memory into Python.
+
+    Both ways across are counted, so the test measures the number of transfers rather than the
+    shape of the call. Torch propagates the subclass through the whole arithmetic chain -- matmul,
+    scale, bias, sigmoid, indexing -- so tagging the image features is enough to count what comes
+    out the far end.
+    """
+
+    crossings = 0
+
+    def __float__(self):
+        CountingTensor.crossings += 1
+        return super().__float__()
+
+    def tolist(self):
+        CountingTensor.crossings += 1
+        return super().tolist()
+
+
+class CountingTower(StubTower):
+    """A `StubTower` whose image features count the transfers they cause."""
+
+    def get_image_features(self, **inputs):
+        features = super().get_image_features(**inputs).pooler_output
+        return Pooling(features.as_subclass(CountingTensor))
+
+
 class StubProcessor:
     """Turns prompts into row counts and any bytes into a pixel tensor. No tokeniser, no PIL."""
 
     def __init__(self):
         self.text_kwargs: dict = {}
         self.image_mode: str | None = None
+        #: The image itself, not just its mode. What reaches the tower is the only place the
+        #: alpha compositing is observable: a dropped alpha channel leaves the mode "RGB" and
+        #: every pixel black, so a mode assertion passes while the drawing is gone.
+        self.image: Any = None
 
     def __call__(self, text=None, images=None, **kwargs):
         if text is not None:
             self.text_kwargs = kwargs
             return Batch({"input_ids": torch.zeros(len(text), 3, dtype=torch.long)})
         self.image_mode = getattr(images, "mode", None)
+        self.image = images
         return Batch({"pixel_values": torch.zeros(1, 3, 8, 8)})
 
 
@@ -321,3 +394,154 @@ def test_the_processor_is_given_the_padding_the_checkpoint_was_trained_with(enco
     assert encoder._processor.text_kwargs["padding"] == "max_length"
     assert encoder._processor.text_kwargs["max_length"] == 64
     assert encoder._processor.text_kwargs["truncation"] is True
+
+
+# ------------------------------------------------------------------ transparency is composited
+
+
+@pytest.mark.parametrize("mode", ["RGBA", "LA", "P"])
+def test_transparency_is_composited_onto_the_background(mode):
+    """`convert("RGB")` does not composite alpha, it drops it -- and the drawing with it.
+
+    Measured on this fixture before the fix: all three modes converted to a uniform `(0, 0, 0)`
+    square, ink and canvas alike, because a sketch is black on transparent-black. Nothing raised;
+    the tower scored a black square and returned a confident label for it.
+
+    All three shapes are here because the mode alone does not say whether an image is transparent:
+    a palette PNG reports `"P"` and carries its transparency in `info`.
+    """
+    image = Image.open(io.BytesIO(as_png(ink_on_transparent(mode))))
+
+    result = flattened(image, background=255)
+
+    assert result.mode == "RGB"
+    assert result.getpixel((0, 0)) == (255, 255, 255), "the transparent canvas became background"
+    assert result.getpixel((1, 1)) == (0, 0, 0), "the ink survived the composite"
+
+
+def test_the_composite_uses_the_configured_background():
+    """The background is a setting because it changes every score, so it has to be read."""
+    image = Image.open(io.BytesIO(as_png(ink_on_transparent("RGBA"))))
+
+    assert flattened(image, background=0).getpixel((0, 0)) == (0, 0, 0)
+    assert flattened(image, background=128).getpixel((0, 0)) == (128, 128, 128)
+
+
+def test_an_opaque_drawing_is_only_converted():
+    """No canvas, no composite: the common path stays a plain conversion."""
+    grey = Image.open(io.BytesIO(as_png(Image.new("L", (4, 4), 200))))
+
+    result = flattened(grey, background=255)
+
+    assert result.mode == "RGB"
+    assert result.getpixel((0, 0)) == (200, 200, 200), "the pixels are untouched"
+
+
+def test_encode_composites_before_the_tower_sees_the_drawing(encoder, transparent_png):
+    """The end-to-end form of the above: what reaches the processor is the composited image.
+
+    `test_the_drawing_is_converted_to_three_channels` cannot catch this -- a dropped alpha channel
+    leaves the mode "RGB" and passes, while every pixel is black.
+    """
+    encoder.encode(transparent_png, PROMPTS)
+    seen = encoder._processor.image
+
+    assert seen.mode == "RGB"
+    assert seen.getpixel((0, 0)) == (255, 255, 255)
+    assert seen.getpixel((1, 1)) == (0, 0, 0)
+
+
+# ------------------------------------------------------------------ one transfer per vector
+
+
+def test_each_result_vector_crosses_to_the_host_once(config, png):
+    """`float()` per element is a device-to-host copy per element, and each one synchronises.
+
+    For the shipped checkpoint that is 345 confidences + 768 embedding components = 1113 transfers
+    per drawing, on the warm path KAN-71 budgets. `tolist()` moves each vector in one. The values
+    are unchanged, which is what the rest of this file pins; this pins the cost.
+    """
+    built = stubbed(config, torch.float32)
+    built._model = CountingTower(weights=[0.0, 2.0, 0.0, -2.0])
+    CountingTensor.crossings = 0
+
+    encoding = built.encode(png, PROMPTS)
+
+    assert len(encoding.confidences) == len(PROMPTS)
+    assert len(encoding.embedding) == DIMENSIONS
+    assert CountingTensor.crossings == 2, "one transfer per vector, not one per element"
+
+
+# ------------------------------------------------------------------ loading is serialised
+
+
+def test_concurrent_first_calls_load_one_checkpoint(config, monkeypatch):
+    """Two requests arriving on a cold start is the normal case, not a rare interleaving.
+
+    The serving layer runs sync endpoints in a threadpool, so an unguarded `_model is None` lets
+    both callers past and loads two copies of the weights onto the same device -- 1.4 GB of the
+    8 GB budget, spent on a duplicate, at exactly the moment the first request is already slow.
+    """
+    import threading
+    import time
+
+    import transformers
+
+    loads = []
+
+    def fake_model(name, **kwargs):
+        loads.append(name)
+        # Long enough that every thread is inside the unguarded window: without the lock this
+        # fails with four loads, not flakily but every run.
+        time.sleep(0.05)
+        return StubTower(weights=[0.0] * DIMENSIONS)
+
+    monkeypatch.setattr(transformers.AutoModel, "from_pretrained", fake_model)
+    monkeypatch.setattr(
+        transformers.AutoProcessor, "from_pretrained", lambda name, **kwargs: StubProcessor()
+    )
+    built = SiglipEncoder(config, device="cpu")
+    threads = [threading.Thread(target=built.load) for _ in range(4)]
+
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert loads == [config.encoder], "the checkpoint is fetched once"
+    assert built._model is not None
+
+
+def test_concurrent_first_calls_build_one_encoder(config, monkeypatch):
+    """Serialising `load` is not enough on its own.
+
+    Two threads racing the `encoder` property build two *different* `SiglipEncoder` objects, and
+    each then loads its own checkpoint past its own lock. The duplicated VRAM is reachable through
+    this property no matter how careful `load` is, which is why both are locked.
+    """
+    import threading
+    import time
+
+    from primer.drawing import model as model_module
+
+    built = []
+
+    def slow_encoder(cfg):
+        built.append(cfg)
+        time.sleep(0.05)
+        return object()
+
+    monkeypatch.setattr(model_module, "SiglipEncoder", slow_encoder)
+    recogniser = model_module.DrawingRecognizerModel(config)
+    seen: list[Any] = []
+    threads = [
+        threading.Thread(target=lambda: seen.append(recogniser.encoder)) for _ in range(4)
+    ]
+
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(built) == 1, "one encoder, so one checkpoint"
+    assert len({id(value) for value in seen}) == 1, "and every caller got that one"

@@ -457,3 +457,42 @@ def test_l2_normalised_takes_the_floor_from_its_caller():
     """
     assert l2_normalised(_Vector(0.0, norm=0.0), 6.1e-5).value == 0.0
     assert l2_normalised(_Vector(1.0, norm=0.0), 0.5).value == 2.0, "the floor is what divides"
+
+
+# ------------------------------------------------------------------ the composite background
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (True, TypeError),
+        (False, TypeError),
+        (255.0, TypeError),
+        ("255", TypeError),
+        (None, TypeError),
+        (-1, ValueError),
+        (256, ValueError),
+    ],
+)
+def test_a_bad_alpha_background_is_refused_when_the_config_is_built(config, value, expected):
+    """Checked on the config, not at the call site, and not only when a drawing arrives.
+
+    A bad value here is not an error further down -- it is a silently different image, and so a
+    silently different confidence for every label. `True` is in the table because YAML reads
+    `true` as 1: composited onto near-black, a sketch would look like a contrast problem rather
+    than a configuration one.
+    """
+    from dataclasses import replace
+
+    with pytest.raises(expected, match="alpha_background"):
+        replace(config, alpha_background=value)
+
+
+def test_the_shipped_config_composites_onto_white():
+    """White because that is what the tower is measured against.
+
+    `drawing_render.yaml` rasterises the Quick, Draw! strokes as dark ink on `background: 255`,
+    and a photograph of a child's paper drawing is dark ink on white too. Compositing onto
+    anything else would invert an uploaded sketch relative to the split S6c scores it on.
+    """
+    assert DrawingConfig.from_yaml(CONFIG_PATH).alpha_background == 255

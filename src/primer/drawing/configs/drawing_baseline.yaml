@@ -24,4 +24,10 @@ prompt_template: "This is a photo of {label}."
 text_max_length: 64
 text_padding: max_length
 top_k: 5
+# The grey level a transparent drawing is composited onto before the tower sees it. White, because
+# that is what the tower will be measured against: `drawing_render.yaml` rasterises the Quick,
+# Draw! strokes as dark ink on `background: 255`, and a photograph of a child's paper drawing is
+# dark ink on white too. Compositing onto anything else would invert a sketch relative to the
+# split S6c scores. It is here and not in `model.py` because it changes every confidence.
+alpha_background: 255
 search_space: {}

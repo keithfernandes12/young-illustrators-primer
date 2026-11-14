@@ -25,6 +25,7 @@ S6d has to beat.
 from __future__ import annotations
 
 import math
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -95,6 +96,34 @@ def l2_normalised(features: Any, floor: float) -> Any:
     return features / features.norm(p=2, dim=-1, keepdim=True).clamp_min(floor)
 
 
+def flattened(drawing: Any, background: int) -> Any:
+    """``drawing`` composited onto an opaque ``background``-grey canvas, in RGB.
+
+    ``convert("RGB")`` on an image with alpha does not composite it, it **drops** it. That is not a
+    rounding error, it is the whole drawing: a sketch exported from a canvas app is black ink on a
+    transparent background -- RGBA (0, 0, 0, 0) where there is no ink and (0, 0, 0, 255) where
+    there is -- so dropping alpha leaves every pixel black. Measured on a four-pixel fixture, all
+    three transparent shapes below convert to a uniform ``(0, 0, 0)`` square. Nothing raises; the
+    tower scores a black square and returns a confident, wrong label.
+
+    Palette and greyscale images carry transparency in ``info`` rather than in a channel, which is
+    why the mode alone does not decide this -- a ``P``-mode PNG reports mode ``"P"`` and still has
+    a transparent background.
+
+    ``background`` comes from the config rather than from here because it changes every score: the
+    tower sees the composited pixels, so flattening the same drawing onto white and onto black
+    produces two different rankings.
+    """
+    from PIL import Image
+
+    transparent = drawing.mode in ("RGBA", "LA", "PA") or "transparency" in drawing.info
+    if not transparent:
+        return drawing.convert("RGB")
+    canvas = Image.new("RGBA", drawing.size, (background, background, background, 255))
+    canvas.alpha_composite(drawing.convert("RGBA"))
+    return canvas.convert("RGB")
+
+
 @dataclass(frozen=True)
 class DrawingConfig:
     """The recognition settings, read from `configs/drawing_baseline.yaml`.
@@ -112,10 +141,29 @@ class DrawingConfig:
     text_max_length: int
     text_padding: str
     top_k: int
+    #: The grey level, 0-255, that a transparent drawing is composited onto before it reaches the
+    #: tower. See `flattened`.
+    alpha_background: int
     #: Where `labels_file` is resolved from: the folder the config itself came from, not a module
     #: global. A config loaded from elsewhere brings its own vocabulary rather than silently
     #: scoring against the shipped one, which `train.py --config` will do in S6d.
     config_dir: Path = CONFIG_DIR
+
+    def __post_init__(self) -> None:
+        # Checked here rather than in `DrawingRecognizerModel.__init__` with the rest, because
+        # `SiglipEncoder` reads this field and can be built without a model around it -- and a bad
+        # value is not an error there, it is a silently different image. The other settings need
+        # the labels file read off disk, which is why they are checked where that happens.
+        # `bool` is rejected explicitly: YAML reads `true` as 1, which would composite onto
+        # near-black and look like a contrast problem rather than a config one.
+        if isinstance(self.alpha_background, bool) or not isinstance(self.alpha_background, int):
+            raise TypeError(
+                f"alpha_background must be a whole number 0-255, not {self.alpha_background!r}"
+            )
+        if not 0 <= self.alpha_background <= 255:
+            raise ValueError(
+                f"alpha_background must be a grey level 0-255, not {self.alpha_background}"
+            )
 
     @classmethod
     def from_yaml(cls, path: Path = CONFIG_PATH) -> DrawingConfig:
@@ -181,31 +229,49 @@ class SiglipEncoder:
         #: a single assignment: with two, a reader between them sees new features under the old
         #: prompts, which is stale scoring with no error anywhere.
         self._text_cache: tuple[tuple[str, ...], Any] | None = None
+        #: Serialises `load`. The serving layer runs sync endpoints in a threadpool, so two
+        #: requests arriving before the first finishes loading are the normal case on a cold
+        #: start, not a rare interleaving.
+        self._lock = threading.Lock()
 
     def load(self) -> None:
-        if self._model is not None:
-            return
         import torch
         from transformers import AutoModel, AutoProcessor
 
-        if self.device is None:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        # bf16 on CUDA, fp32 on CPU, where reduced precision is slow or unsupported. bf16 rather
-        # than fp16 because `AGENTS.md` names it for local GPU work and S6d will fine-tune in it,
-        # so inference and training agree -- and because it keeps fp32's exponent range, which is
-        # the half of the precision question that produces NaN rather than drift. Measured, the
-        # weights are 1.398 GB in fp32 and 0.699 GB in either half format; what that costs in VRAM
-        # alongside activations has not been measured, and is S6d's to find out.
-        self._dtype = torch.bfloat16 if self.device == "cuda" else torch.float32
-        self._processor = AutoProcessor.from_pretrained(
-            self.config.encoder, revision=self.config.encoder_revision
-        )
-        # `dtype`, not `torch_dtype`: the latter is deprecated in transformers 5 and warns on
-        # every load.
-        self._model = AutoModel.from_pretrained(
-            self.config.encoder, revision=self.config.encoder_revision, dtype=self._dtype
-        ).to(self.device)
-        self._model.eval()
+        # Taken unconditionally rather than behind a `self._model is not None` fast path. The fast
+        # path would be correct only if a reader that sees `_model` is guaranteed to see the
+        # device and dtype written before it, which the GIL happens to give and the free-threaded
+        # build does not. An uncontended lock costs nanoseconds against a forward pass.
+        with self._lock:
+            if self._model is not None:
+                return
+            device = self.device
+            if device is None:
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+            # bf16 on CUDA, fp32 on CPU, where reduced precision is slow or unsupported. bf16
+            # rather than fp16 because `AGENTS.md` names it for local GPU work and S6d will
+            # fine-tune in it, so inference and training agree -- and because it keeps fp32's
+            # exponent range, which is the half of the precision question that produces NaN rather
+            # than drift. Measured, the weights are 1.398 GB in fp32 and 0.699 GB in either half
+            # format; what that costs in VRAM alongside activations has not been measured, and is
+            # S6d's to find out.
+            dtype = torch.bfloat16 if device == "cuda" else torch.float32
+            processor = AutoProcessor.from_pretrained(
+                self.config.encoder, revision=self.config.encoder_revision
+            )
+            # `dtype`, not `torch_dtype`: the latter is deprecated in transformers 5 and warns on
+            # every load.
+            model = AutoModel.from_pretrained(
+                self.config.encoder, revision=self.config.encoder_revision, dtype=dtype
+            ).to(device)
+            model.eval()
+            # Published last, and only once it is on the device and out of training mode. A
+            # half-initialised encoder reachable from another thread is the failure this ordering
+            # exists to prevent, not just the duplicate checkpoint.
+            self.device = device
+            self._dtype = dtype
+            self._processor = processor
+            self._model = model
 
     def _encode_prompts(self, prompts: Sequence[str]) -> Any:
         """The text features for `prompts`, computed once and reused while they stay the same."""
@@ -238,8 +304,9 @@ class SiglipEncoder:
         self.load()
         text_features = self._encode_prompts(prompts)
         # RGB: the tower expects three channels, and a child's drawing arrives as anything from a
-        # 1-bit PNG to an RGBA screenshot.
-        drawing = Image.open(io.BytesIO(image)).convert("RGB")
+        # 1-bit PNG to an RGBA screenshot. Composited rather than converted -- see `flattened`,
+        # where dropping alpha is the difference between a drawing and a black square.
+        drawing = flattened(Image.open(io.BytesIO(image)), self.config.alpha_background)
         # The dtype as well as the device. The processor always returns float32 `pixel_values`, and
         # `BatchFeature.to(device)` moves them without casting, so on CUDA -- where the tower is in
         # reduced precision -- the first matmul raises "mat1 and mat2 must have the same dtype".
@@ -255,12 +322,17 @@ class SiglipEncoder:
                 normalised @ text_features.T * self._model.logit_scale.exp() + self._model.logit_bias
             )
             confidences = torch.sigmoid(logits)[0]
+        # `tolist()` once per vector, not `float()` once per element. Each `float()` on a CUDA
+        # tensor is a device-to-host copy that synchronises the stream, so the old form made
+        # 345 + 768 = 1113 of them per drawing for the shipped checkpoint -- on the warm path that
+        # KAN-71 budgets, where the forward pass itself is 0.12 s. `tolist()` moves each vector in
+        # one transfer. The numbers are identical: both widen the same elements to Python floats.
         return Encoding(
-            confidences=tuple(float(value) for value in confidences),
+            confidences=tuple(confidences.tolist()),
             # The normalised vector, so two drawings of the same character land in the same place
             # whatever their contrast. This is the KAN-71 cache key, never the consistency signal:
             # KAN-48 measures consistency in DINOv2 + CLIP space, not this one.
-            embedding=tuple(float(value) for value in normalised[0]),
+            embedding=tuple(normalised[0].tolist()),
         )
 
 
@@ -274,6 +346,11 @@ class DrawingRecognizerModel:
     def __init__(self, config: DrawingConfig | None = None, encoder: Encoder | None = None) -> None:
         self.config = config or DrawingConfig.from_yaml()
         self._encoder = encoder
+        #: Serialises the lazy build below. Locking `SiglipEncoder.load` alone would not be
+        #: enough: two threads racing this property build two *different* encoders, and each one
+        #: then loads its own checkpoint past its own lock. That is the duplicated VRAM, and it
+        #: survives any amount of care inside `load`.
+        self._encoder_lock = threading.Lock()
         # Read and checked here, not inside `analyse`. These are the failures a bad config causes,
         # and every one of them is cheaper to hit now than after `smoke.py` has pulled 1.6 GB of
         # weights off the network. Reading a few KB of text keeps construction effectively free.
@@ -306,9 +383,10 @@ class DrawingRecognizerModel:
 
     @property
     def encoder(self) -> Encoder:
-        if self._encoder is None:
-            self._encoder = SiglipEncoder(self.config)
-        return self._encoder
+        with self._encoder_lock:
+            if self._encoder is None:
+                self._encoder = SiglipEncoder(self.config)
+            return self._encoder
 
     def analyse(self, image: bytes) -> DrawingAnalysis:
         """Score the drawing against the whole vocabulary and return its one character.

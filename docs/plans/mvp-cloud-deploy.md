@@ -463,6 +463,27 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   CUDA path", which is false for bf16 — it keeps fp32's exponent range and represents 1e-12
   exactly. Corrected in all four places; the parameter stays, because the point is not to depend
   on which dtype someone picks.
+- **2026-11-14 — S6a: a transparent drawing reached the tower as a solid black square.**
+  *Hypothesis:* `Image.open(...).convert("RGB")` normalises any upload to three channels.
+  *Method:* built a four-pixel PNG with one black stroke on a fully transparent canvas, in each of
+  the three shapes transparency takes — `RGBA`, `LA`, and a palette image carrying it in `info` —
+  and converted each. *Result:* all three came out a uniform `(0, 0, 0)`, ink and canvas alike:
+  `convert("RGB")` does not composite alpha, it drops it, and a sketch is black ink on
+  transparent **black**. Nothing raised; the tower scored a black square and would have returned
+  a confident label for it. Now composited onto `alpha_background` (255, white) before conversion,
+  because `drawing_render.yaml` rasterises the Quick, Draw! split as dark ink on white and a
+  photograph of a paper drawing is too — compositing onto anything else would invert an upload
+  relative to the split S6c scores it against. The mode alone does not decide it: the palette case
+  reports `"P"`. Found by the automated reviewer on the pull request.
+- **2026-11-14 — S6a: two more races and 1113 device syncs per drawing, from the same review.**
+  The lazy `_model is None` guard in `load()` let two threadpool requests on a cold start load two
+  checkpoints onto one device; locking only `load()` would not have fixed it, because two threads
+  racing `DrawingRecognizerModel.encoder` build two *different* encoders that each load past their
+  own lock. Both are locked now, and `load()` publishes `_model` last, after the move and `eval()`.
+  Separately, `float(value)` per element is a device-to-host copy that synchronises the stream —
+  345 + 768 = **1113** of them per drawing for the shipped checkpoint, on the warm path KAN-71
+  budgets — replaced with one `tolist()` per vector, with a tensor subclass counting the crossings
+  so the test pins the cost rather than only the values.
 
 ## Open questions
 
