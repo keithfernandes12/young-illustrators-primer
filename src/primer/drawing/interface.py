@@ -16,6 +16,7 @@ A character also carries a label, because `drawing_top5_acc` -- the gated metric
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
@@ -36,6 +37,18 @@ class Character:
     @property
     def has_embedding(self) -> bool:
         return bool(self.embedding)
+
+    @property
+    def identity_key(self) -> str:
+        """An opaque, stable handle for this character's identity.
+
+        Downstream code needs to know that two pages were conditioned on the *same* character; it
+        does not need the vector to answer that. Passing this instead keeps the child-derived
+        embedding in the one place that conditions on it, rather than copying it onto every page
+        of the finished book.
+        """
+        digest = hashlib.sha256(repr((self.label, self.embedding)).encode()).hexdigest()
+        return f"{self.label}:{digest[:16]}"
 
 
 @dataclass(frozen=True)

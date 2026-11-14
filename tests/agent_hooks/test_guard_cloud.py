@@ -435,6 +435,47 @@ def test_ordinary_python_is_not_blocked(command):
     assert guard_cloud.check(command, SPLIT_ENV) is None, command
 
 
+_TRAFFIC = f"gcloud run services update-traffic yip-api --to-latest --project {PROJECT}"
+_REPLACE = f"gcloud run services replace s.yaml --project {PROJECT}"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        f"({_TRAFFIC})",
+        f"x=$({_TRAFFIC})",
+        f"x=$({_REPLACE})",
+        f'echo "$({_TRAFFIC})"',
+        f"echo `{_TRAFFIC}`",
+        f"cat <({_TRAFFIC})",
+        f"cat >({_TRAFFIC})",
+        f'RESULT="$( {_TRAFFIC} )"',
+    ],
+)
+def test_a_subshell_or_substitution_does_not_launder_the_command(command):
+    """The shell runs these; the splitter did not look inside any of them.
+
+    Command substitution happens inside double quotes too, so only single quotes stop the scan.
+    """
+    assert guard_cloud.check(command, SPLIT_ENV), command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'echo "$(date)"',
+        "VERSION=$(git rev-parse --short HEAD); echo $VERSION",
+        "(cd /c/dev/young-illustrators-primer && pytest -q)",
+        "diff <(sort a.txt) <(sort b.txt)",
+        "python -c \"import subprocess; subprocess.run(['ls'])\"",
+        f"echo '$({_TRAFFIC})'",  # single quotes: the shell never runs it
+    ],
+)
+def test_ordinary_substitutions_are_not_blocked(command):
+    """Substitution is everywhere in normal shell use; only the cloud commands inside matter."""
+    assert guard_cloud.check(command, SPLIT_ENV) is None, command
+
+
 def test_cancelling_a_job_is_refused_for_its_own_reason():
     """Not "agents never train" -- cancelling may stop someone else's run."""
     reason = guard_cloud.check(f"gcloud ai custom-jobs cancel 42 --project {COMPUTE}", SPLIT_ENV)

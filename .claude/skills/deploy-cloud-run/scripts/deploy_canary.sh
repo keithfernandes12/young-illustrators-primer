@@ -11,6 +11,18 @@
 source "$(dirname "$0")/_common.sh"
 SERVICE="$1"; IMAGE="$2"; shift 2
 
+# Reject the flags this script owns before doing anything else -- certainly before any gcloud call.
+# Caller flags are forwarded, and gcloud takes the last occurrence of a repeated flag, so an extra
+# --project or --tag would silently win and deploy somewhere nobody intended.
+for flag in "$@"; do
+  case "$flag" in
+    --project|--project=*|--region|--region=*|--tag|--tag=*|--traffic|--traffic=*|--to-latest)
+      echo "[yip-deploy] refusing: ${flag%%=*} is this script's to set, not the caller's" >&2
+      exit 1
+      ;;
+  esac
+done
+
 # Fail closed. A describe that fails may mean the service is absent, but it may equally mean a
 # permission problem or a transient API error -- and the old fallback deployed at 100% traffic in
 # all three cases. Bootstrapping the first revision of a service is a person's job.
@@ -34,17 +46,6 @@ fi
 echo "$PREV" > "$STATE_DIR/$SERVICE.prev"
 echo "[yip-deploy] current serving revision: $PREV (saved for rollback)"
 
-# Caller flags go FIRST. gcloud takes the last occurrence of a repeated flag, so forwarding "$@"
-# after "${G[@]}" let an extra --project or --tag override the ones this script chose -- including
-# overriding --no-traffic's tag and deploying somewhere nobody intended.
-for flag in "$@"; do
-  case "$flag" in
-    --project|--project=*|--region|--region=*|--tag|--tag=*|--traffic|--to-latest)
-      echo "[yip-deploy] refusing: $flag is this script's to set, not the caller's" >&2
-      exit 1
-      ;;
-  esac
-done
 gcloud run deploy "$SERVICE" "$@" "${G[@]}" --image "$IMAGE" --no-traffic --tag canary
 
 # Record exactly which revision was tagged, so promote.sh moves traffic to the revision that was

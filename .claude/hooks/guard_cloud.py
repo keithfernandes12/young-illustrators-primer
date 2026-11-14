@@ -167,8 +167,78 @@ def allowed_projects(environ: dict[str, str]) -> set[str]:
     return {value.strip() for var in PROJECT_VARS if (value := environ.get(var, "")).strip()}
 
 
+def extract_substitutions(command: str) -> tuple[str, list[str]]:
+    """Pull out everything the shell runs in a subshell or a substitution.
+
+    `( … )`, `$( … )`, backticks and `<( … )` / `>( … )` all run a command, and none of them is a
+    separator this splitter understood, so the command inside was never looked at. Command
+    substitution happens inside double quotes too, which is why only single quotes stop the scan.
+
+    Returns the text with each construct removed, plus the inner commands to check separately.
+    """
+    outer: list[str] = []
+    inner: list[str] = []
+    index = 0
+    in_double = False
+    while index < len(command):
+        char = command[index]
+        if char == '"':
+            in_double = not in_double
+            outer.append(char)
+            index += 1
+            continue
+        if char == "'" and not in_double:  # single quotes suppress every substitution
+            close = command.find("'", index + 1)
+            if close == -1:
+                outer.append(command[index:])
+                break
+            outer.append(command[index : close + 1])
+            index = close + 1
+            continue
+        if char == "`":
+            close = command.find("`", index + 1)
+            if close == -1:
+                break
+            inner.append(command[index + 1 : close])
+            outer.append(" ")
+            index = close + 1
+            continue
+        # `$( )`, `<( )` and `>( )` run a command even inside double quotes. A bare `(` only opens
+        # a subshell outside them -- inside, it is an ordinary character, which is what made
+        # `python -c "subprocess.run([...])"` look like a subshell and hid the payload.
+        opens = command.startswith(("$(", "<(", ">("), index) or (char == "(" and not in_double)
+        if opens:
+            start = index + (1 if char == "(" else 2)
+            depth = 1
+            cursor = start
+            while cursor < len(command) and depth:
+                if command[cursor] == "(":
+                    depth += 1
+                elif command[cursor] == ")":
+                    depth -= 1
+                cursor += 1
+            inner.append(command[start : cursor - 1 if depth == 0 else len(command)])
+            outer.append(" ")
+            index = cursor
+            continue
+        outer.append(char)
+        index += 1
+    return "".join(outer), inner
+
+
 def split_segments(command: str) -> list[str]:
-    """Split on &&, ||, ;, | and newlines that appear outside quotes."""
+    """Split on &&, ||, ;, | and newlines that appear outside quotes.
+
+    Subshells and substitutions are lifted out first and returned as segments of their own, so a
+    command hidden in `$( … )` is checked rather than skipped.
+    """
+    command, nested = extract_substitutions(command)
+    segments = [segment for part in nested for segment in split_segments(part)]
+    segments.extend(_split_on_separators(command))
+    return segments
+
+
+def _split_on_separators(command: str) -> list[str]:
     segments: list[str] = []
     current: list[str] = []
     quote = ""

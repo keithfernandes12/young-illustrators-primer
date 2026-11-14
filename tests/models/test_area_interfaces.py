@@ -338,6 +338,32 @@ def test_a_drawing_without_a_reference_is_refused(request_for_a_cat):
         build(request_for_a_cat, drawing_ref="")
 
 
+def test_a_finished_book_holds_no_child_derived_vectors():
+    """Pages carry an opaque identity, not the embedding.
+
+    The embedding is derived from a child's drawing. A book has one illustration per page, so
+    putting the vector on each page copied child-derived data across the whole result when all a
+    consumer needs to know is that two pages share an identity.
+    """
+    cat = Character(label="cat", confidence=1.0, embedding=(0.1, 0.2, 0.3))
+    page = FakeIllustrator().illustrate(0, "a page", "crayon", "cat", characters=(cat,))
+
+    assert page.identity == cat.identity_key
+    assert cat.identity_key.startswith("cat:")
+    # The vector itself appears nowhere on the page, under any field.
+    assert all(getattr(page, field) != cat.embedding for field in page.__dataclass_fields__)
+    assert "0.1" not in repr(page)
+
+
+def test_identity_keys_distinguish_characters_and_are_stable():
+    first = Character(label="cat", confidence=1.0, embedding=(0.1, 0.2))
+    same = Character(label="cat", confidence=0.4, embedding=(0.1, 0.2))
+    other = Character(label="cat", confidence=1.0, embedding=(0.9, 0.8))
+
+    assert first.identity_key == same.identity_key, "confidence is not part of identity"
+    assert first.identity_key != other.identity_key, "a different character is a different key"
+
+
 def test_the_character_embedding_reaches_the_illustrator(request_for_a_cat):
     """The identity half: IP-Adapter conditions on the recogniser's character embedding."""
     received: list[tuple[Character, ...]] = []
