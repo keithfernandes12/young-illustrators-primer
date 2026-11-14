@@ -26,6 +26,8 @@ dependencies = [
 dashboard = ["streamlit>=1.40"]
 dvc = ["dvc[gs]>=3.50"]
 dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.10"]
+# Stage 6 character consistency: pretrained CLIP / DINOv2 and the threshold experiment's tracking.
+consistency = ["torch>=2.2", "transformers>=4.44", "pillow>=10", "mlflow>=2.14"]
 
 [project.scripts]
 primer-data = "primer.data.cli:main"
