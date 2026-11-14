@@ -99,7 +99,7 @@ Workload Identity Federation; actions pinned to commits, read-only default token
 
 | Slice | State | PR | Notes |
 |---|---|---|---|
-| S1 | not started | | |
+| S1 | in review | [#11](https://github.com/keithfernandes12/young-illustrators-primer/pull/11) | hook, skills, permissions, loop prompts |
 | S2 | not started | | person-only |
 | S3 | not started | | |
 | S4 | not started | | |

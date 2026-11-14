@@ -83,26 +83,43 @@ def main() -> int:
     if not args.no_privacy and PRIVACY.exists():
         targets = [t for t in ("src", "app") if (ROOT / t).is_dir()]
         checks.append(("privacy", [py, str(PRIVACY), *targets], ROOT))
-    if list((ROOT / "infra").rglob("*.tf")) and shutil.which("terraform"):
-        checks.append(
-            (
-                "terraform-fmt",
-                ["terraform", "-chdir=infra", "fmt", "-check", "-recursive"],
-                ROOT,
-            )
-        )
-        checks.append(
-            ("terraform-validate", ["terraform", "-chdir=infra", "validate"], ROOT)
-        )
-    if (ROOT / "app" / "package.json").exists() and shutil.which("npm"):
-        for script in ("lint", "test", "build"):
+    # File presence decides whether a gate is REQUIRED; a missing executable is then a failed
+    # prerequisite, not a reason to skip. Silently dropping a required check let verify report PASS
+    # without having run it.
+    missing_tools: list[str] = []
+
+    if list((ROOT / "infra").rglob("*.tf")):
+        if shutil.which("terraform"):
             checks.append(
-                (f"app-{script}", ["npm", "run", "--if-present", script], ROOT / "app")
+                (
+                    "terraform-fmt",
+                    ["terraform", "-chdir=infra", "fmt", "-check", "-recursive"],
+                    ROOT,
+                )
             )
+            checks.append(
+                ("terraform-validate", ["terraform", "-chdir=infra", "validate"], ROOT)
+            )
+        else:
+            missing_tools.append("terraform (infra/ contains .tf files)")
+
+    if (ROOT / "app" / "package.json").exists():
+        if shutil.which("npm"):
+            for script in ("lint", "test", "build"):
+                checks.append(
+                    (f"app-{script}", ["npm", "run", "--if-present", script], ROOT / "app")
+                )
+        else:
+            missing_tools.append("npm (app/package.json exists)")
 
     for name, cmd, cwd in checks:
         if not run(name, cmd, cwd):
             failed.append(name)
+
+    for tool in missing_tools:
+        print(f"--- prerequisite: {tool}", flush=True)
+        print(f"FAIL  prerequisite {tool.split()[0]}: not installed, so a required gate cannot run")
+        failed.append(f"prerequisite:{tool.split()[0]}")
 
     if args.quick:
         print(

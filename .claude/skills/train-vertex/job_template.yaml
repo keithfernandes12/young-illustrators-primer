@@ -12,7 +12,11 @@ workerPoolSpecs:
     containerSpec:
       imageUri: us-central1-docker.pkg.dev/YIP_SHARED_PROJECT/yip/trainer:GIT_SHA
       command: ["python", "-m", "primer.story.train"]
-      args: ["--config", "configs/story_lora.yaml", "--output", "gs://YIP_ARTIFACT_BUCKET/models/story/RUN_NAME"]
+      # Flags must match primer.<area>.train: --config, --data-version and --out are all
+      # required, and --output does not exist. The config is the one that ships with the area.
+      args: ["--config", "src/primer/story/configs/story_baseline.yaml",
+             "--data-version", "DATA_VERSION",
+             "--out", "gs://YIP_ARTIFACT_BUCKET/models/story/RUN_NAME"]
       env:
         - name: MLFLOW_EXPERIMENT_NAME
           value: yip-story

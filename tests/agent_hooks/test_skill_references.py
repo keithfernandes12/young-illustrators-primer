@@ -65,6 +65,37 @@ def test_nothing_claims_to_be_vendored_unless_it_is(skill_file):
         )
 
 
+ADR = REPO_ROOT / "docs" / "adrs" / "where-model-training-happens.md"
+AGENT_INSTRUCTIONS = sorted((REPO_ROOT / ".claude").glob("*/*.md")) + SKILL_FILES
+
+#: Phrases that tell an agent to start training. The ADR says agents never do.
+LAUNCH_BUDGET = re.compile(
+    r"jobs have been launched|launches per /goal|launch (?:up to )?\d+ (?:vertex|training|gpu)",
+    re.IGNORECASE,
+)
+
+
+def test_the_training_adr_exists_and_says_agents_do_not_train():
+    assert ADR.exists()
+    text = ADR.read_text(encoding="utf-8")
+    assert "Agent sessions never train" in text
+
+
+@pytest.mark.parametrize("path", AGENT_INSTRUCTIONS, ids=lambda p: f"{p.parent.name}/{p.name}")
+def test_nothing_tells_an_agent_to_launch_training(path):
+    """`goal-golden-gate.md` told an agent to launch four Vertex jobs, which the ADR forbids.
+
+    A loop prompt that contradicts an accepted ADR is worse than no prompt: the agent follows the
+    nearest instruction, not the decision record.
+    """
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if LAUNCH_BUDGET.search(line) and "person" not in line.lower():
+            raise AssertionError(
+                f"{path.relative_to(REPO_ROOT)}:{number} sets an agent training budget, but "
+                f"docs/adrs/where-model-training-happens.md says agents never train:\n  {line.strip()}"
+            )
+
+
 @pytest.mark.parametrize(
     "skill_file",
     [p for p in SKILL_FILES if p.parent.name in {"train-vertex", "deploy-cloud-run"}],

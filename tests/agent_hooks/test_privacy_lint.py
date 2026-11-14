@@ -97,6 +97,35 @@ def test_test_files_are_skipped(tmp_path):
     assert "PRIVACY_RESULT: PASS" in run_cli(tmp_path).stdout
 
 
+# ------------------------------------------------- findings from the Copilot review of PR #11
+
+
+def test_an_opt_in_elsewhere_in_the_file_does_not_excuse_a_write(tmp_path):
+    """Consent on one code path is not consent on another."""
+    (tmp_path / "store.py").write_text(
+        "def settings():\n"
+        "    save_audio = False\n"
+        "    return save_audio\n"
+        "\n"
+        "def upload(blob, audio_bytes):\n"
+        "    blob.upload_from_string(audio_bytes)\n",
+        encoding="utf-8",
+    )
+    output = run_cli(tmp_path).stdout
+    assert "audio-without-opt-in" in output, output
+
+
+def test_an_opt_in_on_the_write_path_still_suppresses(tmp_path):
+    """Only the audio rule is under test here; the object-name rule fires on `blob` regardless."""
+    (tmp_path / "store.py").write_text(
+        "def upload(blob, audio_bytes, save_audio):\n"
+        "    if save_audio:\n"
+        "        blob.upload_from_string(audio_bytes)\n",
+        encoding="utf-8",
+    )
+    assert "audio-without-opt-in" not in run_cli(tmp_path).stdout
+
+
 def test_the_repository_itself_passes():
     """The gate verify.py runs must pass on the tree, or every loop prompt stalls."""
     result = run_cli(REPO_ROOT / "src", REPO_ROOT / "app")

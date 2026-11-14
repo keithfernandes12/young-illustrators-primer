@@ -50,10 +50,17 @@ deliberately small v0: the bar is "end-to-end and measured", not "best model".
 
 *size: medium · person-only for apply*
 
-`infra/` Terraform for two projects (staging, prod): APIs, Artifact Registry `yip`, models bucket
-(separate from `gs://young-illustrators-primer-data`), Firestore, Pub/Sub topics, Secret Manager,
-service accounts per service, Workload Identity Federation for GitHub Actions, and a budget with
-50/90/100% email alerts.
+`infra/` Terraform for the topology this project actually uses: **one shared team project**
+(`$YIP_SHARED_PROJECT`) holding every durable thing -- APIs, Artifact Registry `yip`, models
+bucket (separate from `gs://young-illustrators-primer-data`), Firestore, Pub/Sub topics, Secret
+Manager, service accounts per service, Workload Identity Federation for GitHub Actions, MLflow,
+and a budget with 50/90/100% email alerts -- plus **one compute project per member**
+(`$YIP_COMPUTE_PROJECT`) that runs Vertex AI jobs and nothing else.
+
+There is no staging/prod pair: `docs/engineering/model-development.md` section 6 and
+`.claude/hooks/guard_cloud.py` both assume shared-plus-compute, and the live/not-live boundary
+is traffic rather than a project. Credits attach to a billing account, so member projects stay
+on personal billing until their credits are spent.
 
 - **Acceptance** — `terraform -chdir=infra validate` and `plan` are clean; a person runs `apply` for staging.
 - **Depends on** — nothing. **Jira** — to create.
@@ -203,7 +210,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | Slice | State | PR | Notes |
 |---|---|---|---|
 | S1 | not started | | person-only apply |
-| S2 | not started | | unblocks S3–S6, S11 |
+| S2 | in review | [#11](https://github.com/keithfernandes12/young-illustrators-primer/pull/11) | golden set + runner + gate done on fakes; real-model evaluation still open. Unblocks S3–S6, S11 |
 | S3 | not started | | |
 | S4 | not started | | |
 | S5 | not started | | |

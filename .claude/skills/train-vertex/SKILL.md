@@ -87,6 +87,9 @@ gcloud run jobs execute yip-eval --project "$YIP_COMPUTE_PROJECT" --region "${YI
 
 ## Loop budget rules
 
-- At most 1 GPU job running per component at a time, and at most `YIP_MAX_TRAIN_JOBS`
-  (default 4) launches per /goal. Stop and report when the budget is spent.
+- **An agent session launches nothing.** `docs/adrs/where-model-training-happens.md`: agents
+  never train. Prepare the config, print the command, and hand it to a person.
+- For the person running them: at most 1 GPU job per component at a time, and at most
+  `YIP_MAX_TRAIN_JOBS` (default 4) launches per goal, so a bad hypothesis cannot quietly spend
+  a week of credits.
 - Never cancel or delete another person's job. Never change thresholds to make a run pass.

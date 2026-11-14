@@ -125,6 +125,27 @@ def _pii_identifiers(node: ast.AST) -> list[str]:
     return hits
 
 
+def opt_in_scopes(source: str) -> list[tuple[int, int]]:
+    """Line ranges of functions that mention a parent opt-in.
+
+    An opt-in identifier anywhere in a file used to suppress every audio-write finding in it, even
+    when it was assigned False or belonged to an unrelated function. Consent on one code path is
+    not consent on another. Narrowing it to the enclosing function is still a heuristic -- the real
+    check is control flow -- but it no longer lets one mention cover a whole module.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    scopes = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            segment = ast.get_source_segment(source, node) or ""
+            if OPT_IN.search(segment):
+                scopes.append((node.lineno, node.end_lineno or node.lineno))
+    return scopes
+
+
 def python_log_findings(path: Path, source: str, lines: list[str]) -> list[str]:
     try:
         tree = ast.parse(source)
@@ -160,6 +181,10 @@ def main() -> int:
 
         if f.suffix == ".py":
             findings += python_log_findings(f, source, lines)
+            consented = opt_in_scopes(source)
+        else:
+            # Nothing to parse, so the old file-wide rule is all that is available here.
+            consented = [(1, len(lines))] if OPT_IN.search(source) else []
 
         for i, line in enumerate(lines, 1):
             if "privacy: ok" in line:
@@ -169,7 +194,7 @@ def main() -> int:
             for name, rx in TEXT_RULES:
                 if rx.search(line):
                     findings.append(f"{f}:{i}: [{name}] {line.strip()[:160]}")
-            if AUDIO_WRITE.search(line) and not OPT_IN.search(source):
+            if AUDIO_WRITE.search(line) and not any(start <= i <= end for start, end in consented):
                 findings.append(f"{f}:{i}: [audio-without-opt-in] {line.strip()[:160]}")
 
     for x in findings:
