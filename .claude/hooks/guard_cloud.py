@@ -348,8 +348,9 @@ def token_refusal(tokens: list[str]) -> str | None:
             "(use --no-traffic --tag for a canary)."
         )
 
-    # docs/adrs/where-model-training-happens.md: agent sessions never train. An ask rule is not
-    # enough when a loop is running unattended.
+    # docs/adrs/bounded-local-training-for-agents.md: an agent may train locally within a cap, but
+    # a job in the cloud is a person's action. An ask rule is not enough in an unattended loop --
+    # this is the clause with money behind it, so it is the one with a mechanism behind it.
     launches = {
         ("ai", "custom-jobs", "create"): "launches a Vertex AI training job",
         ("ai", "hp-tuning-jobs", "create"): "launches a hyperparameter tuning job",
@@ -360,8 +361,9 @@ def token_refusal(tokens: list[str]) -> str | None:
     for prefix, why in launches.items():
         if tuple(operation[: len(prefix)]) == prefix:
             return (
-                f"this command {why}, and agents never train "
-                "(docs/adrs/where-model-training-happens.md). Prepare the config and hand it over."
+                f"this command {why}, and agents never train in the cloud "
+                "(docs/adrs/bounded-local-training-for-agents.md). Prepare the config and hand it "
+                "over. A capped local run to check the wiring first is allowed."
             )
 
     # Cancelling is refused for a different reason, so it says a different thing: train-vertex is

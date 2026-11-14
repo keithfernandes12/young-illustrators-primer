@@ -14,6 +14,9 @@ from pathlib import Path
 import pytest
 
 from primer.drawing.interface import (
+    KEYPOINT_NAMES,
+    BodyType,
+    Candidate,
     Character,
     DrawingAnalysis,
     DrawingRecognizer,
@@ -409,7 +412,10 @@ def test_several_characters_survive_recognition():
     analysis = FakeDrawingRecognizer(label="child", also=("dog", "house")).analyse(b"x")
     assert [character.label for character in analysis.characters] == ["child", "dog", "house"]
     assert analysis.main is not None and analysis.main.label == "child"
-    assert analysis.top_labels(5) == ["child", "dog", "house"]
+    # Not ["child", "dog", "house"]: top-5 ranks guesses at the *main character*, not one guess at
+    # each of five characters (KAN-38). The three characters are still all there, above.
+    assert analysis.top_labels(5)[0] == "child"
+    assert "dog" not in analysis.top_labels(5)
     # Distinct identities, so the illustrator can tell them apart.
     assert len({character.embedding for character in analysis.characters}) == 3
 
@@ -456,3 +462,142 @@ def test_fakes_hold_no_payloads():
 def test_story_text_joins_pages():
     story = Story(pages=("One.", "Two."))
     assert story.text == "One. Two."
+
+
+# ------------------------------------------------- the character sheet (KAN-38), as KAN-42 reads it
+
+
+def test_every_character_sheet_field_reaches_the_illustrator(request_for_a_cat):
+    """KAN-38's acceptance criterion: each field survives the handoff through `build_book`.
+
+    KAN-42 cannot start on reposing or IP-Adapter conditioning until these arrive, so this is the
+    test that says the two areas are decoupled: the illustration owner builds both branches against
+    the Fake, and swapping in a real recogniser changes nothing on their side.
+    """
+    received: list[tuple[Character, ...]] = []
+
+    class RecordingIllustrator(FakeIllustrator):
+        def illustrate(self, page_index, page_text, style, subject=None, drawing_ref=None,
+                       sketch=None, characters=()):
+            received.append(characters)
+            return super().illustrate(
+                page_index, page_text, style, subject, drawing_ref, sketch, characters
+            )
+
+    build(
+        request_for_a_cat,
+        recognizer=FakeDrawingRecognizer(label="child", approved=True),
+        illustrator=RecordingIllustrator(),
+    )
+
+    assert received, "the illustrator was never called"
+    for characters in received:
+        sheet = characters[0]
+        assert sheet.body_type is BodyType.HUMANOID, "the reposing branch has something to switch on"
+        assert sheet.crop_ref, "the child's own lines, cut out"
+        assert sheet.mask_ref
+        assert len(sheet.keypoints) == len(KEYPOINT_NAMES), "OpenPose reposing has joints"
+        assert sheet.has_approved_reference, "IP-Adapter has an approved reference to condition on"
+        assert sheet.candidates, "the confirmation UI can offer alternatives"
+
+
+def test_the_crop_and_the_reference_are_different_images():
+    """Conditioning IP-Adapter on the crop would make every page look like crayon."""
+    sheet = FakeDrawingRecognizer(label="child", approved=True).analyse(b"x").characters[0]
+    assert sheet.crop_ref and sheet.reference_image_ref
+    assert sheet.crop_ref != sheet.reference_image_ref
+
+
+def test_top_five_ranks_guesses_within_one_character():
+    """`drawing_top5_acc` is five guesses at one thing, not one guess at five things (KAN-38)."""
+    sheet = Character(
+        label="dragon",
+        confidence=0.6,
+        candidates=(
+            Candidate("dragon", 0.6),
+            Candidate("dinosaur", 0.3),
+            Candidate("lizard", 0.1),
+        ),
+    )
+    assert sheet.top_labels(5) == ["dragon", "dinosaur", "lizard"]
+    assert sheet.top_labels(2) == ["dragon", "dinosaur"]
+
+    analysis = DrawingAnalysis(characters=(sheet, Character(label="house", confidence=0.9)))
+    assert analysis.top_labels(5) == sheet.top_labels(5), "scored on the main character"
+    assert "house" not in analysis.top_labels(5)
+
+
+def test_a_character_with_one_guess_still_has_a_candidate_list():
+    """So `top_labels` means the same thing however the Character was built."""
+    sheet = Character(label="cat", confidence=0.8)
+    assert sheet.candidates == (Candidate("cat", 0.8),)
+    assert sheet.top_labels() == ["cat"]
+
+
+def test_a_label_that_contradicts_its_candidates_is_refused():
+    """The gated metric reads the candidate list, so a disagreement is a silent scoring bug."""
+    with pytest.raises(ValueError, match="top candidate"):
+        Character(label="cat", confidence=0.9, candidates=(Candidate("dog", 0.9),))
+
+
+def test_candidates_must_be_ranked():
+    with pytest.raises(ValueError, match="most confident first"):
+        Character(
+            label="cat",
+            confidence=0.2,
+            candidates=(Candidate("cat", 0.2), Candidate("dog", 0.7)),
+        )
+
+
+@pytest.mark.parametrize(
+    "label,body_type,has_joints",
+    [("child", BodyType.HUMANOID, True), ("dragon", BodyType.CREATURE, False),
+     ("house", BodyType.OBJECT, False)],
+)
+def test_keypoints_are_for_humanoids_only(label, body_type, has_joints):
+    """KAN-42 reposes creatures by prompt and places objects; neither has a skeleton."""
+    sheet = FakeDrawingRecognizer(label=label).analyse(b"x").characters[0]
+    assert sheet.body_type is body_type
+    assert bool(sheet.keypoints) is has_joints
+
+
+def test_a_hidden_joint_is_kept_rather_than_dropped():
+    """Positional lists: index 3 is the same joint on every character (KAN-90)."""
+    sheet = FakeDrawingRecognizer(label="child").analyse(b"x").characters[0]
+    assert [keypoint.name for keypoint in sheet.keypoints] == list(KEYPOINT_NAMES)
+    assert not all(keypoint.visible for keypoint in sheet.keypoints), "a hidden joint is still there"
+
+
+def test_recognition_does_not_approve_its_own_reference():
+    """Approval is a person's decision in KAN-64, not something a model may assert."""
+    sheet = FakeDrawingRecognizer(label="child").analyse(b"x").characters[0]
+    assert not sheet.approved and not sheet.reference_image_ref
+    assert not sheet.has_approved_reference
+
+    approved = sheet.approve("gs://yip-references/child.png")
+    assert approved.has_approved_reference
+    assert not sheet.approved, "the original is untouched; Character is frozen"
+
+    with pytest.raises(ValueError, match="without a reference"):
+        sheet.approve("")
+
+
+def test_an_unapproved_reference_is_not_conditionable():
+    """Both halves are required: a render nobody signed off is not one we may put in a book."""
+    from dataclasses import replace
+
+    sheet = Character(label="cat", confidence=1.0, reference_image_ref="gs://r/cat.png")
+    assert not sheet.has_approved_reference, "a reference alone is not approval"
+    assert not replace(sheet, reference_image_ref="", approved=True).has_approved_reference
+
+
+def test_approval_does_not_change_who_the_character_is():
+    """Regenerating a reference once KAN-42's LoRA exists must not break page-to-page consistency."""
+    sheet = Character(label="cat", confidence=1.0, embedding=(0.1, 0.2))
+    assert sheet.approve("gs://r/v1.png").identity_key == sheet.identity_key
+    assert sheet.approve("gs://r/v2.png").identity_key == sheet.identity_key
+
+
+def test_the_analysis_lists_its_humanoids():
+    analysis = FakeDrawingRecognizer(label="child", also=("dragon", "house")).analyse(b"x")
+    assert [character.label for character in analysis.humanoids] == ["child"]

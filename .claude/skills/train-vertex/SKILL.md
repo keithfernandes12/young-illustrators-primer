@@ -21,17 +21,21 @@ actually needs from them is inlined:
   in this file, and in `docs/engineering/model-development.md`. That is the whole contract.
 - **Registry.** Aliases are `candidate`, `production` and `rollback`; `register.py` in each area
   writes them. Only a gate-passing, reproducible run may be registered
-  (`docs/adrs/where-model-training-happens.md`).
+  (`docs/adrs/bounded-local-training-for-agents.md`).
 
 ## Before launching anything
 
 1. `python .claude/skills/verify/scripts/verify.py` passes.
 2. Run a CPU smoke test with a tiny model and about 20 examples
    (`python -m primer.story.train --config configs/story_lora.yaml --smoke`). This is a
-   seconds-long import-and-one-step check, not training. It is the only thing an agent session
-   may run here: `docs/adrs/where-model-training-happens.md` says agents never train, while a
-   member may train freely on their own machine. A job that crashes in step 1 on a GPU costs
-   real credits.
+   seconds-long import-and-one-step check, not training. A job that crashes in step 1 on a GPU
+   costs real credits, so it comes before every launch whoever is launching.
+
+   An agent session may go further **locally**: bounded local training is allowed by
+   `docs/adrs/bounded-local-training-for-agents.md`, within the area's `max_steps` and a 30-minute
+   wall clock, on the machine the session runs on. That is for proving the wiring — whether the
+   loss moves at all — not for producing a number anyone quotes. What an agent may not do, here or
+   anywhere, is start a job in the cloud.
 3. The training data is a frozen dataset version (`primer-data versions`; freezing is the
    `freeze-dataset-version` skill and a person runs the bucket write). Never train on unfrozen data.
 4. Write the hypothesis for this run in the model's plan under "Verified facts" once it is checked.
@@ -79,7 +83,7 @@ gcloud run jobs execute yip-eval --project "$YIP_COMPUTE_PROJECT" --region "${YI
 - Finish with `golden-gate` on the golden split. Only a `GATE_RESULT: PASS` run may be
   registered as `candidate` in MLflow / Vertex Model Registry.
 - A registration also has to be reproducible, per
-  `docs/adrs/where-model-training-happens.md`: the run came from this area's container, on
+  `docs/adrs/bounded-local-training-for-agents.md`: the run came from this area's container, on
   Vertex AI, against the frozen data version, logged to the shared MLflow with the tags above.
   A laptop run can motivate a registration; it cannot be one. **Launching the job is a person's
   action** — an agent prepares the config and stops.
@@ -87,8 +91,10 @@ gcloud run jobs execute yip-eval --project "$YIP_COMPUTE_PROJECT" --region "${YI
 
 ## Loop budget rules
 
-- **An agent session launches nothing.** `docs/adrs/where-model-training-happens.md`: agents
-  never train. Prepare the config, print the command, and hand it to a person.
+- **An agent session launches nothing in the cloud.**
+  `docs/adrs/bounded-local-training-for-agents.md`: a Vertex or Cloud Run job is a person's
+  action. Prepare the config, print the command, and hand it to a person. A capped local run to
+  check the wiring first is allowed, and makes the handover worth more.
 - For the person running them: at most 1 GPU job per component at a time, and at most
   `YIP_MAX_TRAIN_JOBS` (default 4) launches per goal, so a bad hypothesis cannot quietly spend
   a week of credits.

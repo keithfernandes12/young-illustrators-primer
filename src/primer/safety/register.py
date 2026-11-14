@@ -2,7 +2,7 @@
 
 Only a run that passed the gate may be registered, and only one that is reproducible from this
 area's container on Vertex AI against the frozen data version
-(docs/adrs/where-model-training-happens.md). Images go to the SHARED project's registry; the job
+(docs/adrs/bounded-local-training-for-agents.md). Images go to the SHARED project's registry; the job
 that produced them ran in the member's own compute project.
 """
 

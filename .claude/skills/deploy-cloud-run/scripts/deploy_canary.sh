@@ -5,8 +5,8 @@
 #     --no-cpu-throttling --no-gpu-zonal-redundancy --max-instances 2 --min-instances 0 --no-allow-unauthenticated
 #
 # The canary takes NO live traffic. It is reachable only on its tagged URL, which smoke_test.sh
-# uses. Moving traffic to it is a person's action (docs/adrs/where-model-training-happens.md is the
-# same principle for training); .claude/hooks/guard_cloud.py refuses every `update-traffic` from an
+# uses. Moving traffic to it is a person's action (docs/adrs/bounded-local-training-for-agents.md
+# is the same principle for a cloud training job); .claude/hooks/guard_cloud.py refuses every `update-traffic` from an
 # agent, including a partial one, so this script must not call it.
 source "$(dirname "$0")/_common.sh"
 SERVICE="$1"; IMAGE="$2"; shift 2

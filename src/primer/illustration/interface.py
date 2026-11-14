@@ -40,8 +40,15 @@ class Illustrator(Protocol):
 
     - ``sketch`` -- the child's drawing itself, for ControlNet (scribble/lineart). This is the
       **structure**: what the page should be shaped like.
-    - ``characters`` -- the recogniser's output, carrying one embedding per main character, for
-      IP-Adapter. This is the **identity**: who the character is, so page four looks like page one.
+    - ``characters`` -- the recogniser's character sheets, for IP-Adapter. This is the
+      **identity**: who the character is, so page four looks like page one.
+
+    Within ``characters``, condition IP-Adapter on ``reference_image_ref`` -- the storybook-style
+    render a parent approved -- and check ``has_approved_reference`` first. Not on ``crop_ref``,
+    which is the child's raw crayon lines and would make every page look like crayon, and not on
+    ``embedding``, which is a cache key (KAN-71) in a different space from KAN-48's DINOv2 + CLIP
+    consistency measurement. ``body_type`` picks the reposing branch and ``keypoints`` drives it
+    for humanoids.
 
     Both are optional in the signature because an illustrator may implement only one of them, and a
     page may have no recognised character at all. Neither is optional in practice for a good book:
