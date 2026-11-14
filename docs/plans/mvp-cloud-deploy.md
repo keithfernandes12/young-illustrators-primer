@@ -305,7 +305,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S4 | not started | | |
 | S5 | not started | | |
 | S5b | not started | | Vertex GPU job |
-| S6a | not started | | ready: needs no dataset |
+| S6a | in review | [#18](https://github.com/keithfernandes12/young-illustrators-primer/pull/18) | zero-shot SigLIP 2 baseline; no measured number until S6c |
 | S6b | not started | | ready: pure function, no data. KAN-87, taken over by this stage |
 | S6b2 | not started | | |
 | S6c | not started | | |
@@ -322,6 +322,23 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 
 ## Decisions
 
+- **2026-11-14** — S6a takes **`google/siglip2-base-patch16-224`**, pinned at revision
+  `75de2d55…`, as the recogniser's tower. The brief rates SigLIP 2 highest of the Apache-2.0
+  candidates for this output; the **base** variant rather than a larger one is `AGENTS.md`'s local
+  GPU rule, and it binds here rather than at S6d because S6d fine-tunes whatever this slice picks.
+  DINOv3 is not taken: its custom licence is a product risk the brief flags, and nothing it offers
+  is worth that for a course MVP. The revision is pinned so a rerun measures the weights a number
+  was taken on.
+- **2026-11-14** — The 345 Quick, Draw! category names are **checked in** as
+  `src/primer/drawing/configs/quickdraw_categories.txt` rather than listed from the bucket at run
+  time. Listing needs the network, which `tests/drawing/` must not touch, and a vocabulary that can
+  change underneath a measured `drawing_top5_acc` makes two runs incomparable. The file is written
+  in the bucket's own listing order, which is the order
+  `primer.data.sources.quickdraw` counts category indexes in.
+- **2026-11-14** — `primer.drawing.smoke` **takes a drawing as a path** instead of generating one.
+  Turning strokes into pixels is S6b's `render_strokes`, and KAN-87 exists precisely so there is
+  one renderer; an `ImageDraw` loop in `smoke.py` would have been the second one before the first
+  had landed.
 - **2026-11-14** — The drawing stage takes over **KAN-87** (`render_strokes`), which was assigned
   elsewhere and unstarted since 2026-11-08 — no branch, no PR, no `render_strokes` in the tree. It
   is the hard dependency of every measured slice in S6, so leaving it where it was left S6c and S6d
@@ -344,8 +361,68 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 
 ## Verified facts
 
+- **2026-11-14 — S6a: the zero-shot baseline loads and ranks sensibly.** *Hypothesis:* SigLIP 2's
+  towers can score the 345 Quick, Draw! categories for one drawing and return a ranked character
+  sheet, with no training and no dataset. *Result:* yes.
+  `python -m primer.drawing.smoke --drawing <a synthetic house>` on
+  `google/siglip2-base-patch16-224` @ `75de2d55…` returned `house` at 0.1255, with `barn` 0.0284,
+  `square` 0.0028, `church` 0.0027, `tent` 0.0023 behind it; 345 labels scored, a 768-dimension
+  embedding, 9.6 s to load and 11.3 s to analyse on **CPU**. The input was a crude house drawn with
+  the standard library, so the ranking is evidence that the label/score pairing and the prompt
+  template are right — a shifted pairing would not have put four buildings in the top five.
+  **This is evidence about wiring, not about model quality:** it is one synthetic image, and no
+  `drawing_top5_acc` exists until S6c runs the real split.
+- **2026-11-14 — S6a: the confidences are sigmoid scores, not a distribution.** The winning label
+  scored 0.1255 and the five shown sum to ~0.16. That is expected — SigLIP's loss is pairwise, so
+  each score is "does this label fit" independently — but it means a confidence threshold tuned as
+  if it were a softmax probability would reject nearly everything. Ranking, which is all
+  `drawing_top5_acc` reads, is unaffected.
+- **2026-11-14 — S6a: SigLIP 2 base fits the 8 GB rule, measured.** Loaded and counted rather than
+  estimated: 375,187,970 parameters total, **1.398 GB in fp32 / 0.699 GB in bf16**, split as a
+  92,884,224-parameter vision tower (0.346 GB fp32) and a 282,303,744-parameter text tower
+  (1.052 GB fp32). S6d fine-tunes the **vision** tower, so the figure that matters there is 93 M
+  parameters — with AdamW states and gradients that is single-digit hundreds of MB before
+  activations, well inside 8 GB. **VRAM itself was not measured:** PyPI's Windows `torch` wheel is
+  CPU-only (`torch 2.15.0+cpu`, `cuda False`), so this run never touched the GPU. The measured VRAM
+  figure AGENTS.md asks for belongs to S6d, which needs a CUDA build anyway.
+- **2026-11-14 — S6a: the smoke module earned its place on its first run.**
+  `transformers` 5.x returns a `BaseModelOutputWithPooling` from `get_text_features`, not the bare
+  tensor the model card's example shows, so normalising it raised `AttributeError` on the first
+  real call. The fake-encoder tests could not have caught it — they inject an `Encoder` and never
+  execute `SiglipEncoder`. Fixed by pulling the one version-dependent assumption into
+  `model.pooled`, which *is* unit-tested, and pinning the extra to `transformers>=5,<6` because
+  that is the only API actually exercised.
+- **2026-11-14 — S6a: the CUDA path was broken and is fixed but still unrun.** *Hypothesis:* a
+  CPU smoke run proves the encoder works. *Result:* no. A self-review found that the processor
+  returns float32 `pixel_values` and `BatchFeature.to(device)` moves without casting, so on CUDA —
+  where `load()` puts the tower in fp16 — the first matmul raises `mat1 and mat2 must have the
+  same dtype`. Fixed by passing the dtype as well (`.to(device, dtype)`, which `BatchFeature`
+  forwards to `Tensor.to`, verified against the installed source). **Not executed on a GPU:** this
+  machine has `torch 2.15.0+cpu`. The first GPU run of `smoke.py` is still an untested path, and
+  whoever makes it should expect to find something.
+- **2026-11-14 — S6a: a NaN confidence survived every guard.** With a NaN among the scores,
+  `sorted` produced an arbitrary order and `Character.__post_init__` accepted it — its ranking
+  check compares two lists, and a NaN element compares equal to itself by identity, so an unsorted
+  list whose `label` was not the top-scoring one passed validation. A mislabelled character would
+  have reached `drawing_top5_acc` as a number rather than an error. Closed at both ends: a floor on
+  the norm in `l2_normalised` (the 0/0 that produces it) and an explicit non-finite check in
+  `analyse`. The contract-level hole in `interface.py` is left alone — see Open questions.
+
 ## Open questions
 
+- **Should `Character.__post_init__` reject non-finite confidences?** Its ranking check passes on a
+  list containing NaN, because CPython's list comparison short-circuits on identity, so the
+  invariant `drawing_top5_acc` is scored from is not actually enforced. S6a guards its own side in
+  `drawing/model.py`, but every other producer of a `Character` — the Fake, S6d, anything KAN-42
+  builds — has the same hole. *Recommended:* add the check in `interface.py` where the invariant is
+  declared, rather than in each caller. *Decides:* the KAN-38 owner; it touches a shared contract,
+  so it should not ride along inside a model slice.
+- **`DrawingRecognizer.analyse`'s docstring says it fills every field except `reference_image_ref`
+  and `approved`, which the real model does not do.** S6a deliberately leaves `description`,
+  `body_type`, `crop_ref`, `mask_ref` and `keypoints` at their defaults for S6e, and `build_book`
+  accepts `description=""` without complaint — so the first person to see a book built on an empty
+  description will see it in serving. *Recommended:* say in the Protocol which fields may be unset
+  before S6e lands, rather than discovering it downstream. *Decides:* KAN-38 with KAN-42.
 - Which region has L4 GPU quota for the team's projects? Recommended: request quota in `us-central1`
   now; the team lead decides.
 - Does the course's GCP credit cover Claude models on Vertex AI? Recommended: check the billing account's

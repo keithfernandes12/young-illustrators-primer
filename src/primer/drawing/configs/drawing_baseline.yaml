@@ -1,5 +1,27 @@
-# Hyperparameter search space for the drawing stage, versioned with the code.
-# Stub: `train.py --config` reads this.
+# The pretrained drawing-recognition baseline (KAN-38, plan slice S6a): SigLIP 2's image tower
+# scoring the 345 Quick, Draw! categories zero-shot. `model.py` reads this; nothing is trained yet,
+# so `search_space` stays empty until S6d.
+#
+# `encoder_revision` is pinned so a rerun downloads exactly the weights a number was measured on.
+#
+# The base checkpoint is deliberate, not a default (AGENTS.md -> "Prefer a model that fine-tunes
+# comfortably on one local GPU"). Measured by loading it: 375,187,970 parameters, 1.398 GB in fp32
+# and 0.699 GB in bf16, of which the vision tower S6d fine-tunes is 92,884,224 parameters
+# (0.346 GB fp32). **VRAM itself is still unmeasured** -- that run needs a CUDA build of torch and
+# belongs to S6d. See the plan's Verified facts, 2026-11-14.
+#
+# `prompt_template`, `text_max_length` and `text_padding` are the settings the checkpoint was
+# trained with, from its model card. They are here rather than in a call site because changing one
+# changes every score: a measured `drawing_top5_acc` is only meaningful next to the prompt that
+# produced it.
 name: drawing-baseline
 data_version: unpinned
+encoder: google/siglip2-base-patch16-224
+encoder_revision: 75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2
+encoder_license: apache-2.0
+labels_file: quickdraw_categories.txt
+prompt_template: "This is a photo of {label}."
+text_max_length: 64
+text_padding: max_length
+top_k: 5
 search_space: {}
