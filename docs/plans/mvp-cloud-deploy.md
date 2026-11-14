@@ -182,48 +182,81 @@ the `primer.evaluation.contract` shape, and report the gated key per slice as we
 
 - **Acceptance** — `check_gate.py --only drawing` returns a verdict rather than `metric missing`,
   and the baseline number is recorded as a dated Verified fact whether or not it clears 0.85. The
-  fact has to say what the number is over: top-5 on **rendered Quick, Draw!**, which is the gate's
-  number and not the product's. KAN-64 delivers a photograph. S6c2 measures the difference, and
-  until it has, "clears 0.85" means the gate passed, not that the stage works.
+  fact has to say what the number is over: once this slice lands it will be top-5 on **rendered
+  Quick, Draw!**, which is the gate's number and not the product's. (Today it is neither — the
+  metric is scored over `FakeEvaluationComponents`, which is handed the answer. This slice is what
+  makes it mean anything.) KAN-64 delivers a child's own drawing, uploaded; S6c2 measures how far
+  the preprocessing moves the answer, and until it has, "clears 0.85" means the gate passed, not
+  that the stage works.
+- **Check KAN-116 first.** Ten of the golden set's eighty book scenarios ask for `boat` or `kite`,
+  neither of which is in the 345 categories, so this slice's number is capped at 0.875 against a
+  0.85 threshold. Settle that before recording a baseline, or the first real number will be read
+  as a model result when it is partly an arithmetic one.
 - **Depends on** — S6a, S6b2. **Jira** — KAN-38.
 
-### S6c2 · Preprocessing stability on photographed drawings
+### S6c2 · Preprocessing stability on real uploaded drawings
 
 *size: medium*
 
 `src/primer/drawing/evaluate.py`: measure how far the preprocessing path moves the recogniser's
-answer on real photographed drawings. **No labels, and none are needed** — what is measured is how
+answer on real child-drawing uploads. **No labels, and none are needed** — what is measured is how
 often the prediction changes between variants, not whether it is right.
 
 - **Why separate** — S6c measures rendered Quick, Draw!, while every input the product receives is
-  a photograph of crayon on paper (KAN-64, "Upload or photograph drawings"). The two differ in
-  colour, lighting, paper texture and framing, and nothing has measured what any of that costs.
+  a child's own drawing, uploaded or photographed by a parent (KAN-64, "Upload or photograph
+  drawings"). The two differ in colour, lighting, paper texture and framing, and nothing has
+  measured what any of that costs.
 - **Why not accuracy** — Amateur Drawings is "children's drawings of **human figures**"
-  (`src/primer/data/sources/amateur_drawings.py`), and the 345 categories contain no `person`,
-  `human`, `boy` or `girl`; the nearest entries are `angel`, `yoga`, `snowman` and `teddy-bear`.
-  There is no correct label to hand-label towards, so `drawing_top5_acc` is undefined on this
-  corpus and a hand-labelled set would record the labeller's forced mapping rather than the model's
-  behaviour. An accuracy number needs a corpus whose subjects the vocabulary can express — see the
-  Open question below, and KAN-110.
-- **What it measures** — S6a's baseline over the same drawings under the three preprocessings in
-  the table below, reported pairwise: how often top-1 changes, and how far the top-5 ranking moves.
-  The binarise step is KAN-31's preprocessing module, so this exercises the real inference path
-  rather than a test rig.
-- **Acceptance** — the pairwise stability figures, the sample size and its data version are
-  reported from one MLflow run, or in Verified facts with a note that no host exists yet (KAN-107).
-  Every derived record carries `license` and `attribution` from Amateur Drawings. A Decision records
-  whether the 0.85 gate keeps reading the rendered number.
+  (`src/primer/data/sources/amateur_drawings.py`), and the 345 categories name no whole person:
+  `person`, `human`, `man`, `woman`, `boy`, `girl`, `child`, `people`, `figure` and `body` are all
+  absent. What is present is body parts (`arm`, `leg`, `hand`, `foot`, `face`, `smiley face`) and
+  figure-shaped objects (`angel`, `yoga`, `snowman`, `teddy-bear`), so a prediction lands on one of
+  those. There is no correct label to hand-label towards, `drawing_top5_acc` is undefined on this
+  corpus, and a hand-labelled set would record the labeller's forced mapping rather than the
+  model's behaviour. **KAN-111** owns that decision. An accuracy number needs a corpus whose
+  subjects the vocabulary can express; KAN-110's kiddraw is the only candidate found, and it drops
+  `person` too, so it answers the photographed-corpus problem and not this one. Do not reach for a
+  captioning VLM to label the gap away either — Florence-2, Qwen3-VL, Moondream and SmolVLM2 are
+  photo-trained like the recogniser, so labeller and subject fail on the same drawings in the same
+  direction, and the set would score the model correct exactly where both are confused. S6e brings
+  a captioning VLM into this very module, so that shortcut is close at hand.
+- **What it measures** — S6a's baseline over the same drawings under the variants in the table
+  below, reported pairwise: how often top-1 changes, how far the top-5 ranking moves, **and the
+  top-1 confidence and top-1/top-2 margin within each variant**. The margins are not decoration.
+  On a corpus the vocabulary cannot name, every prediction is a forced near-miss, so a flip may
+  mean the model was perturbed or merely that it never had a preference to perturb — the margin is
+  what separates those. A change rate reported without it is unattributable. (S6a's smoke run
+  scored `house` at 0.1255 with `barn` second at 0.0284 on a drawing the vocabulary *can* express;
+  expect thinner margins here, which is the point.)
+- **Decide while building** — which rank statistic "how far the top-5 ranking moves" is: Kendall's
+  tau, top-5 set overlap, or mean rank displacement. Record the choice and the reason as a Decision.
+- **Acceptance** — the pairwise stability figures, the margin figures, the sample size and its data
+  version are reported from one MLflow run, or in Verified facts with a note that no host exists
+  yet (KAN-107). Every derived record carries `license` and `attribution` from Amateur Drawings,
+  which is **CC-BY-NC-4.0** (`configs/sources.yaml`, flagged there as metadata not checked) — a
+  non-commercial corpus behind a release-gate number is worth seeing without digging. A Decision
+  records whether the 0.85 gate keeps reading the rendered number.
 - **What it cannot say** — which variant is *right*. Stability bounds how much preprocessing
-  perturbs the model; it is not accuracy, so it does not close the distance between the gate's
-  number and the product's. That distance also spans a change of corpus and subject matter, which
-  none of these variants decomposes.
-- **Depends on** — S6a, and KAN-31 for the binarise step. **Jira** — KAN-109.
+  perturbs the model **plus** the tie-breaking noise of a corpus the vocabulary cannot name, and
+  the margin figures are the only thing separating the two. If the margins come back uniformly
+  thin, the honest result of this slice is that this corpus cannot support the measurement — a
+  finding rather than a failure, and one KAN-111 needs. It is not accuracy either way, so it does
+  not close the distance between the gate's number and the product's. That distance also spans a
+  change of corpus and subject matter, which none of these variants decomposes.
+- **Depends on** — S6a; S6c, which establishes the `primer.evaluation.contract` shape in the same
+  file; and KAN-31 for the binarise variant **only** — the first two variants need nothing from it
+  and land without it. **Jira** — KAN-109.
 
-| Variant | Isolates |
-|---|---|
-| As uploaded — colour photograph | the path the product takes today |
-| Converted to greyscale | colour |
-| Cropped and binarised to black on white | photography, lighting, paper texture |
+| Variant | Isolates | Crop |
+|---|---|---|
+| As uploaded | the path the product takes today | none |
+| Converted to greyscale | colour | none |
+| Cropped to the annotated box, then binarised | photography, lighting, paper texture **and framing** | the dataset's `bbox_*` |
+
+The crop is Amateur Drawings' own user-confirmed `bbox_x/y/width/height` (`CHARACTER_DRAWINGS`),
+which the product does not have at upload time — nothing in the inference path crops, and
+`crop_ref`/`mask_ref` are S6e. That variant is therefore an **upper bound the product cannot reach
+today**, not the real inference path, and its number has to be quoted that way.
 
 ### S6d · Fine-tune the recogniser
 
@@ -356,10 +389,10 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S5b | not started | | Vertex GPU job |
 | S6a | merged | [#18](https://github.com/keithfernandes12/young-illustrators-primer/pull/18) | zero-shot SigLIP 2 baseline; no measured number until S6c |
 | S6b | merged | [#19](https://github.com/keithfernandes12/young-illustrators-primer/pull/19) | `render_strokes` + config + PNG; numpy only, so CI covers it. KAN-87 |
-| S6b2 | not started | | S6b merged; ready apart from KAN-31's augmentation set, which stubs to a no-op |
-| S6c | not started | | the gate's number, over rendered Quick, Draw! — not the product's |
+| S6b2 | not started | | S6b merged; still needs KAN-31's augmentation set, which has no slice |
+| S6c | not started | | the gate's number, over rendered Quick, Draw! — not the product's. Capped at 0.875 until KAN-116 |
 | S6c2 | not started | | preprocessing stability on photographs; no labels needed. Needs KAN-31. KAN-109 |
-| S6d | not started | | first slice that trains; builds its own `--max-steps` cap |
+| S6d | not started | | first slice that trains; builds its own `--max-steps` cap. Reads S6c2's stability figures |
 | S6e | not started | | unblocks KAN-42's reposing and IP-Adapter branches |
 | S7 | not started | | needs GPU quota in region |
 | S8 | not started | | |
@@ -650,8 +683,10 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   a wheel today, so it was latent either way.
 
 - **2026-11-14 — Colour reaches the tower at inference and is absent from training.** `model.py`'s
-  `flattened()` composites an image with transparency onto an opaque canvas of the config's
-  `background` grey and converts that to RGB, falling back to a bare `.convert("RGB")` only when
+  `flattened()` composites an image with transparency onto an opaque canvas of the baseline
+  config's `alpha_background` grey (`drawing_baseline.yaml`; not the renderer's `background`, which
+  is a different field in a different file) and converts that to RGB, falling back to a bare
+  `.convert("RGB")` only when
   there is no transparency — the bare call on an alpha image would *drop* the channel and leave a
   black square, which is what the helper exists to avoid. Either way a colour photograph reaches
   the tower with its colour. Training has none: `render_strokes` writes a 2-D array holding two
@@ -665,10 +700,25 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   drawings of human figures", `CHARACTER_DRAWINGS` as "drawings of characters (human figures)" with
   17 COCO joints on every row. Probed against
   `src/primer/drawing/configs/quickdraw_categories.txt`: `person`, `human`, `man`, `woman`, `boy`,
-  `girl`, `child`, `people`, `figure` and `body` are all absent; the nearest entries are `angel`,
-  `yoga`, `mermaid`, `snowman`, `teddy-bear` and `face`. So `drawing_top5_acc` is undefined over
-  this corpus and hand-labelling it would record the labeller's forced mapping, not the model. This
-  is why S6c2 measures stability rather than accuracy.
+  `girl`, `child`, `people`, `figure` and `body` are all absent — no category names a *whole
+  person*. Present instead are body parts (`arm`, `leg`, `hand`, `foot`, `knee`, `elbow`, `finger`,
+  `eye`, `ear`, `nose`, `mouth`, `face`, `smiley face`) and figure-shaped objects (`angel`, `yoga`,
+  `mermaid`, `snowman`, `teddy-bear`), and a prediction lands on one of those — far more often on
+  `arm` or `smiley face` than on `angel`, which is what a flip between variants will look like. So
+  `drawing_top5_acc` is undefined over this corpus and hand-labelling it would record the
+  labeller's forced mapping, not the model. This is why S6c2 measures stability rather than
+  accuracy. Tracked as KAN-111.
+- **2026-11-14 — The golden set asks for two labels the recogniser cannot emit, capping
+  `drawing_top5_acc` at 0.875 against a 0.85 gate.** Counted, not estimated:
+  `configs/golden/scenarios.jsonl` holds 80 `book` scenarios over 16 distinct `drawing_label`
+  values, and two of them are absent from `quickdraw_categories.txt` — `boat` (5 scenarios; the
+  vocabulary has `sailboat` and `speedboat` but no plain `boat`) and `kite` (5; absent entirely).
+  Ten of eighty can therefore never score, so a flawless recogniser reaches **0.8750** while
+  `.claude/skills/golden-gate/thresholds.json` asks for **0.85** — 0.025 of headroom, and 97.1% of
+  the achievable scenarios required. It is invisible today because `golden.py:114` scores against
+  `FakeEvaluationComponents`, whose `top5(true_label)` is handed the answer and echoes it back
+  (`fakes.py:27-31`), so the vocabulary is never consulted. **S6c is where it becomes live**, and
+  it would present as an unexplained plateau just below the gate. Tracked as KAN-116.
 - **2026-11-14 — kiddraw is black-stroke only, so it does not answer the colour question.**
   Measured from the repository rather than the paper: `experiments/museumstation/trial-sequence.js`
   sets `path.strokeColor = 'black'`, `strokeCap = 'round'`, `strokeWidth = 10`, and the analysis
@@ -707,17 +757,25 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   does for naming an object. That needs a colour field on `Character`, which does not exist. S6c2's
   greyscale variant measures the cost either way. *Decides:* the KAN-38 owner with the KAN-31 owner,
   before S6d.
-- **Does the 345-category vocabulary fit what children actually draw?** It cannot name a human
-  figure (see the Verified fact above), and KAN-64's flow is "name each character" — children draw
+- **Does the 345-category vocabulary fit what children actually draw?** **Tracked as KAN-111.** It
+  cannot name a whole person
+  (see the Verified fact above), and KAN-64's flow is "name each character" — children draw
   people constantly. The recogniser will answer `angel` or `snowman`, confidently, and no amount of
   fine-tuning adds a word the label set does not contain. This is a product question before it is a
   model one, and it also decides what an accuracy number on real child drawings could ever mean:
 
-  | Corpus | Real children | Photographed | Subjects the 345 can name | Gives an accuracy number? |
+  | Corpus | Real children | How it was captured | Subjects the 345 can name | Gives an accuracy number? |
   |---|---|---|---|---|
-  | Quick, Draw!, rendered | no — adults, 20s timer | no | all 345 | yes, and it is the gate's |
-  | Amateur Drawings | yes | yes | **none** — human figures only | no |
-  | kiddraw (KAN-110) | yes, ages 2–10 | no — natively digital | 44 of its 48 | yes, if the licence clears |
+  | Quick, Draw!, rendered | no — adults, 20s timer | drawn in a browser | all 345 | yes, and it is the gate's |
+  | Amateur Drawings | yes | **uploads, mix unknown** | **none** — human figures only | no |
+  | kiddraw (KAN-110) | yes, ages 2–10 | natively digital, museum kiosk | 44 of its 48, but **not** `person` | yes, if the licence clears |
+
+  "Photographed" is not established for Amateur Drawings and this plan should stop implying it: the
+  source docstring says Meta resized "the uploaded drawings" to 512 px, and `configs/sources.yaml`
+  says only "PNG images". Uploads to a web demo plausibly mix photographs, scans and natively
+  digital drawings. The mix is checkable — the corpus is frozen locally — and it is a confound for
+  S6c2's "as uploaded" variant, so it is worth reporting alongside those figures. Note too that
+  kiddraw drops `person`, so it answers the corpus problem and not the vocabulary one.
 
   No public dataset of labelled **colour** children's drawings was found on 2026-11-14, searching
   for labelled child-drawing corpora and following the leads to kiddraw and ChildlikeSHAPES; that
