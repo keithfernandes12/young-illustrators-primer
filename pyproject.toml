@@ -34,6 +34,12 @@ primer-data = "primer.data.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# Every model area loads its settings with `Path(__file__).parent / "configs"`, which an editable
+# install and the area Dockerfiles satisfy but a built wheel would not: without this, the YAML is
+# left out of the distribution and the first call raises FileNotFoundError.
+[tool.setuptools.package-data]
+"*" = ["configs/*.yaml", "configs/*.txt"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

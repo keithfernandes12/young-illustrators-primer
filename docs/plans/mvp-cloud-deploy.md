@@ -348,10 +348,11 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 - **2026-11-14** — **The renderer uses no image library.** Geometry is integer Bresenham plus a
   disc stamp over a numpy array, and PNG encoding is `zlib` and `struct` directly. Two reasons:
   the pixels are then a function of the strokes and the config alone rather than of whichever
-  Pillow is installed, and `numpy` is already a dependency while `pillow` is in the `drawing` extra
-  that CI does not install — so the whole strokes-to-bytes path is covered by CI instead of being
-  skipped there. Pillow is still used where it is installed, to assert the encoder emits a PNG a
-  real decoder reads.
+  Pillow is installed, and `numpy` is a declared dependency while Pillow is declared nowhere in
+  this project at all — so the whole strokes-to-bytes path is covered by CI instead of being
+  skipped there. Pillow is still used where it happens to be present, to assert the encoder emits
+  a PNG a real decoder reads; that one test is gated on an incidental install rather than on an
+  extra anybody can ask for, which is worth fixing once S6a lands the `drawing` extra.
 - **2026-11-14** — The drawing stage takes over **KAN-87** (`render_strokes`), which was assigned
   elsewhere and unstarted since 2026-11-08 — no branch, no PR, no `render_strokes` in the tree. It
   is the hard dependency of every measured slice in S6, so leaving it where it was left S6c and S6d
@@ -380,12 +381,18 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   endpoints pinned: at the shipped settings coordinate 0 lands on column 8 and 255 on column 215,
   the first and last drawable pixels of a 224px canvas with 8px padding. Pinned by
   `tests/drawing/test_render.py`, which asserts the exact inked pixels of horizontal, vertical,
-  diagonal and single-point strokes on a 10×10 canvas rather than only their shape. 32 tests, all
-  of them running on `numpy` alone, so CI covers the whole path.
+  45°, shallow, steep and downhill diagonal, tie-breaking and single-point strokes on a 10×10
+  canvas rather than only their shape — the interior of a segment, not only its endpoints. 53
+  tests, all but one running on `numpy` alone, so CI covers the whole path.
+- **2026-11-14** — The geometry tests were checked against two mutations rather than assumed to
+  bite. Loosening `_line`'s tie-break from `>=` to `>`, and swapping half-up rounding for Python's
+  round-half-to-even, each passed the suite as it stood at 45 tests; each now fails exactly one
+  test. Those are the two edits that move pixels without looking like they would.
 - **2026-11-14** — The same strokes and config give byte-identical PNGs across calls, and the
   hand-written encoder's output is a real PNG: Pillow opens it as mode `L` at the right size and
-  the array it decodes equals the array that was encoded. That check is gated on the `drawing`
-  extra, so CI skips it; the determinism and pixel checks around it are not.
+  the array it decodes equals the array that was encoded. That one check is skipped wherever
+  Pillow is absent, CI included; the chunk, length and CRC checks beside it are not, and one test
+  corrupts a CRC to prove they fail when they should.
 - **2026-11-14** — Eyeballed, not measured: **real** Quick, Draw! drawings render legibly at the
   shipped settings. The first three `house` records of
   `gs://quickdraw_dataset/full/simplified/house.ndjson` (public bucket, anonymous read, nothing
@@ -398,6 +405,8 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   render one to an array, 0.454 ms more to encode it as PNG. At the 500k-record scale S6b2 is
   heading for that is roughly 3 minutes of rendering single-threaded, or 7 with PNG — which is why
   rendering on the fly beats caching, and the figure to check against if a loader ever looks slow.
+  **One category, and a sparse one.** A denser drawing of comparable point count measures around
+  1.1 ms, so take 3× as the working upper bound until S6b2 re-measures over the real split.
 - **2026-11-14** — `zlib` compression level 9 cost 2.647 ms per image against the default's
   0.312 ms, for 875 bytes against 1,134 — 8.5× the time for 23% fewer bytes. A sketch is long runs
   of one byte, deflate's worst case for the effort. `to_png` uses the default; the level was the
@@ -417,6 +426,14 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 
 ## Open questions
 
+- Should `tests/drawing/test_render.py`'s Pillow check be gated on a real extra rather than on
+  whether Pillow happens to be installed? Recommended: once S6a lands the `drawing` extra, add
+  `pillow` to it and point the skip at that, so the check can be opted into rather than only
+  arriving by accident through `transformers`. Whoever merges S6a.
+- Should the renderer's per-record cost be re-measured over the real S6b2 split? Recommended: yes,
+  as part of S6b2 — the 0.356 ms figure is 50 drawings of one sparse category, and the obvious
+  optimisation (indexing the canvas from the point list instead of building a list of tuples) has
+  not been tried because nothing has needed it yet.
 - Which region has L4 GPU quota for the team's projects? Recommended: request quota in `us-central1`
   now; the team lead decides.
 - Does the course's GCP credit cover Claude models on Vertex AI? Recommended: check the billing account's

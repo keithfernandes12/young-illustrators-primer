@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import ast
 import io
-import itertools
 import struct
 import zlib
 from dataclasses import fields
@@ -34,7 +33,24 @@ from primer.drawing.render import (
     to_png,
 )
 
-SRC = Path(__file__).resolve().parents[2] / "src" / "primer"
+REPO = Path(__file__).resolve().parents[2]
+
+#: Directories that are not this repository's own source, however many `.py` files they hold. The
+#: two guards below scan everything else -- a second renderer is as likely to appear in a DAG, a
+#: dashboard or a one-off script as in `src/`.
+NOT_OURS = frozenset(
+    {
+        ".git",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".venv",
+        "__pycache__",
+        "build",
+        "dist",
+        "node_modules",
+    }
+)
 
 #: A 10x10 canvas over a 5x5 source grid, 1px strokes. Small enough to assert every pixel, and the
 #: scale is 7/4, so rounding is actually exercised rather than coming out whole.
@@ -76,14 +92,45 @@ def test_a_45_degree_stroke_lands_on_the_pixels_it_should(tiny):
     assert inked(image, tiny) == {(step, step) for step in range(1, 9)}
 
 
-def test_a_shallow_diagonal_is_a_line_rather_than_a_staircase_of_gaps(tiny):
-    """The interior of a non-45-degree segment: one pixel per column, 8-connected, no jumps."""
-    drawn = sorted(inked(render_strokes([[[0, 4], [0, 2]]], tiny), tiny), key=lambda p: p[1])
+def test_a_shallow_diagonal_lands_on_the_pixels_it_should(tiny):
+    """The interior of a segment, pixel by pixel -- not merely its endpoints and its row count."""
+    image = render_strokes([[[0, 4], [0, 2]]], tiny)
 
-    assert [column for _, column in drawn] == list(range(1, 9)), "exactly one pixel per column"
-    assert (drawn[0], drawn[-1]) == ((1, 1), (5, 8)), "the endpoints are where scaling puts them"
-    steps = {abs(b[0] - a[0]) for a, b in itertools.pairwise(drawn)}
-    assert steps <= {0, 1}, "consecutive pixels touch; the line has no gap in it"
+    assert inked(image, tiny) == {(1, 1), (2, 2), (2, 3), (3, 4), (3, 5), (4, 6), (4, 7), (5, 8)}
+
+
+def test_a_steep_diagonal_lands_on_the_pixels_it_should(tiny):
+    """|dy| > |dx|: the other half of Bresenham, which no axis-aligned or 45-degree case reaches."""
+    image = render_strokes([[[0, 2], [0, 4]]], tiny)
+
+    assert inked(image, tiny) == {(1, 1), (2, 2), (3, 2), (4, 3), (5, 3), (6, 4), (7, 4), (8, 5)}
+
+
+def test_a_downhill_diagonal_lands_on_the_pixels_it_should(tiny):
+    """Negative slope: every other stroke here runs left to right and top to bottom."""
+    image = render_strokes([[[0, 4], [2, 0]]], tiny)
+
+    assert inked(image, tiny) == {(5, 1), (4, 2), (4, 3), (3, 4), (3, 5), (2, 6), (2, 7), (1, 8)}
+
+
+def test_the_tie_break_between_two_equally_close_pixels_is_pinned(tiny):
+    """Where a line passes exactly between two pixels, which one takes the ink is a decision.
+
+    This stroke ties. Loosening `_line`'s `>=` to `>` moves it, and thousands of other segments
+    with it; with only the endpoints and a connectivity check asserted, that edit is invisible.
+    """
+    image = render_strokes([[[2, 3], [0, 1]]], tiny)
+
+    assert inked(image, tiny) == {(1, 5), (2, 6), (3, 6)}
+
+
+def test_a_coordinate_exactly_between_two_pixels_rounds_up(tiny):
+    """Half up, not to even. At this scale coordinate 2 falls 4.5 pixels past the padding edge."""
+    half = RenderConfig(**{**vars(tiny), "size": 12})  # content 10, so the scale is 9/4
+
+    assert inked(render_strokes([[[2], [0]]], half), half) == {(1, 6)}, "4.5 rounds to 5, not 4"
+    assert inked(render_strokes([[[0], [0]]], half), half) == {(1, 1)}
+    assert inked(render_strokes([[[4], [0]]], half), half) == {(1, 10)}
 
 
 def test_the_source_grid_maps_onto_the_whole_content_square(tiny):
@@ -208,6 +255,10 @@ def test_a_config_missing_a_setting_says_which_one(tmp_path):
     ("strokes", "message"),
     [
         ("[[[0],[0]]]", "json.loads"),
+        ([["12", "34"]], "x run is text"),
+        ([[[0], "34"]], "y run is text"),
+        ([[["a"], ["b"]]], "could not convert string to float"),
+        ([[[0, None], [0, 1]]], "not sequences of numbers"),
         (None, "null for image sources"),
         ([], "at least one stroke"),
         ([5], "not a pair of runs"),
@@ -315,8 +366,25 @@ def test_png_refuses_an_array_it_cannot_encode():
             to_png(np.zeros(shape, dtype=np.uint8))
 
 
+def owned_python_files() -> list[Path]:
+    """Every Python file this repository owns.
+
+    The excluded directories are pruned at the top level rather than filtered afterwards, because
+    walking into `.venv` costs more than parsing everything we keep.
+    """
+    found = list(REPO.glob("*.py"))
+    for root in REPO.iterdir():
+        if root.is_dir() and root.name not in NOT_OURS:
+            found.extend(
+                path
+                for path in root.rglob("*.py")
+                if not NOT_OURS & set(path.relative_to(REPO).parts)
+            )
+    return found
+
+
 def modules() -> list[tuple[Path, ast.Module]]:
-    return [(path, ast.parse(path.read_text(encoding="utf-8"))) for path in SRC.rglob("*.py")]
+    return [(path, ast.parse(path.read_text(encoding="utf-8"))) for path in owned_python_files()]
 
 
 def test_render_strokes_is_defined_exactly_once():
@@ -366,7 +434,7 @@ def drawing_names(tree: ast.Module) -> set[str]:
 def test_nothing_in_the_repository_draws_with_an_image_library():
     """An `ImageDraw` anywhere is the second renderer arriving, whatever the function is called."""
     drawers = {
-        path.relative_to(SRC).as_posix(): names
+        path.relative_to(REPO).as_posix(): names
         for path, tree in modules()
         if (names := drawing_names(tree))
     }

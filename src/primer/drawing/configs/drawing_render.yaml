@@ -5,13 +5,14 @@
 # at `line_width: 1` measures the renderer, not the model. A `drawing_top5_acc` is only comparable
 # with another one taken at the same settings, so the settings travel with the data version.
 #
-# `size: 224` is the input resolution of the SigLIP 2 checkpoint the recogniser is being built on
-# (`google/siglip2-base-patch16-224`; the comparison that chose it is in
-# `docs/briefs/drawing-recognition-model-candidates.md`, and S6a is the slice that pins it).
-# Rendering straight to it means the image processor's resize is a no-op, rather than a second
-# resample of strokes that were already rasterised once. That couples this default to the current
-# checkpoint on purpose; if S6d moves to a different resolution, this is the one line to change,
-# and the split has to be rendered again.
+# `size: 224` is **provisional**, and the one value here most likely to change. It is the input
+# resolution of `google/siglip2-base-patch16-224`, the checkpoint S6a proposes -- but S6a has not
+# merged, and `docs/briefs/drawing-recognition-model-candidates.md` recommends the SigLIP 2 image
+# tower as a family rather than that checkpoint, linking a 512px one as its example. Rendering
+# straight to the model's own resolution means the image processor's resize is a no-op rather than
+# a second resample of strokes that were already rasterised once, which is why it is worth
+# coupling at all. If S6a lands on a 256 or 512 tower, or S6d moves resolution, this is the one
+# line to change -- and S6b2's split has to be rendered again, so change it before that runs.
 #
 # `source_grid: 256` is the coordinate space the strokes arrive in -- Quick, Draw!'s simplified
 # format is 0-255 inclusive (`primer.data.schemas`). The whole grid is mapped onto the canvas with

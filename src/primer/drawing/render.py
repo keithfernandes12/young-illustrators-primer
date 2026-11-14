@@ -216,12 +216,20 @@ def _runs(stroke: Stroke, index: int) -> tuple[list[float], list[float]]:
             f"stroke {index} has {len(runs)} runs; it must be [xs, ys]. Quick, Draw!'s raw format "
             "carries a third run of timings -- render the simplified format, which drops it"
         )
+    for axis, run in zip(("x", "y"), runs, strict=True):
+        if isinstance(run, (str, bytes, bytearray)):
+            # Text iterates character by character, so a run of "12" would become the coordinates
+            # 1 and 2 and render as a perfectly plausible drawing. Refused rather than drawn.
+            raise TypeError(
+                f"stroke {index}'s {axis} run is text, not a sequence of numbers; parse the record "
+                "with json.loads before rendering it"
+            )
     try:
         return [float(value) for value in runs[0]], [float(value) for value in runs[1]]
-    except TypeError as error:
+    except (TypeError, ValueError) as error:
         raise TypeError(
-            f"stroke {index} has runs that are not sequences of numbers; a single stroke passed on "
-            "its own, rather than a list of strokes, arrives looking like this"
+            f"stroke {index} has runs that are not sequences of numbers ({error}); a single stroke "
+            "passed on its own, rather than a list of strokes, arrives looking like this"
         ) from error
 
 
@@ -327,9 +335,10 @@ def to_png(image: Image) -> bytes:
     # pixels alone, so the same drawing gives the same bytes.
     raw = b"".join(b"\x00" + image[row].tobytes() for row in range(height))
     header = struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)
-    # Default compression, not level 9. A sketch is long runs of one byte, which is deflate's worst
-    # case for the effort: measured on the shipped config, level 9 was 84% of the time to encode a
-    # realistic drawing and bought 25% fewer bytes, and on a dense one 96% of the time for 5%.
+    # Default compression, not level 9. A sketch is long runs of one byte, deflate's worst case for
+    # the effort: measured on 50 real drawings at the shipped config, level 9 cost 2.647 ms against
+    # the default's 0.312 ms -- 8.5x the time -- to save 23% of the bytes, which made it the single
+    # largest cost in the whole strokes-to-bytes path.
     return (
         b"\x89PNG\r\n\x1a\n"
         + chunk(b"IHDR", header)
