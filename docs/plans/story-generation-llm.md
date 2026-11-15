@@ -804,7 +804,7 @@ TinyStories ratio (3:1, 10:1, 30:1, all drawn from the step-2 pool) and the LoRA
 | Slice | State | PR | Notes |
 |---|---|---|---|
 | S0 | in review | [#28](https://github.com/keithfernandes12/young-illustrators-primer/pull/28) | this plan; level decided by Keith (option B, with conditions); other four defaults revisable in review; Keith's review fixes; all in Decisions |
-| M1 | in progress | | small pretrained models on the Mac, ages 3–5; code and stub-model tests done; 30 requests built from `v1.1`; real grid to rerun after review fixes |
+| M1 | in progress | | small pretrained models on the Mac, ages 3–5; built and measured. Reduced grid (4 configurations × 20 requests) ran 2026-11-15: **nothing selected**, best inclusion 0.36 against 0.95 (Verified facts). PR not opened yet |
 | S1 | not started | | KAN-92's scope, built by Diya on KAN-39; M1 delivers the types and the 3–5 preset |
 | S2 | not started | | pure-hash split, one pair per book, cross-source dedupe, shared `fk_grade` (review F1–F5); helper moves to `src/primer/data` with KAN-120 |
 | S2b | not started | | runs on the hash-sampled pool, not 1.8M rows |
@@ -1049,6 +1049,44 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
   (`/Library/Frameworks/Python.framework/Versions/3.13/etc/openssl/` is empty), so every Google Cloud
   call fails `CERTIFICATE_VERIFY_FAILED` unless `SSL_CERT_FILE` points at the `.venv`'s `certifi`
   bundle. The permanent fix is the installer's `Install Certificates.command`, a person's action.
+- **2026-11-15** — *Correction to the level-distribution fact above.* It says "cross-source dedupe (5
+  duplicates dropped)". Once the counts were split (review F10), those 5 turned out to be **1
+  cross-source and 4 within one source**. The book counts and level figures are unchanged.
+- **2026-11-15** — **The reduced M1 grid selected nothing: no configuration passed `selection@1`.**
+  - Run from commit `323de91` on Diya's MacBook Air (MPS, fp16): 4 configurations × the first 20
+    requests, 11:44:57–11:58:00, exit code 2.
+  - Local MLflow store, experiment `yip-story`. The summary run `7a33159945aa4cc98fb505b35bc938ed`
+    holds `metrics.json`, `grid_results.json` and both charts.
+
+  | Configuration (run id) | success | target-word inclusion | first-try valid JSON | page limit | sentence limit | FK mean | raw safety flags | mean attempts | p95 s |
+  |---|---|---|---|---|---|---|---|---|---|
+  | 0.5B, t 0.3 (`5d9315e7…`) | 0.10 | 0.10 | 0.90 | 0.00 | 0.00 | 4.0 | 0.0 | 2.90 | 8.6 |
+  | **0.5B, t 0.7 — baseline** (`89749273…`) | 0.00 | 0.00 | 0.60 | – | – | – | 0.0 | 3.00 | 7.5 |
+  | 1.5B, t 0.3 (`c475b545…`) | 0.15 | 0.16 | 0.95 | 1.00 | 0.00 | 4.7 | 0.0 | 2.75 | 19.7 |
+  | 1.5B, t 0.7 (`e43193d1…`) | **0.40** | **0.36** | 0.65 | 0.88 | 0.00 | 3.9 | 0.0 | 2.50 | 23.4 |
+
+  - **Every configuration fails the success filter** (≥ 0.8 of requests returning a story). The
+    best, 1.5B at 0.7, returns a story for 40% of requests. Retries fail mostly on **missing target
+    words**: the safety guardrail never fired (raw flag rate 0.0 everywhere), and JSON validity on
+    the first try was 0.60–0.95.
+  - **`target_word_inclusion` is 0.00–0.36 against the gate's 0.95.** `metrics.json` therefore has an
+    empty `overall` (both story keys under `not_measured`), and the baseline's inclusion is 0.00.
+  - **No returned story met the sentence limit** (≤ 2 sentences per page, ≤ 10 words per sentence),
+    and the FK means are 3.9–4.7 against targets of 0–1. Checked by hand on real 1.5B stories, so
+    this is not a checker bug: the models write 7–16-word sentences, and one sentence over 10 words
+    fails the story.
+  - **What moved the numbers:** model size (1.5B over 0.5B: inclusion +0.21 averaged over
+    temperature) and, for 1.5B, the higher temperature (inclusion 0.16 → 0.36). For 0.5B, the higher
+    temperature hurt. Raising the temperature made first-try JSON worse for both (−0.30 averaged).
+  - **Slices** (1.5B, t 0.7; all below the 100-row floor, not judged): inclusion 0.35 / 0.44 / 0.27
+    for african_storybook / storyweaver / tinystories, and 0.12 / 0.39 / 0.60 for ages 3 / 4 / 5.
+    Age 3 has the two-word lists most often missed, and its target level is the lowest.
+  - **What this means for the plan:** zero-shot 0.5B–1.5B models do not meet the 3–5 constraints.
+    The constraint the plan already names as the lever is the one that fails: target words. This is
+    the evidence for the next steps. Use a larger candidate (S6), constrained decoding plus a
+    word-forcing prompt or logit bias (S4/S8a), and the QLoRA fine-tune on pairs whose target words
+    come from the story (S7). Raising `max_attempts` or loosening `selection@1` would hide the
+    failure rather than fix it.
 
 ## Open questions
 

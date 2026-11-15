@@ -11,7 +11,7 @@ young reading level, and free of the topics on the avoid-list. Plan:
 | Candidates | `Qwen/Qwen2.5-0.5B-Instruct` @ `7ae557604adf67be50417f59c2c2f167def9a775`; `Qwen/Qwen2.5-1.5B-Instruct` @ `989aa7980e4cf806f80c7fef2b1adb7bc71aa306` (both Apache-2.0, pinned in `configs/story_grid.yaml`) |
 | Training | none in this submission: zero-shot pretrained instruct models. The 4B candidates and QLoRA are later work |
 | Baseline (frozen configuration) | Qwen2.5-0.5B-Instruct, temperature 0.7, max_new_tokens 512, top_p 0.9, seed 1234, 3 attempts |
-| Selected configuration | _not yet measured_: the real grid reruns after the review fixes |
+| Selected configuration | **None.** No configuration passed `selection@1` (grid of 2026-11-15, commit `323de91`, summary run `7a33159945aa4cc98fb505b35bc938ed`). Best was 1.5B at temperature 0.7: a story for 40% of requests (the filter needs 80%), target-word inclusion 0.36 |
 | Selection rule | `selection@1` in `configs/story_grid.yaml`, frozen as of commit `813c6c2`. Its safety filter (`max_raw_safety_flag_rate: 0.2`) was added after a first grid had started and was stopped. Those runs' flag rates were not seen before 0.2 was chosen. Any later change bumps the version and needs a full re-run |
 | Data version | `v1.1`: 30 validation requests from the **val** split, built from all `storybook_pages` plus the smallest TinyStories file (2,000 stories, pinned by generation); `test` and the golden set untouched |
 | Decoding | ordinary sampling, then parse-and-retry. **Grammar-constrained decoding** (which KAN-39 asks for) is **deferred** in M1: the JSON validity rate measures how much it is needed first |
@@ -52,7 +52,27 @@ attempts, p95 latency.
 
 | Metric | Selected | Baseline | Run id |
 |---|---|---|---|
-| target_word_inclusion | _not yet measured_ | _not yet measured_ | |
+| target_word_inclusion (gate ≥ 0.95) | none selected; best 0.36 (1.5B, t 0.7) | 0.00 (0.5B, t 0.7) | best `e43193d1…`, baseline `89749273…` |
+
+All four configurations, on the first 20 validation requests (full table and run ids in the plan's
+Verified facts, 2026-11-15):
+
+| Configuration | success | inclusion | first-try valid JSON | page limit | sentence limit | FK mean | raw safety flags |
+|---|---|---|---|---|---|---|---|
+| 0.5B, t 0.3 | 0.10 | 0.10 | 0.90 | 0.00 | 0.00 | 4.0 | 0.0 |
+| 0.5B, t 0.7 (baseline) | 0.00 | 0.00 | 0.60 | – | – | – | 0.0 |
+| 1.5B, t 0.3 | 0.15 | 0.16 | 0.95 | 1.00 | 0.00 | 4.7 | 0.0 |
+| 1.5B, t 0.7 | 0.40 | 0.36 | 0.65 | 0.88 | 0.00 | 3.9 | 0.0 |
+
+**What the numbers say.**
+- Zero-shot 0.5B–1.5B models do not meet the 3–5 constraints.
+- Most failures are missing target words. The safety guardrail never fired, and JSON is usually
+  valid.
+- No returned story kept every sentence to 10 words or fewer: the models write 7–16-word sentences.
+  FK means are 3.9–4.7 against targets of 0–1.
+- Model size helped most. Higher temperature helped 1.5B and hurt 0.5B.
+- These results are the case for a larger candidate, constrained decoding with word forcing, and the
+  QLoRA fine-tune (plan S4/S6/S7), not for loosening the rule.
 
 ## Slices
 
