@@ -5,8 +5,9 @@ import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+import numpy as np
 import pytest
-from PIL import Image, ImageDraw
+from PIL import Image
 
 from primer.drawing.interface import Character
 from primer.illustration.interface import Illustration
@@ -20,10 +21,12 @@ def draw_house(size=(200, 120), ink=0, paper=255, mode="L") -> bytes:
     saved as they are, so an RGBA canvas export keeps its transparency.
     """
     image = Image.new(mode, size, paper)
-    pen = ImageDraw.Draw(image)
-    pen.rectangle((70, 50, 130, 100), outline=ink, width=4)
-    pen.line([(60, 52), (100, 15), (140, 52)], fill=ink, width=4)
-    pen.ellipse((20, 95, 180, 118), outline=ink, width=4)
+    for box in ((70, 50, 130, 54), (70, 96, 130, 100), (70, 54, 74, 96), (126, 54, 130, 96)):
+        image.paste(ink, box)
+    for y in range(15, 52):
+        offset = (y - 15) * 40 // 37
+        image.paste(ink, (100 - offset, y, 104 - offset, y + 1))
+        image.paste(ink, (100 + offset, y, 104 + offset, y + 1))
     buffer = io.BytesIO()
     (image.convert("RGB") if mode == "L" else image).save(buffer, format="PNG")
     return buffer.getvalue()
@@ -54,6 +57,11 @@ def scribble_style_sketch() -> bytes:
 # book records only what any correct scorer has to conclude, and `expect_pass` is None where the team
 # has not yet decided what that is.
 #
+# `expect_pass` is the verdict once a threshold exists. `ConsistencyScorer` (#24) gives no verdict
+# until KAN-104 sets one, so a test that needs pass or fail builds the scorer with an explicit
+# threshold, e.g. `ConsistencyScorer(FakeEmbedder(), threshold=...)`. With no references, `score()`
+# returns 0.0; what `consistency()` and `build_book()` do then is the open KAN-105 question.
+#
 # Characters are storybook-style renders, not crayon: the reference a page is scored against is the
 # approved `reference_image_ref`, never the child's crop.
 
@@ -76,39 +84,57 @@ POSES = [(128, 150, 1.0, "day"), (80, 160, 0.8, "grass"), (176, 140, 1.2, "night
 BACKGROUNDS = {"day": (170, 215, 255), "grass": (150, 210, 120), "night": (30, 30, 80)}
 
 
+# Pages are filled shapes painted with numpy masks, not strokes: `primer.drawing.render` is the only
+# strokes-to-pixels renderer, and `tests/drawing/test_render.py` forbids a rasteriser such as
+# `ImageDraw` anywhere else in the repository.
+_ROWS, _COLS = np.mgrid[0:256, 0:256]
+
+
+def _disc(cx: int, cy: int, radius: int) -> np.ndarray:
+    return (_COLS - cx) ** 2 + (_ROWS - cy) ** 2 <= radius**2
+
+
+def _box(x0: int, y0: int, x1: int, y1: int) -> np.ndarray:
+    return (_COLS >= x0) & (_COLS <= x1) & (_ROWS >= y0) & (_ROWS <= y1)
+
+
+def _triangle(a: tuple[int, int], b: tuple[int, int], c: tuple[int, int]) -> np.ndarray:
+    """Points on the same side of all three edges."""
+
+    def side(p: tuple[int, int], q: tuple[int, int]) -> np.ndarray:
+        return (q[0] - p[0]) * (_ROWS - p[1]) - (q[1] - p[1]) * (_COLS - p[0])
+
+    s1, s2, s3 = side(a, b), side(b, c), side(c, a)
+    return ((s1 >= 0) & (s2 >= 0) & (s3 >= 0)) | ((s1 <= 0) & (s2 <= 0) & (s3 <= 0))
+
+
 def render(look: Look, x: int = 128, y: int = 128, scale: float = 1.0, background: str = "plain") -> bytes:
     """One 256x256 PNG of ``look``. Deterministic: the same arguments give the same bytes."""
-    image = Image.new("RGB", (256, 256), BACKGROUNDS.get(background, (255, 255, 255)))
-    pen = ImageDraw.Draw(image)
+    canvas = np.empty((256, 256, 3), dtype=np.uint8)
+    canvas[:] = BACKGROUNDS.get(background, (255, 255, 255))
     if background == "day":
-        pen.ellipse((210, 10, 246, 46), fill=(255, 235, 120))  # a sun, so pages are not just recoloured
+        canvas[_disc(228, 28, 18)] = (255, 235, 120)  # a sun, so pages are not just recoloured
     if background == "grass":
-        pen.rectangle((0, 200, 256, 256), fill=(90, 160, 70))
+        canvas[_box(0, 200, 255, 255)] = (90, 160, 70)
     r = int(40 * scale)
-    box = (x - r, y - r, x + r, y + r)
     if look.round_body:
-        pen.ellipse(box, fill=look.body)
-        pen.polygon(
-            [(x - r, y - r // 2), (x - r // 2, y - r - r // 2), (x - r // 4, y - r)], fill=look.accent
+        canvas[_disc(x, y, r)] = look.body
+        canvas[_triangle((x - r, y - r // 2), (x - r // 2, y - r - r // 2), (x - r // 4, y - r))] = (
+            look.accent
         )
-        pen.polygon(
-            [(x + r, y - r // 2), (x + r // 2, y - r - r // 2), (x + r // 4, y - r)], fill=look.accent
+        canvas[_triangle((x + r, y - r // 2), (x + r // 2, y - r - r // 2), (x + r // 4, y - r))] = (
+            look.accent
         )
     else:
-        pen.rectangle(box, fill=look.body)
-        pen.line([(x, y - r), (x, y - r - r // 2)], fill=look.accent, width=max(2, r // 8))
-        pen.ellipse(
-            (x - r // 5, y - r - r // 2 - r // 5, x + r // 5, y - r - r // 2 + r // 5), fill=look.accent
-        )
+        canvas[_box(x - r, y - r, x + r, y + r)] = look.body
+        half = max(1, r // 16)
+        canvas[_box(x - half, y - r - r // 2, x + half, y - r)] = look.accent  # antenna stalk
+        canvas[_disc(x, y - r - r // 2, r // 5)] = look.accent
     for dx in (-r // 3, r // 3):
-        pen.ellipse(
-            (x + dx - r // 6, y - r // 3 - r // 6, x + dx + r // 6, y - r // 3 + r // 6), fill="white"
-        )
-        pen.ellipse(
-            (x + dx - r // 14, y - r // 3 - r // 14, x + dx + r // 14, y - r // 3 + r // 14), fill="black"
-        )
+        canvas[_disc(x + dx, y - r // 3, r // 6)] = (255, 255, 255)
+        canvas[_disc(x + dx, y - r // 3, r // 14)] = (0, 0, 0)
     buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
+    Image.fromarray(canvas, "RGB").save(buffer, format="PNG")
     return buffer.getvalue()
 
 

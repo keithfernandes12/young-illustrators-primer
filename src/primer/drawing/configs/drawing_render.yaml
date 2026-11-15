@@ -1,0 +1,41 @@
+# How Quick, Draw! strokes become pixels (KAN-87, plan slice S6b). `render.py` reads this.
+#
+# These settings are here rather than at a call site because they are not cosmetic: a model
+# fine-tuned on `line_width: 3` has learnt that stroke weight, and scoring it on a split rendered
+# at `line_width: 1` measures the renderer, not the model. A `drawing_top5_acc` is only comparable
+# with another one taken at the same settings, so the settings travel with the data version.
+#
+# `size: 224` is **provisional**, and the one value here most likely to change. It is the input
+# resolution of `google/siglip2-base-patch16-224`, the checkpoint S6a proposes -- but S6a has not
+# merged, and `docs/briefs/drawing-recognition-model-candidates.md` recommends the SigLIP 2 image
+# tower as a family rather than that checkpoint, linking a 512px one as its example. Rendering
+# straight to the model's own resolution means the image processor's resize is a no-op rather than
+# a second resample of strokes that were already rasterised once, which is why it is worth
+# coupling at all. If S6a lands on a 256 or 512 tower, or S6d moves resolution, this is the one
+# line to change -- and S6b2's split has to be rendered again, so change it before that runs.
+#
+# `source_grid: 256` is the coordinate space the strokes arrive in -- Quick, Draw!'s simplified
+# format is 0-255 inclusive (`primer.data.schemas`). The whole grid is mapped onto the canvas with
+# one scale factor for both axes, not the drawing's bounding box: the simplified format has already
+# been aligned and scaled with its aspect ratio preserved, and re-fitting each drawing to the
+# canvas would stretch them by different amounts and throw that away.
+name: drawing-render
+# The canvas is square, `size` x `size` pixels.
+size: 224
+# Stroke weight in pixels, centred on the line, so it must be odd. The 256-grid is scaled down by
+# 207/255 = 0.81 to fit the padded canvas, and at 1px the result is a sketch that is mostly
+# background. 3px is a judgement from looking at rendered Quick, Draw! drawings, not a measurement:
+# no model has scored a rendered drawing yet, and S6c is the first slice that can say whether this
+# is the right weight.
+line_width: 3
+# Margin in pixels from the canvas edge to a stroke's *centre line*, on every side. The blank
+# border is narrower by the stroke's radius -- at `line_width: 3` the outermost ink sits one pixel
+# inside this. Quick, Draw! strokes run to the edge of their grid, and a stroke lying on the canvas
+# border is half outside a convolution's receptive field.
+padding: 8
+# Greyscale levels: paper and ink. Dark ink on light paper, like the crayon drawings this stage
+# actually has to recognise. Not a binary mask -- the values are what KAN-31's paper and crayon
+# augmentation perturbs at training time.
+background: 255
+ink: 0
+source_grid: 256

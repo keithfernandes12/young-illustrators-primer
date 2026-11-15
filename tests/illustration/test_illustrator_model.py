@@ -6,6 +6,7 @@ A recording pipeline stands in for diffusers, so nothing here loads weights or r
 import subprocess
 import sys
 import types
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -229,7 +230,76 @@ def test_without_a_gpu_the_pipeline_falls_back_to_cpu(stub_frameworks):
     assert pipeline.device == "cpu"
 
 
-def test_build_book_cannot_use_the_model_until_consistency_exists(model):
-    """build_book calls consistency() on every book; until stage 6 lands it must fail loudly."""
+def test_build_book_cannot_use_the_model_until_consistency_is_wired(model):
+    """build_book calls consistency() on every book; until the scorer is wired in it must fail loudly."""
     with pytest.raises(NotImplementedError, match="build_book"):
         model.consistency([])
+
+
+def test_style_and_subject_precede_long_page_text(model, pipeline, child_style_sketch):
+    text = "The house floated across the sky. " * 40
+    model.illustrate(0, text, "watercolor", subject="house", sketch=child_style_sketch)
+    prompt = pipeline.requests[0].prompt
+    assert prompt.startswith("children's storybook illustration, watercolor style")
+    assert prompt.index("featuring a house") < prompt.index(text.strip())
+
+
+def test_vignetted_paper_keeps_only_the_ink():
+    image = Image.new("L", (400, 300))
+    image.putdata(
+        [
+            round(235 - 65 * ((x - 200) ** 2 / 200**2 + (y - 150) ** 2 / 150**2) / 2)
+            for y in range(300)
+            for x in range(400)
+        ]
+    )
+    image.paste(30, (170, 130, 230, 136))
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    control = prepare_sketch(buffer.getvalue()).convert("L")
+    assert control.getpixel((0, 256)) == 0
+    assert 0 < control.histogram()[255] < control.width * control.height * 0.03
+
+
+def test_dark_table_covering_much_of_the_photo_is_refused():
+    image = Image.new("L", (400, 300), 105)
+    image.paste(235, (30, 30, 370, 270))
+    image.paste(30, (170, 130, 230, 136))
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    with pytest.raises(ValueError, match="more than 25%"):
+        prepare_sketch(buffer.getvalue())
+
+
+def _png(image: Image.Image) -> bytes:
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def test_thin_strip_of_dark_table_is_refused_rather_traced():
+    # Under the 25% cap on its own: the table is a thin frame, which would become a white border.
+    image = Image.new("L", (400, 300), 105)
+    image.paste(235, (12, 12, 388, 288))
+    image.paste(30, (170, 130, 230, 136))
+    with pytest.raises(ValueError, match="edge of the drawing"):
+        prepare_sketch(_png(image))
+
+
+def test_page_coloured_in_past_half_is_refused_rather_traced_inside_out():
+    # The median is the ink here, so the paper margin would be read as the stroke.
+    image = Image.new("L", (400, 300), 240)
+    image.paste(50, (20, 20, 380, 280))
+    image.paste(240, (40, 147, 360, 153))
+    with pytest.raises(ValueError, match="edge of the drawing"):
+        prepare_sketch(_png(image))
+
+
+def test_lines_that_run_off_the_page_are_kept(scribble_style_sketch):
+    # Like the baseline sketch's sun rays: a few strokes touching the edge is a drawing, not a frame.
+    image = Image.open(BytesIO(scribble_style_sketch)).convert("L")
+    image.paste(255, (0, 60, 40, 64))
+    image.paste(255, (196, 0, 200, 30))
+    control = prepare_sketch(_png(image)).convert("L")
+    # The 200x120 sketch is padded to 200x200 (40 px above), then scaled by 2.56: y 60-64 lands at 256-266.
+    assert control.crop((0, 250, 8, 272)).getextrema()[1] == 255

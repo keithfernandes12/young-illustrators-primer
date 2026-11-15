@@ -31,6 +31,14 @@ MIN_STROKE_CONTRAST = 24
 #: 32 keeps a 1 px line through an 8x shrink, which is a 4000 px phone photo at 512.
 MIN_STROKE_COVERAGE = 32
 
+#: A control image this full of stroke is not a line drawing: the paper itself was read as stroke.
+MAX_STROKE_SHARE = 0.25
+
+#: The edge of a drawing is paper. When more of the outermost pixel ring than this reads as stroke,
+#: the paper level was misjudged -- a strip of dark table around the page, or a page coloured in so
+#: heavily that the median is the ink -- and the control image would trace the wrong thing.
+MAX_EDGE_STROKE_SHARE = 0.5
+
 
 def _read_file(ref: str) -> bytes:
     parsed = urlparse(ref)
@@ -84,11 +92,14 @@ def prepare_sketch(data: bytes, size: int = 512) -> Image.Image:
     """White strokes on black, padded to a square and resized to ``size`` x ``size``, RGB.
 
     Children draw dark lines on light paper; the scribble model was trained on the opposite. The
-    paper is judged from the border pixels, which are paper in almost every drawing: when the drawing
-    as a whole is darker than its border, the lines are darker than the paper and the image is
+    paper level is the median brightness, which holds when a phone photo's edges are in shadow: when
+    the drawing as a whole is darker than that, the lines are darker than the paper and the image is
     inverted. A drawing that is already light-on-dark (the synthetic baseline sketch) is left as it is.
-    Transparency is paper. A drawing with no strokes left is refused rather than generated from an
-    empty control image, because the page would then claim a sketch it never followed.
+    Transparency is paper.
+
+    Three control images are refused rather than generated from, because the page would then claim a
+    sketch it never followed: one with no strokes, one that is mostly stroke, and one whose edge
+    reads as stroke. The last two mean the paper was misjudged; cropping to the paper is KAN-119.
     """
     try:
         image = Image.open(io.BytesIO(data))
@@ -97,11 +108,17 @@ def prepare_sketch(data: bytes, size: int = 512) -> Image.Image:
         raise ValueError("the drawing is not a readable image") from error
 
     gray = _on_paper(ImageOps.exif_transpose(image)).convert("L")
-    if ImageStat.Stat(gray).mean[0] <= _border_mean(gray):
+    paper = _percentile(gray, 0.50)
+    if ImageStat.Stat(gray).mean[0] <= paper:
         gray = ImageOps.invert(gray)
-    paper = _border_mean(gray)
-    threshold = paper + max(MIN_STROKE_CONTRAST, (_percentile(gray, 0.99) - paper) / 2)
+        paper = 255 - paper
+    threshold = paper + max(MIN_STROKE_CONTRAST, (_percentile(gray, 0.999) - paper) / 2)
     strokes = gray.point(lambda value: 255 if value >= threshold else 0)
+
+    if strokes.histogram()[255] > strokes.width * strokes.height * MAX_STROKE_SHARE:
+        raise ValueError("strokes cover more than 25% of the drawing")
+    if _edge_stroke_share(strokes) > MAX_EDGE_STROKE_SHARE:
+        raise ValueError("the edge of the drawing reads as strokes; photograph the paper alone")
 
     # Pad rather than stretch: squashing a tall drawing changes the shapes ControlNet must keep.
     side = max(strokes.size)
@@ -137,14 +154,14 @@ def _percentile(gray: Image.Image, share: float) -> float:
     return 255.0
 
 
-def _border_mean(gray: Image.Image) -> float:
-    """Mean brightness of the outermost pixel ring."""
-    width, height = gray.size
+def _edge_stroke_share(strokes: Image.Image) -> float:
+    """Share of the outermost pixel ring that is stroke (255)."""
+    width, height = strokes.size
     edges = [
         (0, 0, width, 1),
         (0, height - 1, width, height),
-        (0, 0, 1, height),
-        (width - 1, 0, width, height),
+        (0, 1, 1, height - 1),
+        (width - 1, 1, width, height - 1),
     ]
-    strips = [ImageStat.Stat(gray.crop(box)) for box in edges]
-    return sum(stat.sum[0] for stat in strips) / sum(stat.count[0] for stat in strips)
+    stroke = sum(strokes.crop(box).histogram()[255] for box in edges)
+    return stroke / (2 * width + 2 * max(height - 2, 0))

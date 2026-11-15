@@ -8,7 +8,6 @@ base_model: stable-diffusion-v1-5/stable-diffusion-v1-5
 base_revision: 451f4fe16113bff5a5d2269ed5ad43b0592e9a14
 controlnet: lllyasviel/control_v11p_sd15_scribble
 controlnet_revision: 3564ec7b87dd706d5fc760d21c9e90bb160d1e9f
-scheduler: UniPCMultistep
 seed: 42
 steps: 25
 guidance: 7.5
