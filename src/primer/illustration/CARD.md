@@ -43,7 +43,7 @@ None measured yet. The planned slices are subject category, and skin-tone and or
   then.
 - **Shapes are kept, and details drift.** In the baseline, a single round window became three windows,
   and cloud ellipses became coloured orbs. The scribble model follows outlines, not what they mean.
-- **Not usable from `build_book` yet.** `consistency()` raises until the stage 6 score exists, and
+- **Not usable from `build_book` yet.** `consistency()` raises until the stage 6 ConsistencyScorer is wired in, and
   `build_book` calls it on every book. Use `illustrate()` directly until then.
 - **Faint and unusual drawings.** The stroke threshold is set relative to the paper, so pencil, yellow
   crayon, transparent canvas exports and dim photos keep their strokes. A page with no strokes is

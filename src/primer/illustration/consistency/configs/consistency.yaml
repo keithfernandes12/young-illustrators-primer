@@ -1,0 +1,13 @@
+# Character-consistency experiment (stage 6): which pretrained embedder, and what threshold.
+# Read by `python -m primer.illustration.consistency.experiment`; logged whole as run params.
+name: consistency-baseline
+data_version: v1.1          # the team's frozen version; bumping it is a team decision
+baseline: clip-vit-b32      # the named frozen configuration every candidate must beat on val ROC-AUC
+candidates: [clip-vit-b32, clip-vit-l14, dinov2-small]
+revision: main              # pin to the commit in consistency_report.json "revisions" after the first run
+pairs_per_split: 1000       # half positive (same book), half hard negative (other book, same source)
+val_fraction: 0.5           # by book: val picks the embedder and threshold, test only reports
+seed: 7
+batch_size: 32
+slice_keys: [source, language]
+perturbations: [greyscale, downscale, centre_crop, jpeg]

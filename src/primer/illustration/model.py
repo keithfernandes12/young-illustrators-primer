@@ -144,7 +144,7 @@ class IllustratorModel:
     """The production illustration implementation. Satisfies ``interface.Illustrator``.
 
     **Not ready for** ``build_book`` **yet.** ``build_book`` calls ``consistency()`` on every book,
-    and here it raises until the stage 6 consistency score exists. Passing this model to
+    and here it raises until the stage 6 ConsistencyScorer is wired in. Passing this model to
     ``build_book`` would fail every book even though ``isinstance(model, Illustrator)`` holds. Until
     then, use ``illustrate()`` directly, as ``smoke.py`` does.
 
@@ -175,10 +175,10 @@ class IllustratorModel:
         return self._pipeline
 
     def prompt(self, page_text: str, style: str, subject: str | None) -> str:
-        parts = [page_text.strip()]
+        parts = ["children's storybook illustration", f"{style} style", "bright colors"]
         if subject:
             parts.append(f"featuring a {subject}")
-        parts += ["children's storybook illustration", f"{style} style", "bright colors"]
+        parts.append(page_text.strip())
         return ", ".join(part for part in parts if part)
 
     def illustrate(
@@ -215,7 +215,7 @@ class IllustratorModel:
         return Illustration(
             page_index=page_index,
             image_ref=path.as_uri(),
-            alt_text=page_text[:60],
+            alt_text=page_text.strip(),
             subject=subject,
             conditioned_on_sketch=True,
             identity=None,  # no IP-Adapter yet, so no page is conditioned on a character identity
@@ -224,5 +224,5 @@ class IllustratorModel:
     def consistency(self, illustrations: list[Illustration], characters: tuple[Character, ...] = ()) -> float:
         # Raising, not returning a placeholder: a made-up score would pass the gate silently.
         raise NotImplementedError(
-            "the consistency score is stage 6 and not built yet; do not pass this model to build_book"
+            "the stage 6 ConsistencyScorer is not wired in; do not pass this model to build_book"
         )

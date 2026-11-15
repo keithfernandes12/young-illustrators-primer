@@ -84,9 +84,7 @@ def prepare_sketch(data: bytes, size: int = 512) -> Image.Image:
     """White strokes on black, padded to a square and resized to ``size`` x ``size``, RGB.
 
     Children draw dark lines on light paper; the scribble model was trained on the opposite. The
-    paper is judged from the border pixels, which are paper in almost every drawing: when the drawing
-    as a whole is darker than its border, the lines are darker than the paper and the image is
-    inverted. A drawing that is already light-on-dark (the synthetic baseline sketch) is left as it is.
+    median brightness estimates the paper level even when the edges are in shadow.
     Transparency is paper. A drawing with no strokes left is refused rather than generated from an
     empty control image, because the page would then claim a sketch it never followed.
     """
@@ -97,11 +95,15 @@ def prepare_sketch(data: bytes, size: int = 512) -> Image.Image:
         raise ValueError("the drawing is not a readable image") from error
 
     gray = _on_paper(ImageOps.exif_transpose(image)).convert("L")
-    if ImageStat.Stat(gray).mean[0] <= _border_mean(gray):
+    paper = _percentile(gray, 0.50)
+    if ImageStat.Stat(gray).mean[0] <= paper:
         gray = ImageOps.invert(gray)
-    paper = _border_mean(gray)
-    threshold = paper + max(MIN_STROKE_CONTRAST, (_percentile(gray, 0.99) - paper) / 2)
+        paper = 255 - paper
+    threshold = paper + max(MIN_STROKE_CONTRAST, (_percentile(gray, 0.999) - paper) / 2)
     strokes = gray.point(lambda value: 255 if value >= threshold else 0)
+
+    if strokes.histogram()[255] > strokes.width * strokes.height / 4:
+        raise ValueError("strokes cover more than 25% of the drawing")
 
     # Pad rather than stretch: squashing a tall drawing changes the shapes ControlNet must keep.
     side = max(strokes.size)
@@ -135,16 +137,3 @@ def _percentile(gray: Image.Image, share: float) -> float:
         if seen >= target:
             return float(value)
     return 255.0
-
-
-def _border_mean(gray: Image.Image) -> float:
-    """Mean brightness of the outermost pixel ring."""
-    width, height = gray.size
-    edges = [
-        (0, 0, width, 1),
-        (0, height - 1, width, height),
-        (0, 0, 1, height),
-        (width - 1, 0, width, height),
-    ]
-    strips = [ImageStat.Stat(gray.crop(box)) for box in edges]
-    return sum(stat.sum[0] for stat in strips) / sum(stat.count[0] for stat in strips)

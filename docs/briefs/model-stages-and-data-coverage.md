@@ -125,7 +125,9 @@ whether a number means anything (questions 2 and 3 below).
   box, 17 COCO joints and a segmentation polygon and **no category at all**. It says where a character
   is and how its limbs are arranged, never what it is. The only labelled drawing data is still Quick,
   Draw! strokes, so top-5 accuracy on a Quick, Draw! split still says nothing about a photographed
-  crayon drawing. — *Vision lead with the Data lead*
+  crayon drawing. **Tracked as KAN-109**, which adds the reason it is wanted before S6d rather than
+  after: a fine-tune can gain on the Quick, Draw! split while losing on a real upload, and with no
+  photographed split nothing would catch that. — *Vision lead with the Data lead*
 - ~~Does the golden set carry safety cases?~~ **Settled for text.** `configs/golden/scenarios.jsonl`
   holds 100 scenarios, 80 `book` and 20 `safety`, so "zero safety violations on the golden set" now
   measures something rather than restating an empty set. All 20 are text cases, so the question

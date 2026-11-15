@@ -3,7 +3,7 @@
 import io
 
 import pytest
-from PIL import Image, ImageDraw
+from PIL import Image
 
 
 def draw_house(size=(200, 120), ink=0, paper=255, mode="L") -> bytes:
@@ -14,10 +14,12 @@ def draw_house(size=(200, 120), ink=0, paper=255, mode="L") -> bytes:
     saved as they are, so an RGBA canvas export keeps its transparency.
     """
     image = Image.new(mode, size, paper)
-    pen = ImageDraw.Draw(image)
-    pen.rectangle((70, 50, 130, 100), outline=ink, width=4)
-    pen.line([(60, 52), (100, 15), (140, 52)], fill=ink, width=4)
-    pen.ellipse((20, 95, 180, 118), outline=ink, width=4)
+    for box in ((70, 50, 130, 54), (70, 96, 130, 100), (70, 54, 74, 96), (126, 54, 130, 96)):
+        image.paste(ink, box)
+    for y in range(15, 52):
+        offset = (y - 15) * 40 // 37
+        image.paste(ink, (100 - offset, y, 104 - offset, y + 1))
+        image.paste(ink, (100 + offset, y, 104 + offset, y + 1))
     buffer = io.BytesIO()
     (image.convert("RGB") if mode == "L" else image).save(buffer, format="PNG")
     return buffer.getvalue()
