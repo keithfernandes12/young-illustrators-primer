@@ -73,7 +73,9 @@ git tag data-v1.2
 ## Run it
 
 Needs [Docker Desktop](https://docs.docker.com/get-docker/) (or Docker Engine with Compose v2.24+)
-and about 4 GB of memory for Docker. From the repo root:
+and about 4 GB of memory for Docker in local mode (`.local-data/`, small data). Against the full
+bucket, give Docker at least its default 7.6 GB: `check_data` on all of `v1.1` brings the stack near
+7 GB (see `check_data` above). From the repo root:
 
 ```bash
 cp .env.example .env                 # once; on Linux set AIRFLOW_UID to the output of `id -u`

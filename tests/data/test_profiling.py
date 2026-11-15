@@ -368,7 +368,11 @@ def test_a_text_column_missing_from_one_file_counts_as_null_there(store):
                                            ("expect_column_values_to_not_be_null", "text"),  # own checks,
                                            ("expect_column_value_lengths_to_be_between", "text")}),  # as GX does
     (lambda df: df.assign(notes="note " * 60), {("expect_table_columns_to_match_set", None)}),
-], ids=["clean", "too_many_nulls", "one_empty_story", "text_missing", "extra_long_column"])
+    (lambda df: df.assign(notes="note " * 60).drop(columns="score"),  # one column-set break, not two,
+     {("expect_table_columns_to_match_set", None),                    # plus the missing column's checks
+      ("expect_column_values_to_be_between", "score"), ("expect_column_values_to_not_be_null", "score")}),
+], ids=["clean", "too_many_nulls", "one_empty_story", "text_missing", "extra_long_column",
+        "extra_long_and_missing_short"])
 def test_long_text_contract_breaks_match_the_full_frame_check(tmp_path, context, change, expected):
     from primer.data.storage import Store
 
@@ -378,10 +382,64 @@ def test_long_text_contract_breaks_match_the_full_frame_check(tmp_path, context,
     _write_stories(store, df)
     loaded = profiling.load_dataset(store, "stories_text", min_lengths=profiling.min_lengths(schema))
 
-    streamed = {(a.check, a.column) for a in profiling.validate(loaded.frame, schema, context, loaded.text)}
-    full = {(a.check, a.column) for a in profiling.validate(df, schema, context)}
+    # Lists, not sets: a contract break must be reported as many times as the full frame reports it.
+    streamed = sorted((a.check, a.column or "") for a in profiling.validate(loaded.frame, schema, context, loaded.text))
+    full = sorted((a.check, a.column or "") for a in profiling.validate(df, schema, context))
 
-    assert streamed == full == expected
+    assert streamed == full == sorted((check, column or "") for check, column in expected)
+
+
+def test_check_datasets_catches_one_empty_story(store, tmp_path):
+    """End to end: ``check_datasets`` must count short values while streaming, or this passes silently."""
+    schemas = tmp_path / "schemas"
+    _write_stories(store, stories())
+    profiling.write_schemas(store, schemas_dir=schemas, datasets=("stories_text",))
+    emptied = stories()
+    emptied.loc[7, "text"] = ""
+    for path in store.glob("processed/stories_text/source=tinystories/*.parquet"):
+        store.fs.rm(store.path(path))
+    _write_stories(store, emptied)
+
+    report = profiling.check_datasets(store, run_id="r", save=False, schemas_dir=schemas, datasets=("stories_text",))
+
+    assert {(a["check"], a["column"]) for a in report["anomalies"]} == {
+        ("expect_column_value_lengths_to_be_between", "text")}
+
+
+def test_a_min_length_the_stream_did_not_count_is_refused(tmp_path, context):
+    from primer.data.storage import Store
+
+    schema = profiling.infer_schema("stories_text", profiling.profile_frame(stories()))
+    store = Store((tmp_path / "data").as_posix())
+    _write_stories(store, stories())
+    loaded = profiling.load_dataset(store, "stories_text")    # no min_lengths: short values not counted
+
+    with pytest.raises(ValueError, match="min_lengths"):
+        profiling.validate(loaded.frame, schema, context, loaded.text)
+
+
+def test_a_column_that_is_not_text_in_every_file_is_loaded_not_streamed(store):
+    df = stories()
+    first = df.iloc[:60].reset_index(drop=True).assign(notes="note " * 60)
+    second = df.iloc[60:].reset_index(drop=True).assign(notes=7)    # the same column, as a number
+    store.write_parquet("processed/stories_text/source=tinystories/batch=20261001T000000Z.parquet", first)
+    store.write_parquet("processed/stories_text/source=tinystories/batch=20261002T000000Z.parquet", second)
+
+    loaded = profiling.load_dataset(store, "stories_text")
+
+    assert "notes" not in loaded.text and "notes" in loaded.frame.columns
+    assert loaded.profile() == profiling.profile_frame(pd.concat([first, second], ignore_index=True))
+
+
+def test_write_schemas_never_loads_long_text_whole(store, tmp_path, monkeypatch):
+    _write_stories(store, stories())
+    profiled = []
+    real = profiling.profile_column
+    monkeypatch.setattr(profiling, "profile_column", lambda s: profiled.append(s.name) or real(s))
+
+    profiling.write_schemas(store, schemas_dir=tmp_path / "schemas", datasets=("stories_text",))
+
+    assert profiled and "text" not in profiled and "word_count" in profiled
 
 
 def test_a_categorical_column_that_turns_into_long_text_is_an_error(tmp_path, context):

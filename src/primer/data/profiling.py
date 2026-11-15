@@ -145,7 +145,9 @@ class TextStats:
     total_length: int = 0
     min_length: int | None = None
     max_length: int | None = None
-    too_short: int = 0       # non-null values shorter than the schema's ``min_length``
+    # Non-null values shorter than the schema's ``min_length``. None means "not counted" (no
+    # ``min_lengths`` given for this column), which ``text_contract`` refuses to read as "none".
+    too_short: int | None = None
 
     @property
     def non_null(self) -> int:
@@ -169,30 +171,42 @@ def _is_text(field_type) -> bool:
                 or getattr(pa.types, "is_string_view", lambda _: False)(field_type))
 
 
-def _scan_text(store: Store, paths: list[str], min_lengths: dict[str, int]) -> tuple[dict[str, TextStats], int,
-                                                                                   list[str]]:
+@dataclass
+class _Scan:
+    stats: dict[str, TextStats]      # every column that is text in at least one file
+    rows: int
+    columns: list[str]               # every column, in file order
+    not_text: set[str]               # columns with a non-text, non-null type in at least one file
+
+
+def _scan_text(store: Store, paths: list[str], min_lengths: dict[str, int]) -> _Scan:
     """Statistics of every text column across ``paths``, one chunk in memory at a time.
 
-    Also returns the total row count and every column name in file order. A column missing from
-    some files counts as null there, as it would in the concatenated frame.
+    A column missing from some files counts as null there, as it would in the concatenated frame.
+    A column that is another type in some file is listed in ``not_text``: its statistics here
+    would miss those values, so ``load_dataset`` loads it whole instead.
     """
+    import pyarrow as pa
     import pyarrow.compute as pc
     import pyarrow.parquet as pq
 
     stats: dict[str, TextStats] = {}
     columns: list[str] = []
+    not_text: set[str] = set()
     rows = 0
     for path in paths:
         with store.fs.open(store.path(path), "rb") as fh:
             parquet = pq.ParquetFile(fh)
             rows += parquet.metadata.num_rows
             columns += [f.name for f in parquet.schema_arrow if f.name not in columns]
+            not_text |= {f.name for f in parquet.schema_arrow
+                         if not _is_text(f.type) and not pa.types.is_null(f.type)}
             names = [f.name for f in parquet.schema_arrow if _is_text(f.type)]
             for batch in parquet.iter_batches(batch_size=TEXT_BATCH_ROWS, columns=names) if names else ():
                 for name in names:
                     column = batch.column(name)
                     lengths = pc.utf8_length(column)
-                    s = stats.setdefault(name, TextStats())
+                    s = stats.setdefault(name, TextStats(too_short=0 if name in min_lengths else None))
                     s.rows += len(column)
                     s.nulls += column.null_count
                     if column.null_count == len(column):
@@ -201,12 +215,12 @@ def _scan_text(store: Store, paths: list[str], min_lengths: dict[str, int]) -> t
                     s.total_length += pc.sum(lengths).as_py()
                     s.min_length = low if s.min_length is None else min(s.min_length, low)
                     s.max_length = high if s.max_length is None else max(s.max_length, high)
-                    if name in min_lengths:
+                    if s.too_short is not None:
                         s.too_short += pc.sum(pc.less(lengths, min_lengths[name])).as_py() or 0
     for s in stats.values():
         s.nulls += rows - s.rows    # files without the column
         s.rows = rows
-    return stats, rows, columns
+    return _Scan(stats, rows, columns, not_text)
 
 
 @dataclass
@@ -235,8 +249,9 @@ def load_dataset(store: Store, dataset: str, min_lengths: dict[str, int] | None 
     import pyarrow.parquet as pq
 
     paths = [p for group in dataset_files(store, dataset).values() for p in group]
-    scanned, rows, columns = _scan_text(store, paths, min_lengths or {})
-    text = {name: s for name, s in scanned.items() if s.non_null and s.mean_length > LONG_TEXT}
+    scan = _scan_text(store, paths, min_lengths or {})
+    text = {name: s for name, s in scan.stats.items()
+            if s.non_null and s.mean_length > LONG_TEXT and name not in scan.not_text}
     frames = []
     for path in paths:
         with store.fs.open(store.path(path), "rb") as fh:
@@ -245,7 +260,7 @@ def load_dataset(store: Store, dataset: str, min_lengths: dict[str, int] | None 
             # pd.read_parquet, as Store.read_parquet uses, so the dtypes match read_dataset's
             frames.append(pd.read_parquet(fh, columns=keep))
     frame = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-    return LoadedDataset(frame, text, rows, columns)
+    return LoadedDataset(frame, text, scan.rows, scan.columns)
 
 
 def min_lengths(schema: dict[str, Any] | None) -> dict[str, int]:
@@ -412,16 +427,36 @@ def validate(df: pd.DataFrame, schema: dict[str, Any], context=None,
         if r.exception_info and r.exception_info.get("raised_exception"):
             detail += f": {r.exception_info.get('exception_message')}"
         anomalies.append(Anomaly(schema["dataset"], "error", cfg.type, cfg.kwargs.get("column"), detail))
-    return anomalies
+    return _one_column_set_anomaly(anomalies)
+
+
+def _one_column_set_anomaly(anomalies: list[Anomaly]) -> list[Anomaly]:
+    """Merge column-set breaks into one, as the full-frame check reports a single one.
+
+    An unexpected long column (``text_contract``) and a column-set break in the frame (Great
+    Expectations) are the same contract failure seen from two sides.
+    """
+    check = "expect_table_columns_to_match_set"
+    breaks = [a for a in anomalies if a.check == check]
+    if len(breaks) < 2:
+        return anomalies
+    merged = Anomaly(breaks[0].dataset, "error", check, None, "; ".join(a.detail for a in breaks))
+    first = anomalies.index(breaks[0])
+    rest = [a for a in anomalies if a.check != check]
+    return rest[:first] + [merged] + rest[first:]
 
 
 def text_contract(schema: dict[str, Any], text: dict[str, TextStats]) -> list[Anomaly]:
     """The schema's expectations for long text columns, decided from exact statistics.
 
     The same rules ``build_suite`` gives Great Expectations: the non-null share must reach
-    ``mostly``, a ``not_all_null`` column needs one value, and no value may be shorter than
-    ``min_length``. A column the schema doesn't have breaks the column set; one the schema expects to
-    be numeric or categorical (``min``, ``allowed``) has turned into long text, which also breaks it.
+    ``mostly``, and no value may be shorter than ``min_length``. (A ``not_all_null`` column always
+    passes here: only columns with at least one value are streamed.) A column the schema doesn't
+    have breaks the column set; one the schema expects to be numeric or categorical (``min``,
+    ``allowed``) has turned into long text, which also breaks it.
+
+    Raises ``ValueError`` if the schema has a ``min_length`` that the stream did not count: that
+    would otherwise pass every empty value silently. Load with ``min_lengths(schema)``.
     """
     dataset, out = schema["dataset"], []
     for name, s in text.items():
@@ -436,9 +471,9 @@ def text_contract(schema: dict[str, Any], text: dict[str, TextStats]) -> list[An
             if non_null < mostly:
                 out.append(Anomaly(dataset, "error", "expect_column_values_to_not_be_null", name,
                                    f"expect_column_values_to_not_be_null: {100 * (1 - non_null):.2f}% unexpected"))
-        elif spec.get("not_all_null") and s.non_null == 0:
-            out.append(Anomaly(dataset, "error", "expect_column_values_to_not_be_null", name,
-                               "expect_column_values_to_not_be_null: 100.00% unexpected"))
+        if "min_length" in spec and s.too_short is None:
+            raise ValueError(f"{dataset}.{name}: the schema has a min_length but the stream did not count "
+                             "short values; load the dataset with min_lengths(schema)")
         if "min_length" in spec and s.too_short:
             out.append(Anomaly(dataset, "error", "expect_column_value_lengths_to_be_between", name,
                                f"expect_column_value_lengths_to_be_between: {100 * s.too_short / s.non_null:.2f}% "
