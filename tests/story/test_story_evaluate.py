@@ -17,7 +17,7 @@ from primer.story.writer import LLMStoryWriter
 
 def vreq(i: int, words: tuple[str, ...] = ("ball", "cat"), level: float = 0.5, source: str = "storyweaver"):
     return ValidationRequest(request_id=f"r{i}", book_key=f"{source}/b{i}", source=source, age=3 + i % 3,
-                             target_words=words, character_name="Pip", setting=None, reading_level=level,
+                             target_words=words, character_name="Pip", setting=None, reading_level=level, book_level=2.0,
                              level_source="fk_formula@1", license="CC-BY-4.0", attribution="test")
 
 

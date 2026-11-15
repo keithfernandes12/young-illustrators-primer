@@ -38,8 +38,9 @@ SOURCE_ORDER = ("african_storybook", "storyweaver", "tinystories")
 SPLITS = (("train", 0.8), ("val", 0.9), ("test", 1.0))
 
 #: Places a 3-5 story can be "in". A request's setting is the first one its book mentions, or None.
+#: Each must read naturally as "in the <place>"; "home" is left out because "in the home" does not.
 SETTINGS = ("garden", "park", "forest", "farm", "beach", "school", "house", "kitchen", "river", "village",
-            "sea", "zoo", "market", "jungle", "pond", "tree", "sky", "home")
+            "sea", "zoo", "market", "jungle", "pond", "tree", "sky")
 
 _STOPWORDS = frozenset(
     ["the", "a", "an", "and", "or", "but", "so", "then", "when", "was", "were", "is", "are", "am", "be", "been", "to", "of", "in", "on", "at", "for", "with", "by", "from", "up", "down", "out", "into", "over", "under", "they", "them", "their", "there", "this", "that", "these", "those", "he", "she", "it", "his", "her", "its", "we", "you", "i", "me", "my", "our", "your", "said", "says", "did", "does", "do", "not", "no", "yes", "very", "too", "all", "one", "two", "can", "could", "would", "will", "just", "like", "went", "came", "got", "get", "had", "has", "have", "what", "who", "where", "why", "how", "him"]
@@ -115,7 +116,12 @@ class ValidationRequest:
     target_words: tuple[str, ...]
     character_name: str | None
     setting: str | None
+    #: The **target** level for the story: from the child's age, by the golden set's rule
+    #: (`target_level_for_age`), not from the source book.
     reading_level: float
+    #: The source book's own `fk_grade`, kept for transparency and slicing.
+    book_level: float
+    #: How `book_level` was computed.
     level_source: str
     license: str | None
     attribution: str | None
@@ -164,35 +170,59 @@ def target_words_of(text: str, key: str, n: int, vocabulary: frozenset[str] | No
     return tuple(candidates[:n])
 
 
+#: Source books above this whole-story FK grade are not used for 3-5 requests. Measured on v1.1 val
+#: (2026-11-15): only 12 of 264 val books are at <= 1.5, but 57 are at <= 3.0. The book only supplies
+#: the target words, the character and the setting; the target level comes from the child's age.
+MAX_SOURCE_BOOK_LEVEL = 3.0
+
+
+def target_level_for_age(age: int) -> float:
+    """The story's target FK grade for a child of `age`, by the golden set's rule.
+
+    `scripts/gen_golden_scenarios.py` uses `max(0, age - 4)` plus a random ±0.3 jitter; validation
+    requests use the centre of that rule, so ages 3, 4 and 5 target 0.0, 0.0 and 1.0.
+    """
+    return max(0.0, float(age) - 4.0)
+
+
 def build_validation_requests(
-    books: pd.DataFrame, n: int = 30, vocabulary: frozenset[str] | None = None
+    books: pd.DataFrame, n: int = 30, vocabulary: frozenset[str] | None = None,
+    max_book_level: float = MAX_SOURCE_BOOK_LEVEL,
 ) -> list[ValidationRequest]:
     """`n` requests for ages 3-5 from the **val** split, balanced across sources, deterministic.
 
-    Only books whose whole-story FK grade is within the Learn to Read range qualify. Ages cycle 3, 4, 5.
-    Requests are taken round-robin across sources in hash order, so one source cannot fill the set.
+    - Source books qualify at whole-story FK grade <= `max_book_level`.
+    - The target level comes from the child's age (`target_level_for_age`), not from the book.
+    - Target words prefer `vocabulary` (sight words) and always come from the book's own text.
+    - Books are taken round-robin across sources in hash order, so one source cannot fill the set; a
+      book that yields fewer than two target words is skipped and the next one is taken.
+    - Ages cycle 3, 4, 5 over the requests actually made.
     """
     val = books[books["split"] == "val"].copy()
     val["level"] = val["text"].map(fk_grade)
-    val = val[val["level"] <= LEARN_TO_READ.max_level]
+    val = val[val["level"] <= max_book_level]
     val["_order"] = val["book_key"].map(lambda key: hash_fraction(key, salt="requests:"))
     queues = {source: list(group.sort_values("_order").itertuples(index=False))
               for source, group in val.groupby("source", sort=True)}
-    picked: list[Any] = []
-    while len(picked) < n and any(queues.values()):
+    ordered: list[Any] = []
+    while any(queues.values()):
         for source in sorted(queues):
-            if queues[source] and len(picked) < n:
-                picked.append(queues[source].pop(0))
-    requests = []
-    for index, book in enumerate(picked):
+            if queues[source]:
+                ordered.append(queues[source].pop(0))
+    requests: list[ValidationRequest] = []
+    for book in ordered:
+        if len(requests) >= n:
+            break
+        index = len(requests)
         target = target_words_of(book.text, book.book_key, 2 + index % 2, vocabulary)
         if len(target) < 2:
             continue
+        age = 3 + index % 3
         requests.append(ValidationRequest(
             request_id=hashlib.sha1(book.book_key.encode()).hexdigest()[:12],
-            book_key=book.book_key, source=book.source, age=3 + index % 3, target_words=target,
+            book_key=book.book_key, source=book.source, age=age, target_words=target,
             character_name=character_of(book.text), setting=setting_of(book.text),
-            reading_level=float(book.level), level_source=FK_VERSION,
+            reading_level=target_level_for_age(age), book_level=float(book.level), level_source=FK_VERSION,
             license=book.license, attribution=book.attribution,
         ))
     return requests
@@ -215,6 +245,18 @@ def read_requests(path: Path) -> list[ValidationRequest]:
     return out
 
 
+def smallest_files(version_record: dict[str, Any], dataset: str, source: str, n: int) -> list[dict[str, Any]]:
+    """The `n` smallest files of one source in a version record (`n <= 0` means all), smallest first.
+
+    Used to read a small, exactly-pinned TinyStories subset for validation requests instead of all
+    ~931 MB of it (Diya's choice, 2026-11-15). Each file keeps its GCS generation, so the subset is as
+    frozen as the version itself. Splits are unaffected: they are a pure hash of each book's key.
+    """
+    files = version_record["datasets"][dataset]["sources"][source]["files"]
+    ordered = sorted(files, key=lambda f: (int(f.get("size") or 0), f["path"]))
+    return ordered if n <= 0 else ordered[:n]
+
+
 def read_dataset(version: str, split: str = "val", store: Any = None) -> pd.DataFrame:
     """The books of one split at a frozen data version. Reads the bucket: person-run, never in tests."""
     from primer.data.catalog import read_dataset as read
@@ -229,24 +271,47 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
 
     from primer.data.catalog import read_dataset as read
+    from primer.data.catalog import read_version
     from primer.data.storage import Store
 
     parser = argparse.ArgumentParser(description=main.__doc__)
     parser.add_argument("--data-uri", required=True, help="where the frozen version lives (read only)")
     parser.add_argument("--version", default="v1.1")
     parser.add_argument("--n", type=int, default=30)
+    parser.add_argument("--tinystories-files", type=int, default=1,
+                        help="read only the N smallest TinyStories files of the version (0 = all, ~931 MB)")
     parser.add_argument("--out", type=Path, default=Path(".local-data/story/validation_requests.jsonl"))
     args = parser.parse_args(argv)
 
     store = Store(args.data_uri)
-    books = books_from_frames(read("storybook_pages", store, version=args.version),
-                              read("stories_text", store, sources=["tinystories"], version=args.version))
+    record = read_version(args.version, store)
+    tiny_files = smallest_files(record, "stories_text", "tinystories", args.tinystories_files)
+    tiny_frames = [store.read_parquet(f["path"], generation=f.get("generation")) for f in tiny_files]
+    tiny = pd.concat(tiny_frames, ignore_index=True) if tiny_frames else pd.DataFrame()
+    books = books_from_frames(read("storybook_pages", store, version=args.version), tiny)
     lists = read("word_lists", store, sources=["sight_words"], version=args.version)
     vocabulary = frozenset(str(w).lower() for w in lists["word"]) if not lists.empty else None
     requests = build_validation_requests(books, n=args.n, vocabulary=vocabulary)
     write_requests(requests, args.out)
-    print(f"{len(books)} books ({books.attrs['dropped_duplicates']} cross-source duplicates dropped), "
-          f"{(books['split'] == 'val').sum()} in val; wrote {len(requests)} requests to {args.out}")
+
+    val = books[books["split"] == "val"]
+    manifest = {
+        "data_version": args.version,
+        "level_source": FK_VERSION,
+        "tinystories_files": [{k: f.get(k) for k in ("path", "generation", "size")} for f in tiny_files],
+        "tinystories_rows_read": len(tiny),
+        "books": len(books),
+        "books_by_source": {str(k): int(v) for k, v in books["source"].value_counts().sort_index().items()},
+        "dropped_cross_source_duplicates": int(books.attrs["dropped_duplicates"]),
+        "val_books_by_source": {str(k): int(v) for k, v in val["source"].value_counts().sort_index().items()},
+        "requests": len(requests),
+        "requests_by_source": dict(sorted(Counter(r.source for r in requests).items())),
+        "requests_by_age": {str(k): v for k, v in sorted(Counter(r.age for r in requests).items())},
+    }
+    manifest_path = args.out.with_suffix(".manifest.json")
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(manifest, indent=2))
+    print(f"wrote {len(requests)} requests to {args.out} and the manifest to {manifest_path}")
     return 0
 
 

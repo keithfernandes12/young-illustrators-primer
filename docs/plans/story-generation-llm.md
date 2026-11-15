@@ -563,6 +563,11 @@ It writes a manifest.
     - The S2 PR then records the shortfall and a mitigation in Decisions before S6 starts: for
       example, drawing the TinyStories pool toward shorter stories, or raising the TinyStories ratio.
     - It does not proceed silently.
+    - **Risk, measured 2026-11-15** (Verified facts): only 3.8% of `v1.1` val books are at grade 0–1,
+      far below the 20% floor. If train looks the same, this check fails. Expect S2 to need the
+      mitigation, and "raising the TinyStories ratio" will not help on its own, because TinyStories'
+      median grade is 4.5. The likelier fixes are drawing the pool toward short, simple stories, or
+      using a lower age-band floor.
   - Every pair's target words occur in its story.
   - Every row carries `license`, `attribution` and `level_source`.
 - **Testing** — each acceptance line has a test on in-memory frames built through `conform()`. Each
@@ -929,6 +934,21 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
   only to check the output.
 - **2026-11-15** — *`story_quality_mean` is not measured in M1.* It needs the LLM-as-judge (open
   question 3). `metrics.json` lists it under `not_measured` rather than reporting a made-up number.
+- **2026-11-15** — **Validation requests for M1 (Diya).**
+  - **The target level comes from the child's age**, by the golden set's rule (`max(0, age − 4)`, the
+    centre of the generator's ±0.3), not from the source book. The book only supplies the target
+    words, the character and the setting.
+  - **Source books qualify at a whole-story `fk_grade` of 3.0 or below** (`MAX_SOURCE_BOOK_LEVEL`).
+  - Target words prefer the sight-word lists (Dolch and Fry).
+  - 30 requests, balanced round-robin across sources, ages 3, 4 and 5 equally.
+
+  Why: at the original ≤ 1.5 cut only 12 val books qualified (Verified facts), too few to choose a
+  model on.
+- **2026-11-15** — *TinyStories subset for requests (Diya).* The requests read only the **smallest**
+  `v1.1` TinyStories file (2,000 stories, ~1 MB), pinned by its GCS generation, instead of all ~931 MB.
+  - Splits are unaffected, because each book's split is a pure hash of its own key.
+  - The file used is recorded in the requests manifest (`--tinystories-files`, default 1).
+  - Training pairs (S2) will read more.
 
 ## Verified facts
 
@@ -969,6 +989,28 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
   exists. Checked by grepping `src/primer/data`.
 - **2026-11-14** — `docs/plans/story-demo.md`, cited by KAN-92, does not exist on `main` or on any
   fetched branch. Checked with `git log --all -- docs/plans/story-demo.md`.
+- **2026-11-15** — **The `v1.1` corpus sits well above the 3–5 reading range. Only 3.8% of val books
+  (10 of 264) are at grade 0–1.** Measured with `levels.fk_grade` on whole stories. The data read was
+  all `storybook_pages`, plus the smallest TinyStories file (`batch=20261027T003515Z`, generation
+  `1793061331116289`, 2,000 stories), with one pair per book and cross-source dedupe (5 duplicates
+  dropped). That gives 2,753 books, 264 of them in val.
+
+  | Grade | african_storybook | storyweaver | tinystories | all val |
+  |---|---|---|---|---|
+  | ≤ 1.0 | 5 | 3 | 2 | 10 (3.8%) |
+  | ≤ 1.5 | 7 | 3 | 2 | 12 |
+  | ≤ 2.0 | 8 | 5 | 5 | 18 |
+  | ≤ 3.0 | 18 | 9 | 30 | 57 |
+  | median grade | 3.0 | 4.5 | 4.5 | |
+
+  **Risk for the S2 floor** (≥ 20% and ≥ 300 train pairs at 0–1): if train matches val, it fails by a
+  wide margin. The TinyStories figures come from one file of 2,000 stories out of 1.8M, so treat them
+  as an estimate. Run the full count when S2 reads more TinyStories.
+- **2026-11-15** — Bucket read access works from Diya's Mac with Application Default Credentials. The
+  python.org Python 3.13 that the `.venv` was built from has no CA bundle installed
+  (`/Library/Frameworks/Python.framework/Versions/3.13/etc/openssl/` is empty), so every Google Cloud
+  call fails `CERTIFICATE_VERIFY_FAILED` unless `SSL_CERT_FILE` points at the `.venv`'s `certifi`
+  bundle. The permanent fix is the installer's `Install Certificates.command`, a person's action.
 
 ## Open questions
 

@@ -38,7 +38,7 @@ def small_config(**overrides) -> GridConfig:
 
 REQUESTS = [ValidationRequest(request_id=f"r{i}", book_key=f"tinystories/{i}", source="tinystories", age=3 + i % 3,
                               target_words=("ball", "cat"), character_name=None, setting="the park",
-                              reading_level=0.5, level_source="fk_formula@1", license="x", attribution="y")
+                              reading_level=0.5, book_level=2.0, level_source="fk_formula@1", license="x", attribution="y")
             for i in range(4)]
 
 

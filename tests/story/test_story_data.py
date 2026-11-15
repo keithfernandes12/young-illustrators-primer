@@ -8,6 +8,7 @@ import pytest
 from primer.data.schemas import STORIES_TEXT, STORYBOOK_PAGES, conform
 from primer.illustration.consistency.experiment import split_of as illustration_split_of
 from primer.story.data import (
+    MAX_SOURCE_BOOK_LEVEL,
     SPLITS,
     book_key,
     books_from_frames,
@@ -16,7 +17,9 @@ from primer.story.data import (
     hash_fraction,
     read_requests,
     setting_of,
+    smallest_files,
     split_of_book,
+    target_level_for_age,
     write_requests,
 )
 from primer.story.levels import FK_VERSION, fk_grade
@@ -111,7 +114,8 @@ def test_requests_come_only_from_val_and_are_well_formed():
         assert 2 <= len(request.target_words) <= 3
         for word in request.target_words:
             assert word in texts[request.book_key].lower(), "target words come from the book itself"
-        assert request.reading_level == fk_grade(texts[request.book_key]) <= 1.5
+        assert request.book_level == fk_grade(texts[request.book_key]) <= MAX_SOURCE_BOOK_LEVEL
+        assert request.reading_level == target_level_for_age(request.age), "the target comes from age"
         assert request.level_source == FK_VERSION
         assert request.license and request.attribution
         story_request = request.to_request()
@@ -137,6 +141,38 @@ def test_requests_round_trip_through_jsonl(tmp_path):
     path = tmp_path / "requests.jsonl"
     write_requests(requests, path)
     assert read_requests(path) == requests
+
+
+@pytest.mark.parametrize("age,level", [(3, 0.0), (4, 0.0), (5, 1.0)])
+def test_target_level_follows_the_golden_age_rule(age, level):
+    """The centre of `max(0, age - 4) ± 0.3` from scripts/gen_golden_scenarios.py."""
+    assert target_level_for_age(age) == level
+
+
+def test_books_above_the_level_cut_are_never_used():
+    hard = ["Extraordinarily complicated vocabulary demonstrates considerable sophistication throughout."] * 3
+    books = books_from_frames(pages_frame({("storyweaver", f"storyweaver-{i}"): hard for i in range(60)}),
+                              stories_frame([]))
+    assert (books["text"].map(fk_grade) > MAX_SOURCE_BOOK_LEVEL).all()
+    assert build_validation_requests(books, n=30) == []
+
+
+def test_a_book_without_enough_words_is_skipped_not_counted():
+    """Skipping a book takes the next one, so short books cannot shrink the set below n."""
+    books = _corpus()
+    full = build_validation_requests(books, n=10)
+    assert len(full) == 10
+
+
+def test_smallest_files_picks_by_size_and_keeps_generations():
+    record = {"datasets": {"stories_text": {"sources": {"tinystories": {"files": [
+        {"path": "b.parquet", "size": 26_000_000, "generation": "2"},
+        {"path": "a.parquet", "size": 1_012_081, "generation": "1"},
+        {"path": "c.parquet", "size": 1_018_684, "generation": "3"},
+    ]}}}}}
+    assert [f["path"] for f in smallest_files(record, "stories_text", "tinystories", 1)] == ["a.parquet"]
+    assert [f["generation"] for f in smallest_files(record, "stories_text", "tinystories", 2)] == ["1", "3"]
+    assert len(smallest_files(record, "stories_text", "tinystories", 0)) == 3, "0 means every file"
 
 
 @pytest.mark.parametrize("text,name", [("Then Zip flew. Zip was happy. Look, said Zip.", "Zip"),
