@@ -1087,6 +1087,13 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
     word-forcing prompt or logit bias (S4/S8a), and the QLoRA fine-tune on pairs whose target words
     come from the story (S7). Raising `max_attempts` or loosening `selection@1` would hide the
     failure rather than fix it.
+- **2026-11-15** — *Commit hashes after the rebase onto `main`.* PR #28 merged, so M1 was rebased onto
+  `main` before its first push, and every M1 commit got a new hash. The story area, its tests and
+  this plan are byte-identical before and after (checked with `git diff` against a backup branch).
+  The hashes cited above, and in the MLflow `git_sha` tags, are the pre-rebase ones:
+  - `9f11f0a` → `9c182ca` (the SQLite store; the commit reviewed in the first self-review);
+  - `813c6c2` → `bac7bca` (the self-review fixes; `selection@1` is frozen here);
+  - `323de91` → `7ddc022` (the reduced grid; the grid's runs carry `git_sha=323de91`).
 
 ## Open questions
 
