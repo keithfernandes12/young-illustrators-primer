@@ -1,0 +1,37 @@
+# The story stage's own safety guardrail for ages 3-5 (`guardrails.py`). Owned by the story area:
+# safety for this model's output is the story owner's job, and member 3's SafetyClassifier is a
+# second, independent check in serving, not a replacement for this one.
+#
+# `categories` are what the prompt names ("do not include: ..."); naming the individual words in a
+# prompt to a small model tends to prime them, so the prompt names topics and the words are only
+# used to check the output. `words` are matched as whole words, case-insensitively, on the same
+# tokenisation as `levels.py`, so "skill" never matches "kill".
+#
+# This is a blocklist, so it is a floor, not a guarantee: it catches the obvious and misses anything
+# phrased around it. It is reviewed like code; add a word with the category it belongs to.
+version: avoid_list@1
+categories:
+  violence:
+    prompt: violence, fighting or anyone getting hurt
+    # Deliberately absent, because 3-5 stories use them innocently: kick (a ball), beat (a drum),
+    # arrow (a sign). Each would flag good stories and burn retries.
+    words: [kill, kills, killed, killing, murder, fight, fights, fighting, punch, punched,
+            stab, stabbed, shoot, shooting, attack, attacked, hurt, hurts, hurting,
+            war, battle, bomb, explode, exploded]
+  weapons:
+    prompt: weapons
+    words: [gun, guns, knife, knives, sword, swords, weapon, weapons, rifle, bullet, bullets]
+  death:
+    prompt: death or dying
+    words: [die, dies, died, dying, dead, death, corpse, funeral, grave, ghost, ghosts, skeleton]
+  fear:
+    prompt: frightening, scary or sad endings
+    words: [scary, scared, terrified, terror, horror, nightmare, nightmares, monster, monsters, blood,
+            bloody, scream, screamed, screaming, creepy, evil]
+  unkind:
+    prompt: mean or unkind words
+    # "shut" is absent on purpose: "shut the door" is not unkind.
+    words: [stupid, idiot, dumb, hate, hated, ugly, loser]
+  adult:
+    prompt: grown-up topics such as alcohol, smoking, drugs or romance
+    words: [beer, wine, alcohol, drunk, cigarette, cigarettes, smoking, drug, drugs, sexy, kiss, kissed]

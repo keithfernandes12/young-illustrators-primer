@@ -1,0 +1,53 @@
+# The Mac submission's model comparison (`grid.py`; plan Decisions 2026-11-15, scope change).
+# Two small pretrained instruct models, run zero-shot on the member's MacBook Air (MPS), over a
+# temperature x max_new_tokens grid, on the validation requests from `data.py`.
+#
+# Revisions are pinned so a rerun downloads exactly the weights a number was measured on; looked up
+# from the Hugging Face API on 2026-11-15. Download sizes: 0.5B ~1.0 GB, 1.5B ~3.1 GB.
+#
+# The selection rule is fixed here, before any run, so the result cannot pick the rule.
+name: story-mac-grid
+data_version: v1.1
+level_source: fk_formula@1
+requests: .local-data/story/validation_requests.jsonl
+out: .local-data/story/grid
+mlflow_tracking_uri: file:./.local-data/mlruns   # git-ignored; re-logged to the shared server later
+experiment: yip-story
+seed: 1234
+max_attempts: 3
+top_p: 0.9
+
+models:
+  - name: qwen2.5-0.5b-instruct
+    repo: Qwen/Qwen2.5-0.5B-Instruct
+    revision: 7ae557604adf67be50417f59c2c2f167def9a775
+    license: apache-2.0
+  - name: qwen2.5-1.5b-instruct
+    repo: Qwen/Qwen2.5-1.5B-Instruct
+    revision: 989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+    license: apache-2.0
+
+grid:
+  temperature: [0.3, 0.7, 1.0]
+  max_new_tokens: [256, 512]
+
+# The named frozen configuration every later model has to beat (model-development section 2: for a
+# stage that does not train, the baseline is a pinned configuration, not "the model's own score").
+baseline:
+  model: qwen2.5-0.5b-instruct
+  temperature: 0.7
+  max_new_tokens: 512
+
+selection:
+  # 1. Hard filters. A config is eligible only if both hold.
+  min_success_rate: 0.8                 # a story returned within max_attempts for >= 80% of requests
+  max_returned_safety_violation_rate: 0.0
+  # 2. Primary metric: the gated key.
+  primary: target_word_inclusion
+  # 3. Within this margin of the best primary score, prefer, in order:
+  tie_margin: 0.02
+  tie_breakers:
+    - first_attempt_valid_json_rate     # higher: fewer retries
+    - format_compliance_rate            # higher: mean of page and sentence compliance
+    - p95_latency_s                     # lower
+    - model_size_rank                   # lower: the smaller model

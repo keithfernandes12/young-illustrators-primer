@@ -27,13 +27,24 @@ class StoryRequest:
     #: The recogniser's description of the whole drawing. The writer needs this to write about what
     #: the child actually drew rather than about the prompt alone.
     description: str | None = None
+    #: The name the child gave their character ("Zip"). Optional and additive (KAN-92): serving does
+    #: not fill it yet. It can be a child's own name, so it is never logged (COPPA).
+    character_name: str | None = None
+    #: Where the story happens ("the garden"). Optional; the prompt treats it as a hint.
+    setting: str | None = None
+    #: The age mode: "learn_to_read" (3-5) or "grow_vocabulary" (5-8). None means derive from `age`.
+    #: Only learn_to_read is built so far.
+    age_mode: str | None = None
+    #: Target Flesch-Kincaid grade, on the scale `primer.story.levels.fk_grade` returns.
+    reading_level: float | None = None
 
 
 @dataclass(frozen=True)
 class Story:
-    """A story as pages of text."""
+    """A story as pages of text, plus the title the writer gave it."""
 
     pages: tuple[str, ...] = field(default_factory=tuple)
+    title: str = ""
 
     @property
     def text(self) -> str:
