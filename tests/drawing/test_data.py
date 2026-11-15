@@ -19,7 +19,7 @@ from primer.drawing.data import RenderedSplit, SplitConfig, build_splits, read_d
 from primer.drawing.preprocess import prepare_drawing
 from primer.drawing.render import render_strokes
 
-LABELS = ("cat", "house", "tree")
+LABELS = ("tree", "cat", "house")  # unsorted on purpose: the index follows the vocabulary order
 SQUARE = [[[10, 200, 200, 10, 10], [10, 10, 200, 200, 10]]]
 
 
@@ -47,6 +47,34 @@ def splits(**kwargs: object) -> dict[str, RenderedSplit]:
 def test_a_drawings_split_is_a_function_of_its_id_alone():
     assert split_of("123") == split_of("123")
     assert [split_of(str(i)) for i in range(50)] == [split_of(str(i)) for i in range(50)]
+
+
+GOLDEN = [
+    "train", "train", "train", "val", "train", "train", "train", "train", "train", "train",
+    "train", "train", "train", "train", "train", "val", "val", "test", "train", "val",
+]  # fmt: skip
+
+
+def test_the_shipped_salt_puts_known_ids_in_known_splits():
+    """Frozen: if this moves, every drawing's split moved, and that needs a new data version."""
+    assert [split_of(str(i)) for i in range(20)] == GOLDEN
+
+
+def test_a_drawing_keeps_its_split_wherever_its_row_is():
+    """Not by position: shuffling the frame must not move any drawing."""
+    ordered = data.split_frames(frame(500))
+    shuffled = data.split_frames(frame(500).sample(frac=1.0, random_state=0))
+
+    for split in data.SPLITS:
+        assert set(ordered[split]["source_id"]) == set(shuffled[split]["source_id"])
+
+
+def test_rows_sharing_a_source_id_share_a_split():
+    twins = data.split_frames(frame(40, source_id=["same"] * 20 + ["other"] * 20))
+
+    for source_id in ("same", "other"):
+        homes = {split: int((part["source_id"] == source_id).sum()) for split, part in twins.items()}
+        assert sorted(homes.values()) == [0, 0, 20], f"{source_id}'s rows are split up: {homes}"
 
 
 def test_the_salt_is_part_of_the_split():
@@ -231,6 +259,16 @@ def test_a_negative_index_gets_the_augmentation_of_the_item_it_names():
     assert np.array_equal(train[-5][0], train[0][0])
 
 
+def test_item_seed_answers_for_positions_like_indexing_does():
+    train = RenderedSplit(frame(5), "train", LABELS, augment=True, seed=3)
+
+    assert train.item_seed(-1) == train.item_seed(4)
+    assert train.item_seed(np.int64(2)) == train.item_seed(2)
+    for bad in (5, -6):
+        with pytest.raises(IndexError):
+            train.item_seed(bad)
+
+
 def test_numpy_integers_index_and_other_types_do_not():
     small = RenderedSplit(frame(3), "test", LABELS, augment=False)
 
@@ -270,6 +308,7 @@ def test_a_drawing_the_renderer_refuses_raises_naming_its_record():
         (frame(label=[None] * 60), "no label"),
         (frame(label=[1] * 60), "no label"),
         (frame(record_id=[None] * 60), "no record_id"),
+        (frame(strokes=[None] * 60), "no strokes"),
         (frame(source_id=[None] * 60), "no source_id"),
         (frame(source_id=[0.0] * 60), "no source_id"),
         (frame(source_id=[""] * 60), "no source_id"),
@@ -322,7 +361,7 @@ def test_the_public_constructor_refuses_a_frame_without_provenance_too(split, ba
 
 def test_a_split_with_no_drawings_is_valid():
     """A small version hashes nothing into one of the three splits; that is an empty split, not an error."""
-    for count in (1, 3, 10):
+    for count in (1, 2):  # fewer drawings than splits: some split is empty whatever the salt
         built = build_splits(frame(count), labels=LABELS)
         assert sum(len(split) for split in built.values()) == count
         assert any(len(split) == 0 for split in built.values())
@@ -331,6 +370,9 @@ def test_a_split_with_no_drawings_is_valid():
     assert len(empty) == 0 and list(empty) == []
     with pytest.raises(IndexError):
         empty[0]
+
+    bare = pd.DataFrame({column: [] for column in data.REQUIRED})  # float64 columns, no `.str`
+    assert len(RenderedSplit(bare, "val", LABELS, augment=False)) == 0
 
 
 @pytest.mark.parametrize("column", ["license", "attribution"])
@@ -388,6 +430,27 @@ def test_an_unknown_version_says_so(store):
 def test_read_dataset_refuses_to_augment_evaluation(store):
     with pytest.raises(ValueError, match="training only"):
         read_dataset("vt", "val", store=store, augment=True)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "error", "message"),
+    [
+        ({"split": "val", "augment": True}, ValueError, "training only"),
+        ({"split": "dev"}, ValueError, "split must be one of"),
+        ({"seed": -1}, ValueError, "seed"),
+        ({"seed": 1.5}, TypeError, "seed"),
+    ],
+)
+def test_a_bad_request_is_refused_before_the_version_is_read(monkeypatch, store, kwargs, error, message):
+    """The read is the slow part (15 s on v1.1); a request that cannot succeed must not pay for it."""
+
+    def read(*args, **kw):
+        raise AssertionError("the version was read before the request was checked")
+
+    monkeypatch.setattr(data.catalog, "read_dataset", read)
+
+    with pytest.raises(error, match=message):
+        read_dataset("vt", store=store, **kwargs)
 
 
 # ---------------------------------------------------------------------------------------- guards

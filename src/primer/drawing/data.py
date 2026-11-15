@@ -41,7 +41,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, fields
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, SupportsIndex
+from typing import SupportsIndex, overload
 
 import numpy as np
 import numpy.typing as npt
@@ -130,6 +130,17 @@ def split_of(source_id: str, config: SplitConfig | None = None) -> str:
     return "test"
 
 
+def _check_augment(split: str, augment: bool) -> None:
+    """Refuse an unknown split, or augmentation anywhere but ``train``."""
+    if split not in SPLITS:
+        raise ValueError(f"split must be one of {SPLITS}, not {split!r}")
+    if augment and split != "train":
+        raise ValueError(
+            f"augmentation is for training only; {split} is scored as the renderer draws it, "
+            "or the evaluation measures the augmentation"
+        )
+
+
 def _seed_value(name: str, value: SupportsIndex) -> int:
     """``value`` as a non-negative int, refused here rather than on the first item read.
 
@@ -148,7 +159,11 @@ def _seed_value(name: str, value: SupportsIndex) -> int:
 
 @dataclass(frozen=True)
 class DrawingRecord:
-    """What an item is, beside its pixels: identity, label, and the licence it carries."""
+    """What an item is, beside its pixels: identity, label, and the licence it carries.
+
+    ``label`` is the data's own spelling (``the eiffel tower``); ``label_index`` is the position of
+    the vocabulary's spelling of it (``The Eiffel Tower``), which is what training uses.
+    """
 
     record_id: str
     source_id: str
@@ -178,13 +193,7 @@ class RenderedSplit(Sequence[tuple[Image, int]]):
         prepare: PrepareConfig | None = None,
         augmentation: AugmentConfig | None = None,
     ) -> None:
-        if split not in SPLITS:
-            raise ValueError(f"split must be one of {SPLITS}, not {split!r}")
-        if augment and split != "train":
-            raise ValueError(
-                f"augmentation is for training only; {split} is scored as the renderer draws it, "
-                "or the evaluation measures the augmentation"
-            )
+        _check_augment(split, augment)
         # Here as well as in `build_splits` / `read_dataset`: this is a public constructor, and a
         # frame handed to it directly must not reach `record()` without provenance.
         check_frame(frame, labels)
@@ -194,7 +203,7 @@ class RenderedSplit(Sequence[tuple[Image, int]]):
         self.seed = _seed_value("seed", seed)
         self.epoch = 0
         self._frame = frame.reset_index(drop=True)
-        self._label_index = self._frame["label"].str.casefold().map(index).astype(int).to_numpy()
+        self._label_index = np.array([index[label.casefold()] for label in self._frame["label"]], dtype=int)
         self._render = render
         self._prepare = prepare
         self._augmentation = augmentation
@@ -206,8 +215,13 @@ class RenderedSplit(Sequence[tuple[Image, int]]):
         """Give later epochs different augmentations of the same drawings, reproducibly."""
         self.epoch = _seed_value("epoch", epoch)
 
-    def item_seed(self, index: int) -> int:
-        """The augmentation seed for item ``index`` in the current epoch."""
+    def item_seed(self, index: SupportsIndex) -> int:
+        """The augmentation seed for item ``index`` in the current epoch.
+
+        Keyed on the item's position in its split, not on the drawing's identity, so a version
+        with drawings added reshuffles which augmentation an existing drawing gets.
+        """
+        index = self._position(index)
         state = np.random.SeedSequence([self.seed, self.epoch, index]).generate_state(1)
         return int(state[0])
 
@@ -239,7 +253,13 @@ class RenderedSplit(Sequence[tuple[Image, int]]):
             attribution=str(row["attribution"]),
         )
 
-    def __getitem__(self, index: Any) -> Any:
+    @overload
+    def __getitem__(self, index: SupportsIndex) -> tuple[Image, int]: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> list[tuple[Image, int]]: ...
+
+    def __getitem__(self, index: SupportsIndex | slice) -> tuple[Image, int] | list[tuple[Image, int]]:
         if isinstance(index, slice):
             return [self[i] for i in range(*index.indices(len(self)))]
         index = self._position(index)
@@ -363,12 +383,12 @@ def read_dataset(
     """
     if not version:
         raise ValueError("a frozen data version is required; unfrozen data is never read")
-    if split not in SPLITS:
-        raise ValueError(f"split must be one of {SPLITS}, not {split!r}")
+    wanted = split == "train" if augment is None else augment
+    _check_augment(split, wanted)
+    _seed_value("seed", seed)  # refused now, not after the bucket read
     frame = catalog.read_dataset("drawings", store=store, sources=["quickdraw"], version=version)
     if frame.empty:
         raise ValueError(f"version {version!r} holds no Quick, Draw! drawings")
     labels = DrawingConfig.from_yaml().labels()
     check_frame(frame, labels)
-    wanted = split == "train" if augment is None else augment
     return RenderedSplit(split_frames(frame)[split], split, labels, augment=wanted, seed=seed)
