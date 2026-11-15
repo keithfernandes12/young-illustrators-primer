@@ -697,7 +697,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6c | not started | | the gate's number, over rendered Quick, Draw! — not the product's. Ceiling back to 1.0 since KAN-116 merged |
 | S6c2 | in review | [#33](https://github.com/keithfernandes12/young-illustrators-primer/pull/33) | 1,000 frozen drawings (unstratified), four variants: top-1 moves 25% / 50% / 41% between adjacent variants; over half the drawings come out `squiggle`. Reproduces exactly. KAN-109 |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap. Reads S6c2's stability figures |
-| S6e | not started | | unblocks KAN-42's reposing and IP-Adapter branches |
+| S6e | in review | | `sheet.py`: Florence-2 + SAM 2.1 + ViTPose beside SigLIP 2; every field filled on 82/82 real sheets; two figures found as two on 12/20. Stacked on #33. Unblocks KAN-42 |
 | S7a | in progress | branch `feat/KAN-42-controlnet-baseline` | pretrained SD 1.5 + ControlNet-Scribble, one page, local output; synthetic inputs only until KAN-94 |
 | S7b | not started | | needs S1, GPU quota in region, a working `consistency()`, and KAN-94 |
 | S8 | not started | | |
@@ -1246,6 +1246,37 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   make. What these numbers add to that decision: the gate's number is taken on drawings a
   classifier already recognised (S6b2), while on children's drawings the same model's answer
   moves 25–50% under preprocessing alone.
+- **2026-11-15 — S6e: three models chosen, downloaded with approval, and measured before use.**
+  From the brief, on licence and the 8 GB rule: **Florence-2 base** (MIT) for the description and
+  character boxes, **SAM 2.1 small** (Apache-2.0) for masks, **ViTPose base** (Apache-2.0) for
+  keypoints; `body_type` takes no model of its own. Each pinned by full revision in
+  `configs/drawing_sheet.yaml`. Florence-2 comes from `florence-community/Florence-2-base`, not
+  `microsoft/`: the Microsoft repo needs `trust_remote_code` and runs three Python files from it,
+  while transformers 5.23 loads the converted repo natively — same model, MIT, weights and JSON
+  only (chosen by the user). On disk: 0.47 / 0.18 / 0.34 GB. SAM 2's image processor needs
+  **`torchvision`**, installed with approval as `0.29.1+cu130` to match the CUDA torch (6.6 MB,
+  `--no-deps`, `pip check` clean). *Hypothesis:* photo-trained models would mostly work on
+  children's drawings. *Result, on the first 40 drawings of S6c2's frozen sample against the
+  dataset's own annotations, GPU:* Florence-2 `<OD>` finds the figure at IoU ≥ 0.5 on **37/40**
+  (median 0.89), but also boxes `human face` 28 times and `footwear` 19 times beside `person` 33
+  — so a box ≥ 80% inside a larger one is folded into it rather than made a character. SAM's mask
+  matches the annotated segmentation at IoU ≥ 0.5 on **26/40** (median 0.68), slightly under the
+  figure (31% of the box against the annotation's 40%). ViTPose places **61%** of annotated
+  joints within 10% of the figure's size (PCK@0.1). SAM loads with a transformers warning that
+  the checkpoint is `sam2_video` read into `Sam2Model`; the masks above are its output anyway.
+- **2026-11-15 — S6e: the acceptance, measured — every field always filled, two characters found
+  as two in 12 of 20.** `CharacterSheetRecognizer` on real drawings, GPU, warm, all four models
+  resident (**2.00 GiB peak VRAM**). 40 single-figure drawings: one sheet on 37, two or three on
+  3; every one of the 45 sheets carries candidates, embedding, crop, mask, a known body type and,
+  for humanoids, 17 joints; a description on 40/40; **0.82 s** a drawing mean, p95 1.32 s. Body
+  type: 33 humanoid, 5 creature, 7 object, against 40 annotated human figures — so about one in
+  six children's figures is not read as a person, and KAN-42 would place rather than repose it.
+  20 composites of two real figures side by side (in memory, never written): **exactly two
+  sheets on 12/20**, one on 6, three or four on 2; all 37 sheets complete; 1.07 s a drawing.
+  The plan's acceptance — "one sheet per character" — therefore holds on 60% of two-figure
+  drawings, not on all of them; the misses are the detector boxing two figures as one. In CI the
+  acceptance runs on fake weights through `build_book`, with a stand-in for the approve step
+  (KAN-64). Not in MLflow (KAN-107). Unstratified sample, as S6c2's.
 
 ## Open questions
 
@@ -1403,6 +1434,17 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   now; the team lead decides.
 - Does the course's GCP credit cover Claude models on Vertex AI? Recommended: check the billing account's
   credit scope before routing Claude Code through Vertex. Rishi checks.
+- **S6e needs `torchvision`, and nothing declares it.** SAM 2's image processor imports it, the
+  `drawing` extra does not list it, and like the CUDA torch it must match the torch build
+  (`0.29.1+cu130` for `2.14.1+cu130`). A fresh clone can run the recogniser but not
+  `CharacterSheetRecognizer`. *Recommended:* add it to the same documented install step as the
+  CUDA torch, and decide the pin with it. *Decides:* the KAN-38 owner; this slice changed no
+  dependency file.
+- **Two figures read as one in 6 of 20 two-figure drawings.** Florence-2's detector sometimes
+  boxes neighbouring figures together, and the containment rule then folds them. *Recommended:*
+  measure on real multi-character uploads before tuning — composites of two single-figure
+  drawings are a stand-in — and try Florence-2's phrase grounding or SAM's automatic masks if the
+  rate holds. KAN-42 should treat a sheet count as a lower bound until then.
 
 ## Out of scope
 
