@@ -5,7 +5,11 @@
 # Revisions are pinned so a rerun downloads exactly the weights a number was measured on; looked up
 # from the Hugging Face API on 2026-11-15. Download sizes: 0.5B ~1.0 GB, 1.5B ~3.1 GB.
 #
-# The selection rule is fixed here, before any run, so the result cannot pick the rule.
+# The selection rule is fixed here so the result cannot pick the rule. Its version is
+# `selection.version`; it is frozen as of commit 813c6c2. One honest caveat: `max_raw_safety_flag_rate`
+# was added after a first grid had started (2 of 12 configurations, stopped for review fixes). Those
+# runs' flag rates were not looked at before 0.2 was chosen, and the runs are soft-deleted. Any later
+# change to this block bumps `version` and requires a full re-run: no rule edit after seeing results.
 name: story-mac-grid
 data_version: v1.1
 level_source: fk_formula@1
@@ -43,7 +47,8 @@ baseline:
   max_new_tokens: 512
 
 selection:
-  # 1. Hard filters. A config is eligible only if both hold.
+  version: selection@1                  # bump on any change to this block, then re-run the whole grid
+  # 1. Hard filters. A config is eligible only if all three hold.
   min_success_rate: 0.8                 # a story returned within max_attempts for >= 80% of requests
   # Zero by construction while the judge is the writer's own guardrail; it starts to bite once an
   # independent classifier (member 3's) is passed as the judge. Kept so that day needs no rule change.

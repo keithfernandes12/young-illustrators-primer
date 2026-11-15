@@ -210,6 +210,8 @@ def test_metrics_and_charts_are_logged_as_one_summary_run(tmp_path):
     assert finish(report, logger, tmp_path, "t", "s", {"dvc/stories_text": "abc"}) == 0
     summary = logger.runs[-1]
     assert summary["name"] == "grid-summary" and summary["tags"]["kind"] == "grid-summary"
+    assert REQUIRED_TAGS <= set(summary["tags"]), REQUIRED_TAGS - set(summary["tags"])  # review F16
+    assert summary["tags"]["base_model"].startswith("hf://Qwen/")
     assert summary["tags"]["dvc/stories_text"] == "abc"
     assert tmp_path / "metrics.json" in summary["files"]
 
@@ -242,4 +244,11 @@ def test_config_params_and_dvc_tags_shapes():
     assert params == {"name": "x", "grid": '{"temperature": [0.3]}'}
     tags = dvc_tags("v1.1")
     assert set(tags) == {"dvc/stories_text", "dvc/storybook_pages", "dvc/word_lists"}
-    assert all(re.fullmatch(r"[0-9a-f]{12}|unavailable", v) for v in tags.values())
+    for key, value in tags.items():
+        dataset = key.removeprefix("dvc/")
+        exists = subprocess.run(["git", "cat-file", "-e", f"data-v1.1:data/{dataset}.dvc"], cwd=REPO_ROOT,
+                                capture_output=True, check=False).returncode == 0
+        # Where the pointer exists at the tag, a real hash is required (review F18): "unavailable"
+        # everywhere would otherwise pass. A clone without the tag may still say "unavailable".
+        assert re.fullmatch(r"[0-9a-f]{12}", value) if exists else value == "unavailable", (key, value)
+    assert dvc_tags("v0.0-no-such-version") == dict.fromkeys(tags, "unavailable")

@@ -55,11 +55,13 @@ class Attempt:
 
 @dataclass(frozen=True)
 class WriteReport:
-    """Everything the evaluation needs about one request, with or without a story."""
+    """One request's outcome: the returned story (or None) and every attempt's outcome."""
 
     story: Story | None
     attempts: tuple[Attempt, ...]
-    #: the last story that parsed, even if it then failed a check (None if nothing ever parsed)
+    #: The last story that parsed, even if it then failed a check (None if nothing ever parsed).
+    #: For debugging a failed request only: the evaluation never scores it, because a request that
+    #: returned no story reached no child (review F4/F19).
     last_parsed: Story | None = None
 
     @property

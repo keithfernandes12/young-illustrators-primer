@@ -12,6 +12,7 @@ young reading level, and free of the topics on the avoid-list. Plan:
 | Training | none in this submission: zero-shot pretrained instruct models. The 4B candidates and QLoRA are later work |
 | Baseline (frozen configuration) | Qwen2.5-0.5B-Instruct, temperature 0.7, max_new_tokens 512, top_p 0.9, seed 1234, 3 attempts |
 | Selected configuration | _not yet measured_: the real grid reruns after the review fixes |
+| Selection rule | `selection@1` in `configs/story_grid.yaml`, frozen as of commit `813c6c2`. Its safety filter (`max_raw_safety_flag_rate: 0.2`) was added after a first grid had started and was stopped. Those runs' flag rates were not seen before 0.2 was chosen. Any later change bumps the version and needs a full re-run |
 | Data version | `v1.1`: 30 validation requests from the **val** split, built from all `storybook_pages` plus the smallest TinyStories file (2,000 stories, pinned by generation); `test` and the golden set untouched |
 | Decoding | ordinary sampling, then parse-and-retry. **Grammar-constrained decoding** (which KAN-39 asks for) is **deferred** in M1: the JSON validity rate measures how much it is needed first |
 | Level | `fk_formula@1` (`levels.fk_grade`: whole story, clamped at 0, rounded to 0.5) |

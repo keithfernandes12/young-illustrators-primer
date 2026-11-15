@@ -293,7 +293,10 @@ def finish(report: dict[str, Any], logger: RunLogger, out: Path, owner: str, sha
     Exits 2 when no configuration passed the selection rule, so a script cannot mistake that for success.
     """
     paths = write_outputs(report, out)
+    # The section 2 tags too (review F16): this is the run that holds metrics.json.
     summary_tags = {"stage": "story", "owner": owner, "git_sha": sha, "gate_group": "story", "where": "local",
+                    "data_version": str(report["metrics"]["data_version"]),
+                    "base_model": str(report["metrics"]["model_uri"]),
                     "kind": "grid-summary", "selected": str(report["selected"]), "baseline": report["baseline"],
                     **extra_tags}
     summary_id = logger.log_files("grid-summary", summary_tags, paths)

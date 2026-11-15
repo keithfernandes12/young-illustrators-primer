@@ -15,7 +15,7 @@ deployment, §8 failure analysis).
 
 ## Layout
 
-- `src/primer/data/` — data pipeline, the only real code so far. Read `src/primer/data/AGENTS.md`.
+- `src/primer/data/` — the data pipeline. Read `src/primer/data/AGENTS.md`.
 - `src/primer/{drawing,story,readability,illustration,speech,safety,serving}/` — the model areas and
   serving, each with the layout in `docs/engineering/model-development.md` §2. They are at different
   stages; each area's `CARD.md` and its plan in `docs/plans/` say what is real. `story/` has the
