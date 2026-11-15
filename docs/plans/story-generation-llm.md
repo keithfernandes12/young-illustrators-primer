@@ -1079,14 +1079,12 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
    - Option A cannot work until the readability owner defines that mapping: invert the fit, train the
      scorer on FK directly, or change the interface.
    - *Decides:* member 3 (readability). This plan's option B does not depend on it.
-9. **A single-model `evaluate.py` CLI and the golden adapter** (self-review F14, 2026-11-15).
-   `python -m primer.story.evaluate --model --split --out` still raises `NotImplementedError`; in M1
-   the grid writes `metrics.json`. *Recommended:* build it with S5. **Needs a Jira issue: not opened,
-   waiting on Diya's go-ahead.**
-10. **The slice metric name in `model-development` §2** (self-review F15). §2 prescribes
-    `slice/<key>=<value>/<metric>`, but MLflow refuses `=`, so the grid logs `slice/<key>_<value>/<metric>`
-    (the illustration area hit the same limit). *Recommended:* fix the convention once for every area.
-    **Needs a Jira issue: not opened, waiting on Diya's go-ahead.**
+9. ~~A single-model `evaluate.py` CLI and the golden adapter~~ **Tracked as KAN-122** (Diya; self-review
+   F14). `python -m primer.story.evaluate --model --split --out` still raises `NotImplementedError`; in
+   M1 the grid writes `metrics.json`. To be built with S5.
+10. ~~The slice metric name in `model-development` §2~~ **Tracked as KAN-123** (unassigned, team doc;
+    self-review F15). §2 prescribes `slice/<key>=<value>/<metric>`, but MLflow refuses `=`, so the grid
+    logs `slice/<key>_<value>/<metric>` (the illustration area hit the same limit).
 
 ## Out of scope
 
