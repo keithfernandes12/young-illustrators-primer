@@ -256,7 +256,7 @@ S6b2's consumer and S6c2's want a sampler, and neither wants to wait on the rend
 
 - **Why separate** — `quickdraw` picks rows with `max_per_category: 2000`, "first N drawings". For
   Quick, Draw! the damage is bounded to within-category order, which nobody has checked either;
-  Amateur Drawings is one undifferentiated pile of ~178,000 uploads, so "first N" inherits Meta's
+  Amateur Drawings is one undifferentiated pile of 174,981 processed rows, so "first N" inherits Meta's
   upload order and whatever it correlates with. Both consumers need an answer — KAN-111's
   `humanoid` class if it is accepted, and S6c2's stability sample either way.
 - **Four binned inputs, and the count is the design** — the **original long edge**
@@ -264,10 +264,11 @@ S6b2's consumer and S6c2's want a sampler, and neither wants to wait on the rend
   aspect ratio**; the **framing ratio**, `bbox_width × bbox_height` against `width × height`
   (derived — there is no `bbox_area` column); and segmentation **`area`** for figure complexity.
   Size and aspect are both needed and neither substitutes: a 3024×4032 phone photo and a 756×1008
-  digital canvas share an aspect ratio and differ in long edge. At four bins each that is up to
-  **256 cells over ~178,000 rows, a mean near 700** — so with any correlation between the four,
-  pooling is a routine path and not an edge case, which is why its parameters are a recorded
-  Decision rather than prose here.
+  digital canvas share an aspect ratio and differ in long edge. Four bins each would allow 256 cells;
+  **measured over the real corpus it is 126**, because `aspect` supports only two bins — see the
+  Verified fact below. Pooling turns out to touch 0.7% of rows, not the routine path this slice
+  first assumed, which is itself a reason its parameters stay a recorded Decision rather than
+  a number fixed here.
 - **The binning and pooling parameters are the implementer's, recorded as a Decision** — bin count
   and whether bins are quantile or fixed; `min_size`; what happens when `pd.qcut` finds duplicate
   edges on a concentrated column; the pooling candidate set, the tie-break, and the fallback when
@@ -301,7 +302,7 @@ S6b2's consumer and S6c2's want a sampler, and neither wants to wait on the rend
   how many drawings fall in each bin — as a dated Verified fact, and makes no claim about capture
   mode. That occupancy table is the only evidence anyone has for the assumption, which is why it is
   in the acceptance rather than left as prose. S6b4 is what would validate the assumption itself.
-- **Acceptance** — five things, each of which can be shown false:
+- **Acceptance** — six things, each of which can be shown false:
   1. The strata exist, with their realised bin edges recorded alongside.
   2. Building strata from a column with one distinct value raises, naming the column.
   3. Both samplers exist, take a seed, and the same seed returns the same rows twice.
@@ -690,8 +691,8 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S5b | not started | | Vertex GPU job; detailed in `story-generation-llm` (S7–S9). KAN-39 |
 | S6a | merged | [#18](https://github.com/keithfernandes12/young-illustrators-primer/pull/18) | zero-shot SigLIP 2 baseline; no measured number until S6c |
 | S6b | merged | [#19](https://github.com/keithfernandes12/young-illustrators-primer/pull/19) | `render_strokes` + config + PNG; numpy only, so CI covers it. KAN-87 |
-| S6b1 | in review | [#31](https://github.com/keithfernandes12/young-illustrators-primer/pull/31) | `prepare_drawing` + `augment_canvas`, numpy only, wired into the encoder; binarising is local after two global thresholds failed on real drawings. Unblocks S6b2 and S6c2. KAN-31 |
-| S6b3 | not started | | ready: strata and two samplers over Amateur Drawings, pandas only, CI covers it. KAN-117 |
+| S6b1 | merged | [#31](https://github.com/keithfernandes12/young-illustrators-primer/pull/31) | `prepare_drawing` + `augment_canvas`, numpy only, wired into the encoder; binarising is local after two global thresholds failed on real drawings. Unblocks S6b2 and S6c2. KAN-31 |
+| S6b3 | in review | [#29](https://github.com/keithfernandes12/young-illustrators-primer/pull/29) | strata and two samplers, measured over the real 174,981 rows. KAN-117 |
 | S6b4 | not started | | **spike, person-only**: waits on S6b3, S6a and KAN-24, plus DINOv2 and a captioner that no slice supplies. Can only add a stratum. KAN-117 |
 | S6b2 | not started | | S6b merged; waits on S6b1 |
 | S6c | not started | | the gate's number, over rendered Quick, Draw! — not the product's. Ceiling back to 1.0 since KAN-116 merged |
@@ -1213,6 +1214,46 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   between devices — no confidence threshold or KAN-71 cache key is portable between them, as the
   `CONFIDENCE_DECIMALS` comment in `model.py` already warned for the embedding. Fine-tuning VRAM
   is still unmeasured; that is S6d's to record.
+- **2026-11-15 — S6b3's strata, measured over the real corpus.** `dvc pull` of
+  `data/character_drawings` gives **174,981 rows** — the source docstring's "over 178,000" is the
+  annotation count, not what survives preprocessing. Building the four strata over all of them:
+  **126 cells, not the 256 four bins would allow**, because `aspect` supports only **two** bins.
+  Its 25th, 50th and 75th percentiles are all **0.75** — **61.8%** of the corpus is exactly
+  3:4 portrait — so `pd.qcut` drops the duplicate edges. (An earlier draft of this fact said
+  "three quarters"; the quartiles only need a bit over half the mass at one value, and the
+  measured share is 108,087 of 174,981.) That path was specified defensively and turns
+  out to be the live case, not an edge case.
+  **Pooling is rarer than this slice assumed:** 39 of the 126 cells fall under `min_size = 100`,
+  and together they hold **1,291 rows, 0.7% of the corpus**. The slice previously said pooling
+  would be "a routine path and not an edge case"; that was wrong and is corrected above.
+  After pooling: **87 strata**, largest 6.3% of rows, smallest 0.06%. Measured ranges:
+  `long_edge` 133–12,000, `framing` 0.004–1.003 (a box can marginally exceed its frame), `area`
+  **0.0**–258,572, and no nulls in any of the four.
+- **2026-11-15 — The two samplers behave as specified on the real corpus.** Drawing 1,000 rows
+  from all 87 strata: the **proportional** sampler puts 6.4% in the largest stratum against the
+  corpus's own 6.3%, and the **uniform** sampler flattens that to 1.2%. Both return exactly 1,000
+  rows, both reproduce their draw under the same seed, and both carry `license` and `attribution`
+  through. This is the difference the slice exists to make legible: using the uniform draw for an
+  evaluation set would over-represent the corpus's rare modes fivefold and report a number the
+  product never sees.
+
+- **2026-11-15 — The stratum-occupancy distribution, which acceptance clause 5 asks for.**
+  Over the 87 pooled strata: smallest **106** rows, median **884**, largest **10,991**. Deciles of
+  stratum size are 106 / 183.6 / 354 / 884 / 2,509.5 / 5,545.4 / 10,991 at the 0th, 10th,
+  25th, 50th, 75th, 90th and 100th percentiles — interpolated, so only the 0th, 50th and
+  100th are sizes an actual stratum has. (The 25th lands at position 21.5 of 87, between
+  strata of 351 and 357 rows; it prints without a decimal only because their mean is whole.) Half the corpus sits in the largest **12** strata, 80% in the
+  largest 31, 90% in the largest 46. So the distribution has a long thin tail rather than a few
+  dominant modes, which is why the uniform and proportional samplers diverge as much as they do —
+  the uniform draw gives the 46 smallest strata the same weight as the 12 that hold half the rows.
+- **2026-11-15 — The `aspect` bin does not separate portrait from landscape, and the PR body was
+  wrong to say it does.** The realised edge is **0.75**, not 1.0, because the bins are quantiles.
+  So bin 1 is "wider than 3:4", which mixes orientations: of 174,981 rows, 154,290 are portrait,
+  18,347 landscape and 2,344 square — and **7,927 portrait rows (5.1% of all portrait drawings)
+  fall above the 0.75 edge** into the same bin as the landscape ones. What the bin actually
+  separates is "exactly 3:4 or narrower" from "everything else", which is a mode indicator rather
+  than an orientation one. A fixed edge at 1.0 would give a genuine orientation split; a quantile
+  edge cannot. Whether that is worth having is the open question on this slice.
 
 ## Open questions
 
