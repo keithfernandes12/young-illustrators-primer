@@ -115,7 +115,8 @@ image prompts; a book that fails is regenerated, never shown.
 > - **Regeneration** is on target words and the age-mode format only. Serving's existing safety
 >   check refuses a flagged story, and level is steered by the prompt, not regenerated on.
 >
-> The text below is kept as originally written.
+> The text below is kept as originally written, except the Depends line, which now marks S3 and S4
+> as non-blocking (review F8 on PR #28).
 
 `src/primer/story/`: an instruct model (Llama 3.x 1–3B, Qwen 2.5 or Phi) with a prompt per age mode,
 then check, and regenerate on failure, for target-word inclusion, readability (S3) and safety (S4).
