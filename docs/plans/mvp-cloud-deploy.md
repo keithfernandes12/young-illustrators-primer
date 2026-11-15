@@ -194,10 +194,14 @@ need it and neither can start without it.
   output geometry moves if S6a's checkpoint does.
 - **What already decodes, and what happens to it** — `SiglipEncoder.encode` opens the bytes with
   Pillow and composites them through `model.py`'s `flattened()` onto `alpha_background` before the
-  processor sees them. That is already an inference preprocessing step, so **this slice has to say
-  whether `flattened` moves into `preprocess.py` or stays where it is** — otherwise the single-entry
-  guard below forbids a second path that exists on day one. Recommended: move it, and leave only
-  decode at the call site.
+  processor sees them. That is already an inference preprocessing step, and **`flattened` stays
+  where it is.** It is a Pillow function by necessity — it reads `.mode` and `.info`, calls
+  `Image.new` and `alpha_composite`, and runs *before* an array exists — so moving it into
+  `preprocess.py` would contradict this slice's own acceptance that the module imports no image
+  library, and would put Pillow back in CI's path. Decode and composite are one step, both stay at
+  the call site, and `preprocess.py` takes the composited RGB array. The single-entry guard below
+  therefore covers **array-level** preprocessing only, and its test has to say so explicitly or it
+  fails on day one against a path that legitimately exists.
 - **Training direction** — paper texture, line wobble, partial erasure, colour fill and lighting
   over a rendered canvas, applied at training time only and seeded so a run reproduces. Its output
   has to stay in the domain the inference direction accepts — same dtype, same geometry, same
@@ -245,18 +249,19 @@ the `primer.evaluation.contract` shape, and report the gated key per slice as we
   makes it mean anything.) KAN-64 delivers a child's own drawing, uploaded; S6c2 measures how far
   the preprocessing moves the answer, and until it has, "clears 0.85" means the gate passed, not
   that the stage works.
-- **Check KAN-116 first.** Ten of the golden set's eighty book scenarios ask for `boat` or `kite`,
-  neither of which is in the 345 categories, so this slice's number is capped at 0.875 against a
-  0.85 threshold. Settle that before recording a baseline, or the first real number will be read
-  as a model result when it is partly an arithmetic one.
+- **The gate ceiling is no longer capped.** KAN-116 is fixed and merged (#26): the golden set's
+  unreachable labels were replaced, and counted on `main` its sixteen distinct `drawing_label`
+  values are all in the 345, so a flawless recogniser reaches 1.0. Re-count before recording a
+  baseline rather than assuming it, because the ceiling is a property of whatever
+  `configs/golden/scenarios.jsonl` holds that day, not a constant.
 - **Depends on** — S6a, S6b2. **Jira** — KAN-38.
 
-### S6c2 · Preprocessing stability on real uploaded drawings
+### S6c2 · Preprocessing stability on the Amateur Drawings corpus
 
 *size: medium*
 
 `src/primer/drawing/evaluate.py`: measure how far the preprocessing path moves the recogniser's
-answer on real child-drawing uploads. **No labels, and none are needed** — what is measured is how
+answer on real children's drawings, using the Amateur Drawings corpus. **No labels, and none are needed** — what is measured is how
 often the prediction changes between variants, not whether it is right.
 
 - **Why separate** — S6c measures rendered Quick, Draw!, while every input the product receives is
@@ -285,6 +290,13 @@ often the prediction changes between variants, not whether it is right.
   what separates those. A change rate reported without it is unattributable. (S6a's smoke run
   scored `house` at 0.1255 with `barn` second at 0.0284 on a drawing the vocabulary *can* express;
   expect thinner margins here, which is the point.)
+- **Sample: 1,000 drawings, drawn once with a recorded seed and frozen by id.** Amateur Drawings
+  holds ~178,000; scoring all of them under four variants is ~712,000 forward passes, which at
+  S6a's measured 0.12 s warm on CPU is about 24 hours — past what
+  `docs/adrs/bounded-local-training-for-agents.md` lets an agent spend. 1,000 is roughly 8 minutes
+  and resolves a change rate to about ±3 points at 95%, finer than any effect worth acting on here.
+  Freezing the ids matters as much as the size: S6d re-measures this statistic on the same
+  drawings, and a redrawn sample makes the two incomparable.
 - **Decide while building** — which rank statistic "how far the top-5 ranking moves" is: Kendall's
   tau, top-5 set overlap, or mean rank displacement. Record the choice and the reason as a Decision.
 - **Acceptance** — the pairwise stability figures, the margin figures, the sample size and its data
@@ -306,11 +318,17 @@ often the prediction changes between variants, not whether it is right.
   the edge would also put this slice behind S6b2 and the whole QuickDraw split, which it never
   reads. Whoever takes both should land S6c first to keep the diffs apart. **Jira** — KAN-109.
 
-| Variant | Isolates | Crop |
+| Variant | Differs from the row above by | Crop |
 |---|---|---|
-| As published by the source | the nearest thing we have to the product's path | none |
+| As published by the source | — (the nearest thing we have to the product's path) | none |
 | Converted to greyscale | colour | none |
-| Cropped to the annotated box, then binarised | photography, lighting, paper texture **and framing** | the dataset's `bbox_*` |
+| Binarised to black on white | photography, lighting, paper texture | none |
+| Cropped to the annotated box, then binarised | framing | the dataset's `bbox_*` |
+
+**Each row differs from the one above it by exactly one factor, and that is the point of the
+column.** An earlier draft folded cropping and binarisation into a single row, which made its
+figure a combined effect attributable to neither — report pairs of adjacent rows, or name the
+combination explicitly when reporting a non-adjacent pair.
 
 The crop is Amateur Drawings' own user-confirmed `bbox_x/y/width/height` (`CHARACTER_DRAWINGS`),
 which the product does not have at upload time — nothing in the inference path crops, and
@@ -338,12 +356,22 @@ before an agent may run training at all, and no area has them yet.
 - **Acceptance** — a capped local run completes and logs an MLflow run; `drawing_top5_acc` from
   S6c is compared with the S6a baseline in Verified facts, against the 0.85 target. S6c2's
   stability figures are re-measured on the fine-tuned tower and compared with the baseline's.
-  **A gain on rendered Quick, Draw! together with a drop in stability on real uploads is the
-  outcome this stage most needs to catch** — it is what fine-tuning on clean renders is most likely
-  to do — and recording only the gated number makes it invisible. If S6c2 has not run yet, this
-  slice may still proceed, but its Verified fact has to say the result is unvalidated against real
-  uploads rather than leaving a reader to assume otherwise. Stability is not accuracy: it can show
-  the model became more brittle, not that it became wrong.
+  **A gain on rendered Quick, Draw! together with a drop in stability is the outcome this stage
+  most needs to catch** — it is what fine-tuning on clean renders is most likely to do — and
+  recording only the gated number makes it invisible.
+  **Read a stability *gain* with equal suspicion.** Stability is agreement between preprocessing
+  variants, and a model that has collapsed onto one confident answer whatever it is shown is
+  perfectly stable. Fine-tuning hard on clean renders, over a vocabulary that cannot name this
+  corpus's subject, is a plausible route to exactly that, and it would present as an improvement.
+  S6c2's confidence and margin figures are what tell the two apart: **stability rising while top-1
+  confidence rises and margins widen, on a corpus the vocabulary cannot name, is evidence of
+  collapse rather than robustness.** Report all three together or none of them. This failure has
+  already happened once in this area — dropping one normalisation line in S6a made every drawing
+  return `The Eiffel Tower`, with confidence.
+  If S6c2 has not run yet, this slice may still proceed, but its Verified fact has to say the
+  result is unvalidated against anything but rendered strokes rather than leaving a reader to assume otherwise.
+  Stability is not accuracy either way: it can show the model became more brittle, or more rigid,
+  never that it became wrong.
 - **Depends on** — S6b2, S6c; S6c2 for the second half of its acceptance. **Jira** — KAN-38.
 
 ### S6e · The rest of the character sheet
@@ -456,8 +484,8 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6b | merged | [#19](https://github.com/keithfernandes12/young-illustrators-primer/pull/19) | `render_strokes` + config + PNG; numpy only, so CI covers it. KAN-87 |
 | S6b1 | not started | | the shared preprocessing module, both directions. Unblocks S6b2 and S6c2. KAN-31 |
 | S6b2 | not started | | S6b merged; waits on S6b1 |
-| S6c | not started | | the gate's number, over rendered Quick, Draw! — not the product's. Capped at 0.875 until KAN-116 |
-| S6c2 | not started | | preprocessing stability on uploads; no labels needed. Needs S6a and S6b1. KAN-109 |
+| S6c | not started | | the gate's number, over rendered Quick, Draw! — not the product's. Ceiling back to 1.0 since KAN-116 merged |
+| S6c2 | not started | | preprocessing stability over Amateur Drawings; no labels needed. Needs S6a and S6b1. KAN-109 |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap. Reads S6c2's stability figures |
 | S6e | not started | | unblocks KAN-42's reposing and IP-Adapter branches |
 | S7 | not started | | needs GPU quota in region |
@@ -785,6 +813,14 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   `FakeComponents`, whose `FakeDrawingClassifier.top5(true_label)` is handed the answer and echoes it back
   (`fakes.py:27-31`), so the vocabulary is never consulted. **S6c is where it becomes live**, and
   it would present as an unexplained plateau just below the gate. Tracked as KAN-116.
+- **2026-11-15 — Superseded: the cap above is gone, KAN-116 is merged.** PR #26 (`cf48752`,
+  2026-11-14 23:38Z) regenerated the scenarios, replacing `boat` with `sailboat` and `kite` with
+  `cloud`. Re-counted on `origin/main`: 100 scenarios carry a `drawing_label`, 16 distinct values,
+  **none absent from `quickdraw_categories.txt`**, so the ceiling is 1.0 and the 0.85 gate has its
+  full headroom back. The fact above stayed in this branch for seventeen minutes after #26 merged
+  because the branch is cut from `375d0cd` and never saw it — which is the lesson worth keeping:
+  **a ceiling is a property of whatever `configs/golden/scenarios.jsonl` holds that day.** S6c
+  re-counts rather than quoting either number.
 - **2026-11-14 — kiddraw is black-stroke only, so it does not answer the colour question.**
   Measured from the repository rather than the paper: `experiments/museumstation/trial-sequence.js`
   sets `path.strokeColor = 'black'`, `strokeCap = 'round'`, `strokeWidth = 10`, and the analysis
@@ -838,10 +874,11 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   | Amateur Drawings | yes | **uploads, mix unknown** | **none** — human figures only | no |
   | kiddraw (KAN-110) | yes, ages 2–10 | natively digital, museum kiosk | 44 of its 48 | yes, if the licence clears |
 
-  kiddraw is not vendored here, so which four of its categories fail to map is recorded in KAN-110
-  and not checkable from this repository. If `person` is among them — KAN-110 says it is — then
-  kiddraw answers the corpus problem and not this one, and that is worth confirming against the
-  dataset before anyone plans a number around it.
+  The four kiddraw categories that fail to map are `bowl`, `person`, `lamp` and `bottle` — the
+  output of the same check as the 44, recorded in the Verified fact above and in KAN-110. **`person`
+  is one of them**, so kiddraw would answer the corpus problem and not this one: it supplies
+  drawings by real children over subjects the vocabulary can name, and still cannot say what the
+  recogniser should return for a child's drawing of a person.
 
   "Photographed" is not established for Amateur Drawings and this plan should stop implying it: the
   source docstring says Meta resized "the uploaded drawings" to 512 px, and `configs/sources.yaml`
@@ -849,8 +886,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   digital drawings, and the 512 px resize is a second confound on top of the first. The mix is
   checkable — `data/character_drawings.dvc` is frozen, though its dep is a `gs://` path with
   `push: false`, so checking needs a pull and bucket access, as S6c2's own run will. Both confounds
-  are worth reporting alongside those figures. Note too that KAN-110 records kiddraw as dropping
-  `person`, so it would answer the corpus problem and not the vocabulary one.
+  are worth reporting alongside those figures.
 
   No public dataset of labelled **colour** children's drawings was found on 2026-11-14, searching
   for labelled child-drawing corpora and following the leads to kiddraw and ChildlikeSHAPES; that
