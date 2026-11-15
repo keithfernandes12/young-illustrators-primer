@@ -289,6 +289,10 @@ the run ids.
     Serving decides what to show; the writer never returns a story that fails the check.
   - An optional small positive logit bias on the target words' first tokens is a sensitivity knob
     (S8a), not a default.
+- **Changed for M1 (Decisions, 2026-11-15):** the writer now retries on invalid JSON, a missing target
+  word and **a failed safety check** (the story stage's own avoid-list guardrail). It does **not**
+  retry on page or sentence limits, which are measured instead. The original v0 rule below is kept
+  for the record.
 - **What triggers regeneration in v0.** Exactly three things: invalid JSON (which constrained decoding
   should make impossible, so this is a backstop), a missing target word, and a page-count or
   sentence-length violation of the age-mode preset.
@@ -457,6 +461,45 @@ Adds `docs/plans/story-generation-llm.md` and points `mvp-cloud-deploy` S5/S5b a
   `mvp-cloud-deploy` S5 and S5b point here.
 - **Testing** — docs check only (no code).
 - **Depends on** — nothing. **Jira** — KAN-39.
+
+### M1 · Small pretrained models on the Mac, ages 3–5 (this submission)
+
+*size: large* — the scope change in Decisions, 2026-11-15. It brings forward parts of S1–S6 for the
+3–5 mode only, on two small pretrained models.
+
+`src/primer/story/`:
+- `levels.py`: the shared `fk_grade`;
+- `presets.py`: Learn to Read only;
+- `guardrails.py` and `configs/avoid_list.yaml`: the safety guardrail;
+- `schema.py`: the JSON reply;
+- `prompts.py`;
+- `checks.py`;
+- `writer.py`: retries on invalid JSON, a missing word or a failed safety check;
+- `model.py`: Hugging Face on MPS, loaded lazily;
+- `data.py`: one pair per book, cross-source exact dedupe, the pure-hash split, and ~30 validation
+  requests from val;
+- `evaluate.py`, `slices.py` and `sensitivity.py`;
+- `grid.py`, `charts.py` and `configs/story_grid.yaml`: the comparison, MLflow logging,
+  `metrics.json` and charts;
+- `CARD.md`: including the guideline table.
+
+- **Acceptance**
+  - Every unit test runs on a stub model: no weights, no network, no bucket.
+  - Importing the area loads none of torch, transformers, mlflow or matplotlib.
+  - The writer never returns a story that failed one of its three checks.
+  - `fk_grade` is clamped at 0 and on the 0.5 grid.
+  - A book's split depends on its key alone.
+  - `metrics.json` carries only story-owned gated keys, and lists `story_quality_mean` as not
+    measured.
+  - Every grid point is one MLflow run with the §2 tags.
+  - **Person-run, after bucket access:** `python -m primer.story.data --data-uri
+    gs://young-illustrators-primer-data --version v1.1` writes the ~30 requests. Then
+    `python -m primer.story.grid --owner DiyaKaswa11` (with `.[story]` installed) runs the grid, and
+    its result goes in Verified facts.
+- **Testing** — `tests/story/`. Each behaviour above was checked by mutation on 2026-11-15:
+  removing the clamp, the rounding, the safety retry, the round-robin, the dedupe, the pure-hash
+  split, the TinyStories-only filter or the word matcher each fails a test.
+- **Depends on** — S0. **Jira** — KAN-39.
 
 ### S1 · Request and output types, age-mode presets, template generator (KAN-92)
 
@@ -751,7 +794,8 @@ TinyStories ratio (3:1, 10:1, 30:1, all drawn from the step-2 pool) and the LoRA
 | Slice | State | PR | Notes |
 |---|---|---|---|
 | S0 | in review | [#28](https://github.com/keithfernandes12/young-illustrators-primer/pull/28) | this plan; level decided by Keith (option B, with conditions); other four defaults revisable in review; Keith's review fixes; all in Decisions |
-| S1 | not started | | KAN-92's scope, built by Diya on KAN-39 |
+| M1 | in progress | | small pretrained models on the Mac, ages 3–5; code and stub-model tests done, real grid waits on bucket access and the `story` extra |
+| S1 | not started | | KAN-92's scope, built by Diya on KAN-39; M1 delivers the types and the 3–5 preset |
 | S2 | not started | | pure-hash split, one pair per book, cross-source dedupe, shared `fk_grade` (review F1–F5); helper moves to `src/primer/data` with KAN-120 |
 | S2b | not started | | runs on the hash-sampled pool, not 1.8M rows |
 | S3 | not started | | |
@@ -854,6 +898,37 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
   - **Option A later:** Option A's row and Out of scope now carry the pipeline stage, the float grade
     plus scorer-version column kept across re-runs, the team data-version decision, and the check of
     CLEAR-trained labels on texts for ages 3–5.
+- **2026-11-15** — **Scope change for this submission (Diya).** The first model built is slice M1:
+  - **two small pretrained instruct models run zero-shot on Diya's MacBook Air** (MPS):
+    Qwen2.5-0.5B-Instruct and Qwen2.5-1.5B-Instruct, pinned by revision;
+  - **only the 3–5 (Learn to Read) age mode**;
+  - a temperature × max_new_tokens grid, with the selection rule fixed in config before any run.
+
+  Moved to later, not dropped:
+  - the three 4B candidates (Qwen3-4B, Phi-4-mini, Llama 3.2 3B) and their bake-off (S6);
+  - QLoRA (S7), the Vertex runs, and the 5–8 mode.
+
+  Why: there is no CUDA GPU or GPU quota yet, and the submission needs a working, measured model
+  stage now. Every course guideline is either implemented in M1 or listed as not applicable or
+  deferred, with the reason, in `src/primer/story/CARD.md`.
+- **2026-11-15** — **Retry conditions for M1 (Diya; replaces "Regeneration conditions in v0"
+  above).** The writer retries on exactly three things:
+  - invalid JSON;
+  - a missing target word;
+  - **a failed safety check**.
+
+  Safety guardrails for this model are the story owner's job, so the story stage carries its own
+  avoid-list guardrail (`configs/avoid_list.yaml`), and the writer never returns a story it flags.
+  Serving's check with member 3's classifier after `write` stays as an independent second line.
+
+  **Page and sentence limits are no longer retry conditions.** They are measured (`page_limit_rate`,
+  `sentence_limit_rate`), as the reading level already was, so the grid shows how often small models
+  break them rather than hiding it behind retries.
+- **2026-11-15** — *Avoid-list in the prompt (Diya).* The prompt names the avoid-list **topics**,
+  not its words, because naming the words to a small model tends to prime them. The words are used
+  only to check the output.
+- **2026-11-15** — *`story_quality_mean` is not measured in M1.* It needs the LLM-as-judge (open
+  question 3). `metrics.json` lists it under `not_measured` rather than reporting a made-up number.
 
 ## Verified facts
 
