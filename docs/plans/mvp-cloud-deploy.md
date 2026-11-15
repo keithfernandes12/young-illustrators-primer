@@ -693,7 +693,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6b1 | in review | [#31](https://github.com/keithfernandes12/young-illustrators-primer/pull/31) | `prepare_drawing` + `augment_canvas`, numpy only, wired into the encoder; binarising is local after two global thresholds failed on real drawings. Unblocks S6b2 and S6c2. KAN-31 |
 | S6b3 | not started | | ready: strata and two samplers over Amateur Drawings, pandas only, CI covers it. KAN-117 |
 | S6b4 | not started | | **spike, person-only**: waits on S6b3, S6a and KAN-24, plus DINOv2 and a captioner that no slice supplies. Can only add a stratum. KAN-117 |
-| S6b2 | not started | | S6b merged; waits on S6b1 |
+| S6b2 | in review | | `data.py`: hashed 80/10/10 split of v1.1 (506k/63k/63k), rendered on demand through `render_strokes` → `augment_canvas` (train only) → `prepare_drawing`. Unblocks S6c |
 | S6c | not started | | the gate's number, over rendered Quick, Draw! — not the product's. Ceiling back to 1.0 since KAN-116 merged |
 | S6c2 | not started | | preprocessing stability over Amateur Drawings; no labels needed. Needs S6a and S6b1; S6b3's sampler softly, random draw is a stated fallback. KAN-109 |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap. Reads S6c2's stability figures |
@@ -1195,6 +1195,33 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   nor to explain a processor without a fixed square, and `import torchvision` followed by
   `torchvision.transforms.…` slipping past the guard — each now closed with a mutation-checked
   test.
+- **2026-11-15 — S6b2: the frozen Quick, Draw! drawings, measured whole.** `v1.1`'s `drawings`
+  (read through `primer.data.catalog` at its recorded generations, 15 s): **632,746** rows, all
+  `quickdraw`, `source_id` and `record_id` both unique, 345 labels at **1,615–1,977** drawings
+  each (median 1,858), `license` CC-BY-4.0 and `attribution` present on every row. *Hypothesis:*
+  some records would trip `render_strokes`, since `valid_strokes` accepts three runs where the
+  renderer requires two (the open question S6b handed on). *Result:* **none** — every record
+  renders, and none carries a third run. So the loader raises on a refusal, naming the record,
+  rather than skipping it: one would mean the pipeline and the renderer have diverged.
+  Render plus `prepare_drawing` costs **1.19 ms mean, p95 1.85 ms** (every 50th record) — 3.3×
+  S6b's 0.356 ms from one sparse category, as that fact warned.
+- **2026-11-15 — S6b2: three labels differ from the vocabulary in case, and an exact match
+  refused the whole version.** The data stores `the eiffel tower`, `the great wall of china` and
+  `the mona lisa`; `quickdraw_categories.txt`, written in the bucket's listing order, has `The
+  Eiffel Tower` and so on. Labels now match case-insensitively, and a vocabulary with two labels
+  differing only in case is refused rather than guessed between.
+- **2026-11-15 — S6b2: every drawing in the split was recognised by Quick, Draw!'s own model.**
+  `recognized` is true on all 632,746 rows: the pipeline kept only drawings Google's classifier
+  got right. The recogniser is trained and gated on sketches a classifier already found legible,
+  so a `drawing_top5_acc` from S6c is measured on an easier set than the raw dataset — and
+  further still from a child's drawing. S6c's fact should say so beside the number.
+- **2026-11-15 — S6b2: the split, built on `v1.1`.** Salted SHA-256 of `source_id`
+  (`configs/drawing_data.yaml`, salt `kan-38-s6b2`, 0.8/0.1/0.1): train **506,324** (80.02%),
+  val **63,112** (9.97%), test **63,310** (10.01%); val and test each hold all 345 labels, at
+  least 145 and 146 drawings per label. All three build in 1.8 s, since nothing is rendered until
+  an item is read. The split is unstratified by design — a hash, not S6b3's samplers, which are
+  in #29 and not on `main` — and per-label coverage above is what shows that did not cost a class.
+  Not in MLflow: these describe the data, not a model, and there is no host (KAN-107).
 
 ## Open questions
 
