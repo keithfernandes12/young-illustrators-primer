@@ -44,7 +44,6 @@ def png() -> bytes:
     square rather than a drawing: the stub tower ignores the pixels entirely.
     """
 
-
     buffer = io.BytesIO()
     Image.new("L", (8, 8), 255).save(buffer, format="PNG")
     return buffer.getvalue()
@@ -57,7 +56,6 @@ def as_png(image) -> bytes:
     changes shape: a palette image keeps it in ``info`` rather than in a channel, and only the
     reopened file has the ``info`` the production path sees.
     """
-
 
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
@@ -448,6 +446,47 @@ def test_the_encoder_prepares_with_the_settings_it_was_given(config):
     built.encode(as_png(red), PROMPTS)
 
     assert (built._processor.image == 76).all(), "BT.601 luma of pure red, on all three channels"
+
+
+def test_a_call_can_override_the_settings_and_crop_to_a_box(encoder):
+    """S6c2's variants: per-call settings and the annotated box, through the one path."""
+    page = Image.new("RGB", (8, 8), (255, 255, 255))
+    for x in range(2, 4):
+        for y in range(2, 4):
+            page.putpixel((x, y), (255, 0, 0))
+
+    encoder.encode(
+        as_png(page), PROMPTS, prepare=replace(default_prepare_config(), greyscale=True), box=(2, 2, 2, 2)
+    )
+
+    assert (encoder._processor.image == 76).all(), "greyscaled, and cropped to the red square alone"
+    encoder.encode(as_png(page), PROMPTS)
+    assert encoder._processor.image[0, 0].tolist() == [255, 255, 255], "the override did not stick"
+
+
+def test_a_per_call_size_that_the_processor_would_resample_is_refused(encoder, png):
+    """A valid 112px override on a 224px checkpoint used to slip past the load-time check."""
+    base = default_prepare_config()
+    small = replace(base, render=replace(base.render, size=112))
+
+    with pytest.raises(ValueError, match="this call's `prepare` renders at 112 x 112"):
+        encoder.encode(png, PROMPTS, prepare=small)
+    assert encoder._processor.image is None, "refused before anything reached the processor"
+
+
+def test_a_per_call_override_at_the_processors_size_is_accepted(encoder, png):
+    base = default_prepare_config()
+    same_size = replace(base, greyscale=True, render=replace(base.render, size=224))
+
+    encoder.encode(png, PROMPTS, prepare=same_size)
+
+    assert encoder._processor.image is not None
+
+
+def test_the_dtype_is_reported_as_text_once_loaded(config):
+    assert SiglipEncoder(config, device="cpu").dtype_name is None
+    assert stubbed(config, torch.float32).dtype_name == "float32"
+    assert stubbed(config, torch.bfloat16).dtype_name == "bfloat16"
 
 
 def test_encode_returns_a_unit_length_embedding(encoder, png):

@@ -30,9 +30,12 @@ class RecordingEncoder:
         self.scores = tuple(scores)
         self.dimensions = dimensions
         self.calls: list[tuple[bytes, tuple[str, ...]]] = []
+        #: The `box` each call asked for, in call order; None is the whole drawing.
+        self.boxes: list[object] = []
 
-    def encode(self, image: bytes, prompts: Sequence[str]) -> Encoding:
+    def encode(self, image: bytes, prompts: Sequence[str], *, box: object = None) -> Encoding:
         self.calls.append((image, tuple(prompts)))
+        self.boxes.append(box)
         return Encoding(
             confidences=self.scores,
             # Deterministic and already normalised in magnitude, so a test can assert on it.

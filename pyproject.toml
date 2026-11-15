@@ -44,6 +44,13 @@ illustration = [
 # `BaseModelOutputWithPooling` from `get_text_features`, where the model card's 4.x example shows a
 # bare tensor. `model.pooled` handles both, but only the 5.x path has been exercised.
 drawing = ["torch>=2.4", "transformers>=5.0,<6"]
+# The character sheet (src/primer/drawing/sheet.py, S6e): `drawing`'s torch and transformers plus
+# torchvision, which SAM 2's image processor imports. Separate from `drawing` so the recogniser
+# alone does not need it. torchvision must be the same build as torch (CPU or CUDA) and an extra
+# cannot choose a build, so this declares floors only (torchvision 0.19 pairs with torch 2.4);
+# the local-GPU reinstall that matches the two is in AGENTS.md -> Commands. Not pinned in
+# requirements.txt, for the same reason as `drawing`.
+sheet = ["torch>=2.4", "transformers>=5.0,<6", "torchvision>=0.19"]
 # Stage 6 character consistency: pretrained CLIP / DINOv2, and MLflow for the threshold experiment.
 # Same torch and transformers floors as `drawing`: the 5.x `get_image_features` output is the path
 # that has been run (embedders.py also accepts 4.x's bare tensor). Not pinned in requirements.txt,

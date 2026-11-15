@@ -39,6 +39,12 @@ python scripts/check_docs.py                 # docs frontmatter (also runs insid
 python .claude/skills/verify/scripts/verify.py   # everything CI runs, plus privacy lint; one PASS/FAIL line
 primer-data --data-uri .local-data run <source> --batch-size 2   # pipeline, locally
 pip install -e ".[dashboard]" && streamlit run dashboards/tracker/app.py
+pip install -e ".[sheet]"                    # the character sheet: drawing's torch + transformers, plus torchvision
+# Local GPU (Windows, CUDA 13.0). An extra cannot choose a torch build, so the line above installs
+# PyPI's CPU torch and a torchvision that matches it. For the GPU, swap in the CUDA pair AFTER it,
+# both in one command because torchvision must be the same build as torch, then check:
+.venv/Scripts/python.exe -m pip install --force-reinstall --no-deps "torch==2.14.1" "torchvision==0.29.1" --index-url https://download.pytorch.org/whl/cu130
+.venv/Scripts/python.exe -m pip check        # clean; then torch.cuda.is_available() is True
 ```
 
 `--data-uri` is a global flag: it goes **before** the command.

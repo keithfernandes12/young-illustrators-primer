@@ -203,9 +203,13 @@ class Encoding:
 
 
 class Encoder(Protocol):
-    """Scores a drawing against text prompts. The real one wraps SigLIP 2; tests pass a fake."""
+    """Scores a drawing against text prompts. The real one wraps SigLIP 2; tests pass a fake.
 
-    def encode(self, image: bytes, prompts: Sequence[str]) -> Encoding: ...
+    ``box`` -- ``(x, y, width, height)`` -- restricts scoring to one character of the drawing
+    (S6e). ``None`` scores the whole drawing.
+    """
+
+    def encode(self, image: bytes, prompts: Sequence[str], *, box: object = None) -> Encoding: ...
 
 
 class SiglipEncoder:
@@ -241,16 +245,22 @@ class SiglipEncoder:
         #: start, not a rare interleaving.
         self._lock = threading.Lock()
 
-    def _check_resolution(self, processor: Any) -> None:
+    @property
+    def dtype_name(self) -> str | None:
+        """The tower's dtype as text (``float32``, ``bfloat16``), or None before it is loaded."""
+        return None if self._dtype is None else str(self._dtype).removeprefix("torch.")
+
+    def _check_resolution(self, processor: Any, prepare: PrepareConfig | None = None) -> None:
         """Refuse a processor whose input size is not the square `prepare_drawing` produces.
 
         `prepare_drawing` is the only resampling between a decoded drawing and the tower only while
         `drawing_render.yaml`'s `size` -- marked provisional there -- equals the checkpoint's own
         resolution. If they part, the processor quietly resizes every prepared drawing a second
         time, squashing nothing but resampling everything, and a measured number stops being
-        comparable with the rendered split it was meant to match. Checked once, at load.
+        comparable with the rendered split it was meant to match. Checked once, at load, and again
+        for a per-call ``prepare``, whose ``render.size`` can differ from the encoder's own.
         """
-        expected = (self.prepare or default_prepare_config()).size
+        expected = (prepare or self.prepare or default_prepare_config()).size
         size = getattr(getattr(processor, "image_processor", None), "size", None)
         if isinstance(size, dict):
             height, width = size.get("height"), size.get("width")
@@ -264,6 +274,12 @@ class SiglipEncoder:
                 f"{size!r}), but `prepare_drawing` hands it a {expected} x {expected} square; a "
                 "checkpoint that resizes by shortest edge or patch budget needs this coupling "
                 "rethought, not a new `size`"
+            )
+        if (height, width) != (expected, expected) and prepare is not None:
+            raise ValueError(
+                f"this call's `prepare` renders at {expected} x {expected}, but {self.config.encoder} "
+                f"expects {width} x {height}; a variant must keep the checkpoint's resolution, or "
+                "the processor resamples every prepared drawing a second time"
             )
         if (height, width) != (expected, expected):
             raise ValueError(
@@ -334,13 +350,29 @@ class SiglipEncoder:
         self._text_cache = (wanted, features)
         return features
 
-    def encode(self, image: bytes, prompts: Sequence[str]) -> Encoding:
+    def encode(
+        self,
+        image: bytes,
+        prompts: Sequence[str],
+        *,
+        prepare: PrepareConfig | None = None,
+        box: object = None,
+    ) -> Encoding:
+        """Score ``image`` against ``prompts``.
+
+        ``prepare`` overrides the encoder's own settings for this call and ``box`` crops to an
+        annotated character first; both go straight to ``prepare_drawing``. They exist for
+        evaluation (S6c2's variants), so a variant is a setting of the one preprocessing path
+        rather than a second path built beside it. The product passes neither.
+        """
         import io
 
         import torch
         from PIL import Image
 
         self.load()
+        if prepare is not None:
+            self._check_resolution(self._processor, prepare)
         text_features = self._encode_prompts(prompts)
         # RGB: the tower expects three channels, and a child's drawing arrives as anything from a
         # 1-bit PNG to an RGBA screenshot. Composited rather than converted -- see `flattened`,
@@ -351,7 +383,7 @@ class SiglipEncoder:
         # canvases too. It hands the processor a square at the processor's own resolution, so the
         # processor's resize -- which would otherwise squash a non-square upload -- has nothing
         # left to do.
-        pixels = prepare_drawing(np.asarray(drawing), self.prepare)
+        pixels = prepare_drawing(np.asarray(drawing), prepare or self.prepare, box=box)
         # The dtype as well as the device. The processor always returns float32 `pixel_values`, and
         # `BatchFeature.to(device)` moves them without casting, so on CUDA -- where the tower is in
         # reduced precision -- the first matmul raises "mat1 and mat2 must have the same dtype".
@@ -440,10 +472,19 @@ class DrawingRecognizerModel:
         from different models. An empty string is honest here, while a label echoed into a sentence
         would read like a caption the story writer could use.
         """
+        return DrawingAnalysis(characters=(self.character(image),))
+
+    def character(self, image: bytes, box: Sequence[float] | None = None) -> Character:
+        """Score one character -- the whole drawing, or the part inside ``box`` -- and rank it.
+
+        ``box`` is ``(x, y, width, height)`` in the decoded drawing's pixels. It goes to
+        ``prepare_drawing`` through the encoder, so a character cut from a drawing reaches the
+        tower through the one preprocessing path (S6e's per-character sheets, KAN-31's rule).
+        """
         if not image:
             raise ValueError("analyse needs the drawing's bytes; got none")
 
-        encoding = self.encoder.encode(image, self._prompts)
+        encoding = self.encoder.encode(image, self._prompts, box=box)
         if len(encoding.confidences) != len(self._labels):
             raise ValueError(
                 f"the encoder scored {len(encoding.confidences)} prompts for "
@@ -483,4 +524,4 @@ class DrawingRecognizerModel:
             embedding=tuple(round(value, EMBEDDING_DECIMALS) for value in encoding.embedding),
             candidates=candidates,
         )
-        return DrawingAnalysis(characters=(character,))
+        return character

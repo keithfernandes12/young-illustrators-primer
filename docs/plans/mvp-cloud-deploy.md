@@ -572,7 +572,10 @@ the licence constraint on each.
   conditioning, so it is worth keeping independent of the gate work in S6c and S6d.
 - **Acceptance** — a multi-character drawing returns one sheet per character with every field
   populated, and `test_every_character_sheet_field_reaches_the_illustrator` passes against the
-  real recogniser rather than the Fake.
+  real recogniser rather than the Fake. (The real-recogniser version is
+  `test_every_character_sheet_field_reaches_the_illustrator_from_the_real_recogniser` in
+  `tests/drawing/test_sheet.py`; the unsuffixed name is the Fake's, in
+  `tests/models/test_area_interfaces.py`.)
 - **Not in this slice** — `reference_image_ref` and `approved`, which the stylise-and-approve step
   sets; who owns that step is still open between KAN-38 and KAN-42.
 - **Depends on** — S6a. **Jira** — KAN-38.
@@ -693,13 +696,13 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6a | merged | [#18](https://github.com/keithfernandes12/young-illustrators-primer/pull/18) | zero-shot SigLIP 2 baseline; no measured number until S6c |
 | S6b | merged | [#19](https://github.com/keithfernandes12/young-illustrators-primer/pull/19) | `render_strokes` + config + PNG; numpy only, so CI covers it. KAN-87 |
 | S6b1 | merged | [#31](https://github.com/keithfernandes12/young-illustrators-primer/pull/31) | `prepare_drawing` + `augment_canvas`, numpy only, wired into the encoder; binarising is local after two global thresholds failed on real drawings. Unblocks S6b2 and S6c2. KAN-31 |
-| S6b3 | in review | [#29](https://github.com/keithfernandes12/young-illustrators-primer/pull/29) | strata and two samplers, measured over the real 174,981 rows. KAN-117 |
+| S6b3 | merged | [#29](https://github.com/keithfernandes12/young-illustrators-primer/pull/29) | strata and two samplers, measured over the real 174,981 rows. KAN-117 |
 | S6b4 | not started | | **spike, person-only**: waits on S6b3, S6a and KAN-24, plus DINOv2 and a captioner that no slice supplies. Can only add a stratum. KAN-117 |
 | S6b2 | in review | [#32](https://github.com/keithfernandes12/young-illustrators-primer/pull/32) | `data.py`: hashed 80/10/10 split of v1.1 (506k/63k/63k), rendered on demand through `render_strokes` → `augment_canvas` (train only) → `prepare_drawing`. Unblocks S6c |
 | S6c | not started | | the gate's number, over rendered Quick, Draw! — not the product's. Ceiling back to 1.0 since KAN-116 merged |
-| S6c2 | not started | | preprocessing stability over Amateur Drawings; no labels needed. Needs S6a and S6b1; S6b3's sampler softly, random draw is a stated fallback. KAN-109 |
+| S6c2 | merged | [#33](https://github.com/keithfernandes12/young-illustrators-primer/pull/33) | 1,000 frozen drawings (unstratified), four variants: top-1 moves 25% / 50% / 41% between adjacent variants; over half the drawings come out `squiggle`. Reproduces exactly. KAN-109 |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); still waits on S6b2 (#32) and S6c. Reads S6c2's stability figures |
-| S6e | not started | | unblocks KAN-42's reposing and IP-Adapter branches |
+| S6e | merged | [#35](https://github.com/keithfernandes12/young-illustrators-primer/pull/35) | `sheet.py`: Florence-2 + SAM 2.1 + ViTPose beside SigLIP 2; every field filled on 82/82 real sheets; two figures found as two on 12/20. Unblocks KAN-42 |
 | S7a | in progress | branch `feat/KAN-42-controlnet-baseline` | pretrained SD 1.5 + ControlNet-Scribble, one page, local output; synthetic inputs only until KAN-94 |
 | S7b | not started | | needs S1, GPU quota in region, a working `consistency()`, and KAN-94 |
 | S8 | not started | | |
@@ -1235,6 +1238,125 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   (`CC-BY-4.0`; `Quick, Draw! Dataset, Google Creative Lab`). So the check refuses no row of the
   version this slice trains on. On each split `record(-1)` and `record(-n)` were accepted and
   `record(-n - 1)` raised `IndexError`.
+- **2026-11-15 — S6c2: the sample.** 1,000 Amateur Drawings record ids, frozen in
+  `src/primer/drawing/configs/stability_sample.txt`, drawn once from `v1.1`'s
+  `character_drawings` (174,981 rows) as `default_rng(20261115).choice(sorted(record_id), 1000)`.
+  **Unstratified** — a uniform random draw, the plan's stated fallback, because S6b3's
+  proportional sampler is in #29 and not on `main`. It matches the corpus where checked: 1.6%
+  square and 89.8% portrait against the corpus's 1.35% and 88.17%; all 1,000 CC-BY-NC-4.0. The
+  same file in `v1` holds **174,983** rows against `v1.1`'s 174,981 — the two versions pin
+  different generations of one path — so the sample names its version and S6d must read `v1.1`.
+- **2026-11-15 — S6c2: preprocessing moves the baseline's answer on most children's drawings.**
+  S6a's zero-shot baseline on CPU, 4,000 forward passes in 802 s, `v1.1`, the sample above.
+  *Hypothesis:* on a corpus the vocabulary cannot name, preprocessing would flip top-1 often, but
+  mostly where the margin is thin. *Result:* both halves, and the second less than expected.
+
+  | Adjacent pair | top-1 changes | ... where the margin was above median | top-5 overlap |
+  |---|---|---|---|
+  | as published → greyscale | **25.5%** | 10.0% | 0.765 |
+  | greyscale → binarised | **49.9%** | 35.8% | 0.393 |
+  | binarised → cropped to the box | **41.3%** | 24.6% | 0.561 |
+
+  | Variant | top-1 confidence median | top-1/top-2 margin median | distinct top-1 labels | most common top-1 share |
+  |---|---|---|---|---|
+  | as published | 0.103 | 0.051 | 108 | 53.3% |
+  | greyscale | 0.081 | 0.037 | 110 | 50.8% |
+  | binarised | 0.085 | 0.039 | 127 | 51.5% |
+  | cropped, binarised | 0.093 | 0.044 | 123 | 54.6% |
+
+  Colour alone moves one drawing in four, and one in ten even where the model had a preference.
+  Binarising is the largest single move: half of all answers change and **only 39% of the top
+  five survives** — so the local threshold (S6b1) changes what the model sees far more than
+  colour does, and the binarised row is a different input, not a cleaned-up one. Cropping to the
+  annotated box moves 41% again; that row is an upper bound the product cannot reach (no box at
+  upload). Margins are thin everywhere (median 0.04–0.05 on sigmoid scores, against 0.098 between
+  `house` and `barn` on S6a's smoke drawing), which is the "forced near-miss" the plan predicted —
+  yet the above-median half still flips 10–36%, so the movement is not only tie-breaking.
+  **Over half of all drawings get one label under every variant, and it is `squiggle`**
+  (`top1_label_share` 0.51–0.55): asked to name a child's drawing of a person from a vocabulary
+  with no person in it, the baseline reaches for the category that means "a scribble". That is
+  KAN-111's gap made concrete, and a reason for that ticket rather than for this slice to act on.
+  It also means the baseline is already concentrated before any fine-tune — the collapse
+  signature S6d is told to watch for — so S6d must read its stability against this, not against
+  zero, and a fine-tune that moves drawings *off* `squiggle` may show as *less* stable while
+  being better. *Second hypothesis:* the measurement reproduces. *Result:* a full re-run gave
+  every figure above **identically** (779 s), so S6d's comparison is against fixed numbers. **Not accuracy**, and nothing here says which variant is right. Not in MLflow:
+  there is no host (KAN-107); the summary JSON's fields are what an MLflow run would log.
+- **2026-11-15 — S6c2: the decision the plan asked for, and the one it did not.** The rank
+  statistic is **top-5 set overlap** (`evaluate.py` docstring has why). Whether the 0.85 gate
+  keeps reading the rendered Quick, Draw! number is **not decided here** — it is the KAN-38
+  owner's, and the plan's acceptance asked for a recorded decision this slice is not entitled to
+  make. What these numbers add to that decision: the gate's number is taken on drawings a
+  classifier already recognised (S6b2), while on children's drawings the same model's answer
+  moves 25–50% under preprocessing alone.
+- **2026-11-15 — S6e: three models chosen, downloaded with approval, and measured before use.**
+  From the brief, on licence and the 8 GB rule: **Florence-2 base** (MIT) for the description and
+  character boxes, **SAM 2.1 small** (Apache-2.0) for masks, **ViTPose base** (Apache-2.0) for
+  keypoints; `body_type` takes no model of its own. Each pinned by full revision in
+  `configs/drawing_sheet.yaml`. Florence-2 comes from `florence-community/Florence-2-base`, not
+  `microsoft/`: the Microsoft repo needs `trust_remote_code` and runs three Python files from it,
+  while transformers 5.23 loads the converted repo natively — same model, MIT, weights and JSON
+  only (chosen by the user). On disk: 0.47 / 0.18 / 0.34 GB. SAM 2's image processor needs
+  **`torchvision`**, installed with approval as `0.29.1+cu130` to match the CUDA torch (6.6 MB,
+  `--no-deps`, `pip check` clean). *Hypothesis:* photo-trained models would mostly work on
+  children's drawings. *Result, on the first 40 drawings of S6c2's frozen sample against the
+  dataset's own annotations, GPU:* Florence-2 `<OD>` finds the figure at IoU ≥ 0.5 on **37/40**
+  (median 0.89), but also boxes `human face` 28 times and `footwear` 19 times beside `person` 33
+  — so a box ≥ 80% inside a larger one is folded into it rather than made a character. SAM's mask
+  matches the annotated segmentation at IoU ≥ 0.5 on **26/40** (median 0.68), slightly under the
+  figure (31% of the box against the annotation's 40%). ViTPose places **61%** of annotated
+  joints within 10% of the figure's size (PCK@0.1). SAM loads with a transformers warning that
+  the checkpoint is `sam2_video` read into `Sam2Model`; the masks above are its output anyway.
+- **2026-11-15 — S6e: the acceptance, measured — every field always filled, two characters found
+  as two in 12 of 20.** `CharacterSheetRecognizer` on real drawings, GPU, warm, all four models
+  resident (**2.00 GiB peak VRAM**). 40 single-figure drawings: one sheet on 37, two or three on
+  3; every one of the 45 sheets carries candidates, embedding, crop, mask, a known body type and,
+  for humanoids, 17 joints; a description on 40/40; **0.82 s** a drawing mean, p95 1.32 s. Body
+  type: 33 humanoid, 5 creature, 7 object, against 40 annotated human figures — so about one in
+  six children's figures is not read as a person, and KAN-42 would place rather than repose it.
+  20 composites of two real figures side by side (in memory, never written): **exactly two
+  sheets on 12/20**, one on 6, three or four on 2; all 37 sheets complete; 1.07 s a drawing.
+  The plan's acceptance — "one sheet per character" — therefore holds on 60% of two-figure
+  drawings, not on all of them; the misses are the detector boxing two figures as one. In CI the
+  acceptance runs on fake weights through `build_book`, with a stand-in for the approve step
+  (KAN-64). Not in MLflow (KAN-107). Unstratified sample, as S6c2's.
+- **2026-11-15 — S6e: what review changed, and what it did not.** Sheets now come back **most
+  confident first**, which is what `DrawingAnalysis.characters` and `.main` promise and what
+  `build_book` takes as the story's subject; they had been in box-area order, so a large doubtful
+  object could have become the subject ahead of a smaller, sure one. Joints are normalised
+  against the pixel bounds the crop is actually saved at (floor of the top-left, ceil of the
+  bottom-right) rather than the raw float box, so a fractional detection no longer shifts the
+  skeleton by up to a pixel on the saved crop. A mask with no pixels falls back to the unmasked
+  box instead of whitening the child's lines; a box wholly outside the drawing is dropped; a
+  joint that is NaN or infinite is kept as not visible; and a failing model call now says which
+  step, and which character, failed. None of these changes a count above (sheets per drawing,
+  body types), but the figures were **not** re-measured with the real models afterwards.
+  `HuggingFaceSheetModels` itself — the pose box conversion, the detection pairing — runs only
+  against the real weights and is not exercised in CI; the measured figures above are its test.
+- **2026-11-15 — S6c2: what the figures above were taken under, and what review changed.** The
+  figures are from the **CPU, fp32** run (S6a's baseline, as stated), before the summary recorded
+  its own execution. It now records the resolved `device` and `dtype`, the prompt template,
+  count and a hash of the prompt text, every scoring setting, and each variant's preprocessing
+  settings, and `stability --device cpu` pins the CPU baseline on a machine with a GPU, whose
+  bf16 moves confidences about 20% (Verified fact on the CUDA torch). Review also fixed three
+  things that do not move the table: top-5 overlap is divided by the labels there are when fewer
+  than five (this vocabulary has 345, so the table is unchanged), a per-call `prepare` whose
+  `render.size` differs from the checkpoint's resolution is now refused rather than resampled
+  twice, and the `top1_change_rate_confident` docstring said the opposite of what it measures:
+  flips that were only near-ties would pile up below the median margin and leave this rate near
+  zero, and a rate close to the overall one would say the flips are spread evenly. In all three
+  pairs it sits below the overall rate (10.0% against 25.5%, 35.8% against 49.9%, 24.6% against
+  41.3%) but far above zero: some flips are near-ties, and confident answers moved too. The
+  figures were **not** re-measured after these changes; none of them touches a number in the
+  tables. A second review round added guards that cost nothing on the real data: each image's
+  bytes must match its recorded `image_sha256` (checked on five sample drawings against the
+  bucket: all match; `record_id` is unique across `v1.1`'s 174,981 rows, so the 1,000 ids match
+  1,000 rows), scores must be sigmoid outputs in 0-1, `--out`'s folder must exist before the
+  13-minute run starts, and each pair's summary carries `confident_drawings`, the size of the
+  above-median subset, which is half the sample unless the median margin is 0 (a saturated or
+  collapsed model, S6d's case to watch). Left for later, not done here: a `--data-uri` flag like
+  `primer.data.cli` has, and the share of drawings whose top-1/top-2 margin is exactly 0, which
+  would make a bf16 GPU run comparable with this CPU baseline.
 - **2026-11-15 — Local GPU work runs: `.venv`'s torch is now a CUDA build.** *Supersedes* the
   2026-11-15 fact "The GPU is present; the installed `torch` cannot see it" and the CPU-only notes
   in earlier facts, which stay as the record of what was true then. `torch` went from
@@ -1459,13 +1581,46 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   now; the team lead decides.
 - Does the course's GCP credit cover Claude models on Vertex AI? Recommended: check the billing account's
   credit scope before routing Claude Code through Vertex. Rishi checks.
+- **S6e needs `torchvision`: decided 2026-11-15 by the KAN-38 owner.** SAM 2's image processor
+  imports it, and like the CUDA torch it must match the torch build (`0.29.1+cu130` for
+  `2.14.1+cu130`). Decision: a separate **`sheet` extra** (`torch>=2.4`, `transformers`,
+  `torchvision>=0.19`) so the recogniser alone does not need it, and the CUDA pair documented
+  in `AGENTS.md` → Commands rather than pinned in `pyproject.toml`. `pip install -e
+  ".[sheet]"` now runs `CharacterSheetRecognizer` on CPU; the GPU needs the documented
+  reinstall of torch and torchvision together. Not done, by that decision: pinning a build in
+  the extra or `requirements.txt`.
+- **Two figures read as one in 6 of 20 two-figure drawings.** Florence-2's detector sometimes
+  boxes neighbouring figures together, and the containment rule then folds them. *Recommended:*
+  measure on real multi-character uploads before tuning — composites of two single-figure
+  drawings are a stand-in — and try Florence-2's phrase grounding or SAM's automatic masks if the
+  rate holds. KAN-42 should treat a sheet count as a lower bound until then.
 - **A fresh clone installs the CPU torch again.** The `drawing` extra says `torch>=2.4` and names no
   index, so `pip install -e ".[drawing]"` on Windows takes PyPI's CPU wheel, and the GPU fact above
-  silently stops being true for the next person or agent. *Recommended:* document the step in
-  `AGENTS.md` → Commands (or `docs/engineering/onboarding.md`):
-  `.venv/Scripts/python.exe -m pip install --force-reinstall --no-deps "torch==2.14.1" --index-url https://download.pytorch.org/whl/cu130`
-  followed by `pip install accelerate`. Whether to pin torch in the extra, and to which build, is
-  the KAN-38 owner's decision; this plan does not change `pyproject.toml` or the requirements.
+  silently stops being true for the next person or agent. *Decided 2026-11-15 (KAN-38 owner):*
+  document the step, do not pin. `AGENTS.md` → Commands now carries the torch and torchvision
+  reinstall from the cu130 index in one command, and `pip check`. `accelerate`, which Hugging
+  Face training wants (S6d), is still a separate `pip install accelerate`.
+- **Should a part-label box that escapes its figure be a character, and should containment look at
+  labels?** Found in review of #35, and left as it is because either answer moves the measured
+  counts above. Containment ignores labels, so a person drawn inside a house box (80% or more
+  within it) is folded into the house, and the house becomes the subject. And a part label whose
+  box is less than 80% inside its figure — a face half outside the person — becomes a character
+  of its own; `human face` contains `human`, so it is read as humanoid and ViTPose runs on a face
+  box. The same happens to a lone face when the person box is missed (the figure is found at
+  IoU ≥ 0.5 on 37 of the 40 drawings).
+  *Recommended:* a list of part words (face, head, hand, shoe, ...) dropped before grouping, never
+  scored or posed, and a label-aware fold, measured on the 40 drawings and 20 composites before it
+  ships, since both can only lower the sheet counts. *Decides:* the KAN-38 owner.
+- **When is a SAM mask too small to use?** Only an empty mask falls back to the unmasked box now.
+  A mask covering a sliver of its box still whitens the rest, and SAM covers 31% of the box
+  against the annotation's 40%, so a threshold needs the distribution of mask share over the 82
+  sheets, which has not been taken. *Recommended:* measure it, then add `min_mask_share` to
+  `drawing_sheet.yaml`.
+- **The default artifact store is a process-lifetime dictionary.** `MemoryArtifactStore` never
+  evicts a child's crops and masks, a `mem://` ref cannot be read by another process (KAN-42's
+  worker), and a content-hash name means two children's identical crops would share one object
+  once the GCS store exists, which complicates deleting one child's data. *Recommended:* serving
+  passes a store explicitly and the GCS one decides its naming against the deletion path (KAN-64).
 
 ## Out of scope
 
