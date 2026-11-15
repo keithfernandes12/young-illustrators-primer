@@ -693,7 +693,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S4 | not started | | |
 | S5 | not started | | detailed in `story-generation-llm` (S1–S6). KAN-39 |
 | S5b | not started | | Vertex GPU job; detailed in `story-generation-llm` (S7–S9). KAN-39 |
-| S6a | merged | [#18](https://github.com/keithfernandes12/young-illustrators-primer/pull/18) | zero-shot SigLIP 2 baseline; no measured number until S6c |
+| S6a | merged | [#18](https://github.com/keithfernandes12/young-illustrators-primer/pull/18) | zero-shot SigLIP 2 baseline; its `drawing_top5_acc` is measured in S6c |
 | S6b | merged | [#19](https://github.com/keithfernandes12/young-illustrators-primer/pull/19) | `render_strokes` + config + PNG; numpy only, so CI covers it. KAN-87 |
 | S6b1 | merged | [#31](https://github.com/keithfernandes12/young-illustrators-primer/pull/31) | `prepare_drawing` + `augment_canvas`, numpy only, wired into the encoder; binarising is local after two global thresholds failed on real drawings. Unblocks S6b2 and S6c2. KAN-31 |
 | S6b3 | merged | [#29](https://github.com/keithfernandes12/young-illustrators-primer/pull/29) | strata and two samplers, measured over the real 174,981 rows. KAN-117 |
@@ -1492,10 +1492,12 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
     (`val` chooses the model; it stays diagnostic). The ratio is written unrounded, because 53,811
     of 63,310 is 0.8499605 and rounds to a passing 0.85. An empty `--version` and a
     `prompt_template` without `{label}` are refused before any bucket or weights are read. The
-    0.4956 above is unchanged: it was the four-place display of the same hits. The previous run's
-    `--out` file is removed first, before any other refusal, so a run that dies cannot leave an old
-    result for `check_gate` to read; only a file with `"stage": "drawing"` is removed, anything else
-    is refused. The file also records `gate_eligible`, `data_uri`, and the package's own commit and
+    0.4956 above is unchanged: it was the four-place display of the same hits. Once the arguments
+    parse, the previous run's `--out` file is moved to `<out>.previous` before any other refusal or
+    load, so a run that dies cannot leave an old result at `--out` for `check_gate` to read, and a
+    probe reusing the path does not destroy a full-split result; only a file with `"stage":
+    "drawing"` is moved, anything else is refused untouched. The result is written beside and
+    renamed into place. The file also records `gate_eligible`, `data_uri`, and the package's own commit and
     whether its tree was dirty.
   - **The golden ceiling, re-counted.** `configs/golden/scenarios.jsonl` holds 80 book scenarios
     over 16 distinct `drawing_label`s. All 16 are in the 345, case-insensitively and exactly, so a

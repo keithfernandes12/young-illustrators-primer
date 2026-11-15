@@ -373,7 +373,7 @@ def metrics_file(
     groups: Mapping[str, Sequence[str]],
     vocabulary_size: int,
     *,
-    gated: bool = True,
+    gated: bool,
     **provenance: Any,
 ) -> dict[str, Any]:
     """The ``primer.evaluation.contract`` shape, plus the gated key at the top level.
@@ -429,11 +429,13 @@ def _git_state() -> tuple[str, bool | None]:
     return sha or "unknown", (None if status is None else bool(status))
 
 
-def _clear_previous_output(parser: argparse.ArgumentParser, out: Path) -> None:
-    """Remove the last run's file so a run that dies cannot leave it for ``check_gate`` to read.
+def _set_previous_output_aside(parser: argparse.ArgumentParser, out: Path) -> None:
+    """Move the last run's file to ``<out>.previous`` so a run that dies cannot leave it at ``out``.
 
-    Only a previous drawing metrics file is removed: a slip such as ``--out <the model yaml>``
-    is refused rather than deleted.
+    ``check_gate`` reads only ``out``, so a run that fails, or is refused after this point, leaves
+    nothing there to be certified. The old file is kept, not deleted: a 12-minute full-split result
+    is not something a ``--limit`` probe reusing the path should destroy. Only a previous drawing
+    metrics file is moved; anything else (``--out <the model yaml>``) is refused untouched.
     """
     if not out.exists():
         return
@@ -443,7 +445,7 @@ def _clear_previous_output(parser: argparse.ArgumentParser, out: Path) -> None:
         previous = None
     if not isinstance(previous, dict) or previous.get("stage") != STAGE:
         parser.error(f"--out {out} exists and is not a previous drawing metrics file; not overwriting it")
-    out.unlink()
+    out.replace(out.with_name(out.name + ".previous"))
 
 
 def accuracy_parser() -> argparse.ArgumentParser:
@@ -460,7 +462,13 @@ def accuracy_parser() -> argparse.ArgumentParser:
         choices=("val", "test"),
         help="never train: a number over the drawings the model learns from measures memory",
     )
-    parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument(
+        "--out",
+        required=True,
+        type=Path,
+        help="the metrics file. An existing drawing metrics file here is moved to <out>.previous "
+        "first, so a failed run leaves nothing at this path for check_gate to read",
+    )
     parser.add_argument(
         "--device",
         choices=("cpu", "cuda"),
@@ -492,9 +500,10 @@ def _evaluate_accuracy(argv: list[str]) -> int:
         parser.error(
             f"--out's folder does not exist: {args.out.parent}; the run takes minutes, so say so now"
         )
-    # First, before any other refusal or load: a run that exits early for any reason must not
-    # leave the previous file at --out for the gate to certify.
-    _clear_previous_output(parser, args.out)
+    # First thing after the arguments parse, before any other refusal or load: a run that exits
+    # early must not leave the previous file at --out for the gate to certify. (An argument that
+    # argparse itself rejects exits before this, with a non-zero status.)
+    _set_previous_output_aside(parser, args.out)
     if args.limit is not None and args.limit < 1:
         parser.error("--limit must be at least 1")
 
@@ -573,7 +582,10 @@ def _evaluate_accuracy(argv: list[str]) -> int:
         **_scored_under(config, str(encoder.device), encoder.dtype_name or "unknown"),
         preprocessing=asdict(encoder.prepare or default_prepare_config()),
     )
-    args.out.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    # Written beside and renamed into place, so a crash mid-write cannot leave truncated JSON at --out.
+    partial = args.out.with_name(args.out.name + ".partial")
+    partial.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    partial.replace(args.out)
     judged = sum(1 for s in result["slices"] if s["judged"])
     print(
         f"wrote {args.out}: drawing_top5_acc={result['overall']['drawing_top5_acc']:.4f} over {len(hits)} drawings "

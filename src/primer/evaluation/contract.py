@@ -1,6 +1,7 @@
 """The metrics contract shared by every model area.
 
-`golden.py` merges each area's numbers into one flat file and `.claude/skills/golden-gate` reads it.
+`golden.py` merges each area's numbers into one flat file and `.claude/skills/golden-gate` reads it
+(the drawing stage is gated from its own file: `check_gate.py --only drawing`).
 The gate looks keys up at the top level of that file, so a key the writer forgets is reported as
 ``metric missing`` and fails the gate -- it is never silently skipped. ``GOLDEN_METRIC_KEYS`` is the
 list the writer must produce, and a test asserts it matches `thresholds.json` exactly, so adding a

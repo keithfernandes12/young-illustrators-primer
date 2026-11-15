@@ -143,8 +143,14 @@ def test_country_code_is_the_reported_slice_key():
 # ----------------------------------------------------------------------------------- metrics file
 
 
-def _file(hits: list[bool], **provenance: object) -> dict:
-    return metrics_file(hits, {"country_code": ["US"] * len(hits)}, 345, **provenance)
+def _file(hits: list[bool], gated: bool = True, **provenance: object) -> dict:
+    return metrics_file(hits, {"country_code": ["US"] * len(hits)}, 345, gated=gated, **provenance)
+
+
+def test_gating_is_a_required_choice_not_a_default():
+    # A caller that forgets the flag must fail, not write a file the gate can certify.
+    with pytest.raises(TypeError, match="gated"):
+        metrics_file([True], {"country_code": ["US"]}, 345)  # type: ignore[call-arg]
 
 
 def test_the_file_is_the_contract_shape_with_the_gated_key_also_at_the_top():
@@ -211,7 +217,7 @@ def test_the_file_never_claims_to_be_fake_scored():
     assert "fake_models" not in _file([True])
 
 
-@pytest.mark.parametrize(("hits", "verdict"), [([True] * 9 + [False], "PASS"), ([True, False], "FAIL")])
+@pytest.mark.parametrize(("hits", "verdict"), [([True] * 10, "PASS"), ([True, False], "FAIL")])
 def test_the_release_gate_returns_a_verdict_on_this_file_not_metric_missing(tmp_path, hits, verdict):
     path = tmp_path / "drawing_metrics.json"
     path.write_text(json.dumps(_file(hits)), encoding="utf-8")
@@ -370,6 +376,8 @@ def test_a_failed_rerun_does_not_leave_the_previous_file_to_be_gated(monkeypatch
         evaluate.main(["--model", str(model_yaml), "--version", "v1.1", "--out", str(out)])
 
     assert not out.exists()
+    # Moved aside, not destroyed: it is the 12-minute result a probe reusing the path must not lose.
+    assert (tmp_path / "m.json.previous").read_text(encoding="utf-8").count("0.99") == 1
 
 
 @pytest.mark.parametrize(
@@ -399,6 +407,55 @@ def test_an_out_path_that_is_not_a_previous_metrics_file_is_refused_and_kept(tmp
         evaluate.main(["--model", str(model_yaml), "--version", "v1.1", "--out", str(other)])
 
     assert other.read_text(encoding="utf-8") == "name: not a metrics file\n"
+
+
+@pytest.mark.parametrize(
+    "content",
+    ['{"fake_models": true, "drawing_top5_acc": 0.9}', '{"top5_overlap": 0.4}', '{"stage": "speech"}', "[]"],
+    ids=["golden-like", "stability-like", "other-stage", "list"],
+)
+def test_a_json_file_that_is_not_a_drawing_result_is_refused_and_kept(tmp_path, content):
+    other = tmp_path / "other.json"
+    other.write_text(content, encoding="utf-8")
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    with pytest.raises(SystemExit):
+        evaluate.main(["--model", str(model_yaml), "--version", "v1.1", "--out", str(other)])
+
+    assert other.read_text(encoding="utf-8") == content
+
+
+def test_a_successful_run_leaves_the_result_and_no_partial_file(monkeypatch, tmp_path):
+    _stub_world(monkeypatch, _test_split_frame(6), winner="The Eiffel Tower")
+    out = tmp_path / "m.json"
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    evaluate.main(["--model", str(model_yaml), "--version", "v1.1", "--out", str(out)])
+
+    assert json.loads(out.read_text(encoding="utf-8"))["stage"] == "drawing"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["m.json"]
+
+
+@pytest.mark.parametrize(
+    ("porcelain", "dirty"),
+    [(" M src/x.py\n", True), ("", False), (None, None)],
+    ids=["dirty", "clean", "git-fails"],
+)
+def test_git_dirty_follows_git_status(monkeypatch, porcelain, dirty):
+    calls: list[tuple[list[str], object]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs.get("cwd")))
+        if command[1] == "rev-parse":
+            return SimpleNamespace(returncode=0, stdout="abc1234\n")
+        if porcelain is None:
+            raise OSError("git is not installed")
+        return SimpleNamespace(returncode=0, stdout=porcelain)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert evaluate._git_state() == ("abc1234", dirty)
+    assert {cwd for _, cwd in calls} == {Path(evaluate.__file__).resolve().parent}
 
 
 def test_the_recorded_commit_is_the_packages_not_the_callers(monkeypatch, tmp_path):
