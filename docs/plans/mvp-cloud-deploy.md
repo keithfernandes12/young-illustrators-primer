@@ -401,7 +401,8 @@ it — S6b3 ships the samplers, and S6b4 can only ever add a stratum.
 renderer, with S6b1's paper/crayon augmentation applied at training time only.
 
 - **Why separate** — it is the first slice that needs frozen data on disk, which S6b does not.
-- **Acceptance** — the loader returns the three splits for a pinned version, no record appears in
+- **Acceptance** — `read_dataset(version, split)` returns each of a pinned version's three splits
+  (one per call; `build_splits` makes all three from a frame already read), no record appears in
   two splits, and augmentation is off for val and test.
 - **Depends on** — S6b, and **S6b1** for the augmentation. **Jira** — KAN-38.
 
@@ -695,13 +696,13 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6a | merged | [#18](https://github.com/keithfernandes12/young-illustrators-primer/pull/18) | zero-shot SigLIP 2 baseline; no measured number until S6c |
 | S6b | merged | [#19](https://github.com/keithfernandes12/young-illustrators-primer/pull/19) | `render_strokes` + config + PNG; numpy only, so CI covers it. KAN-87 |
 | S6b1 | merged | [#31](https://github.com/keithfernandes12/young-illustrators-primer/pull/31) | `prepare_drawing` + `augment_canvas`, numpy only, wired into the encoder; binarising is local after two global thresholds failed on real drawings. Unblocks S6b2 and S6c2. KAN-31 |
-| S6b3 | in review | [#29](https://github.com/keithfernandes12/young-illustrators-primer/pull/29) | strata and two samplers, measured over the real 174,981 rows. KAN-117 |
+| S6b3 | merged | [#29](https://github.com/keithfernandes12/young-illustrators-primer/pull/29) | strata and two samplers, measured over the real 174,981 rows. KAN-117 |
 | S6b4 | not started | | **spike, person-only**: waits on S6b3, S6a and KAN-24, plus DINOv2 and a captioner that no slice supplies. Can only add a stratum. KAN-117 |
-| S6b2 | not started | | S6b merged; waits on S6b1 |
+| S6b2 | in review | [#32](https://github.com/keithfernandes12/young-illustrators-primer/pull/32) | `data.py`: hashed 80/10/10 split of v1.1 (506k/63k/63k), rendered on demand through `render_strokes` → `augment_canvas` (train only) → `prepare_drawing`. Unblocks S6c |
 | S6c | not started | | the gate's number, over rendered Quick, Draw! — not the product's. Ceiling back to 1.0 since KAN-116 merged |
-| S6c2 | in review | [#33](https://github.com/keithfernandes12/young-illustrators-primer/pull/33) | 1,000 frozen drawings (unstratified), four variants: top-1 moves 25% / 50% / 41% between adjacent variants; over half the drawings come out `squiggle`. Reproduces exactly. KAN-109 |
+| S6c2 | merged | [#33](https://github.com/keithfernandes12/young-illustrators-primer/pull/33) | 1,000 frozen drawings (unstratified), four variants: top-1 moves 25% / 50% / 41% between adjacent variants; over half the drawings come out `squiggle`. Reproduces exactly. KAN-109 |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); still waits on S6b2 (#32) and S6c. Reads S6c2's stability figures |
-| S6e | in review | [#35](https://github.com/keithfernandes12/young-illustrators-primer/pull/35) | `sheet.py`: Florence-2 + SAM 2.1 + ViTPose beside SigLIP 2; every field filled on 82/82 real sheets; two figures found as two on 12/20. Stacked on #33. Unblocks KAN-42 |
+| S6e | merged | [#35](https://github.com/keithfernandes12/young-illustrators-primer/pull/35) | `sheet.py`: Florence-2 + SAM 2.1 + ViTPose beside SigLIP 2; every field filled on 82/82 real sheets; two figures found as two on 12/20. Unblocks KAN-42 |
 | S7a | in progress | branch `feat/KAN-42-controlnet-baseline` | pretrained SD 1.5 + ControlNet-Scribble, one page, local output; synthetic inputs only until KAN-94 |
 | S7b | not started | | needs S1, GPU quota in region, a working `consistency()`, and KAN-94 |
 | S8 | not started | | |
@@ -1199,6 +1200,44 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   nor to explain a processor without a fixed square, and `import torchvision` followed by
   `torchvision.transforms.…` slipping past the guard — each now closed with a mutation-checked
   test.
+- **2026-11-15 — S6b2: the frozen Quick, Draw! drawings, measured whole.** `v1.1`'s `drawings`
+  (read through `primer.data.catalog` at its recorded generations, 15 s): **632,746** rows, all
+  `quickdraw`, `source_id` and `record_id` both unique, 345 labels at **1,615–1,977** drawings
+  each (median 1,858), `license` CC-BY-4.0 and `attribution` present on every row. *Hypothesis:*
+  some records would trip `render_strokes`, since `valid_strokes` accepts three runs where the
+  renderer requires two (the open question S6b handed on). *Result:* **none** — every record
+  renders, and none carries a third run. So the loader raises on a refusal, naming the record,
+  rather than skipping it: one would mean the pipeline and the renderer have diverged.
+  Render plus `prepare_drawing` costs **1.19 ms mean, p95 1.85 ms** (every 50th record) — 3.3×
+  S6b's 0.356 ms from one sparse category, as that fact warned.
+- **2026-11-15 — S6b2: three labels differ from the vocabulary in case, and an exact match
+  refused the whole version.** The data stores `the eiffel tower`, `the great wall of china` and
+  `the mona lisa`; `quickdraw_categories.txt`, written in the bucket's listing order, has `The
+  Eiffel Tower` and so on. Labels now match case-insensitively, and a vocabulary with two labels
+  differing only in case is refused rather than guessed between.
+- **2026-11-15 — S6b2: every drawing in the split was recognised by Quick, Draw!'s own model.**
+  `recognized` is true on all 632,746 rows: the pipeline kept only drawings Google's classifier
+  got right. The recogniser is trained and gated on sketches a classifier already found legible,
+  so a `drawing_top5_acc` from S6c is measured on an easier set than the raw dataset — and
+  further still from a child's drawing. S6c's fact should say so beside the number.
+- **2026-11-15 — S6b2: the split, built on `v1.1`.** Salted SHA-256 of `source_id`
+  (`configs/drawing_data.yaml`, salt `kan-38-s6b2`, 0.8/0.1/0.1): train **506,324** (80.02%),
+  val **63,112** (9.97%), test **63,310** (10.01%); val and test each hold all 345 labels, at
+  least 145 and 146 drawings per label. All three build in 1.8 s, since nothing is rendered until
+  an item is read. The split is unstratified by design — a hash, not S6b3's samplers, which
+  were in #29 and not yet on `main` when this was built — and per-label coverage above is what
+  shows that did not cost a class.
+  Not in MLflow: these describe the data, not a model, and there is no host (KAN-107).
+- **2026-11-15 — S6b2: `v1.1` passes the stricter provenance check.** Review asked that blank and
+  non-text `license` / `attribution` be refused, not only null ones; the earlier "present on every
+  row" was a null check alone, so it was re-measured. `read_dataset("v1.1", split)` for all three
+  splits (train 506,324, val 63,112, test 63,310 = **632,746**, 35 s including the bucket read):
+  **0** rows blank or not text in either column (and, after a later review round made `source_id`
+  and `label` require text too, 0 refused there: all 632,746 still load), each provenance column
+  holding one distinct value
+  (`CC-BY-4.0`; `Quick, Draw! Dataset, Google Creative Lab`). So the check refuses no row of the
+  version this slice trains on. On each split `record(-1)` and `record(-n)` were accepted and
+  `record(-n - 1)` raised `IndexError`.
 - **2026-11-15 — S6c2: the sample.** 1,000 Amateur Drawings record ids, frozen in
   `src/primer/drawing/configs/stability_sample.txt`, drawn once from `v1.1`'s
   `character_drawings` (174,981 rows) as `default_rng(20261115).choice(sorted(record_id), 1000)`.
@@ -1389,6 +1428,15 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   threshold, not a global one, and its cropped row cannot run through the encoder at all —
   `Encoder.encode(bytes, prompts)` has no way to pass a box, so either the box travels through
   that seam or S6c2 calls `prepare_drawing` itself before encoding (raised on KAN-109).
+- **What S6b2 hands to S6d.** Found in review of #32, none a defect in the loader as shipped.
+  *Epochs:* `RenderedSplit.set_epoch` changes the dataset in the process that calls it, so a
+  multi-worker `DataLoader` with `persistent_workers=True` never sees the new epoch; S6d should
+  rebuild the workers each epoch or carry the epoch in the sampler. *Reads:* `read_dataset`
+  re-reads and re-checks the whole version (about 15 s plus the frame check) for every split asked
+  for, so three splits are three reads; a caller-supplied frame or a cache would avoid it once a
+  training run wants all three. *Seeds:* an item's seed is 32 bits, so about 29 pairs of the 506k
+  train items share one in an epoch, which is harmless but should not be mistaken for
+  independence. Not raised on a Jira issue yet; S6d's owner decides.
 - **Where does EXIF orientation get applied?** A phone JPEG with Orientation=6 reaches
   `prepare_drawing` unrotated, as it reached the tower before this slice. The standard fix,
   `PIL.ImageOps.exif_transpose` at the decode site, is decode rather than preprocessing, but the
