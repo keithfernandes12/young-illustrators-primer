@@ -226,102 +226,99 @@ need it and neither can start without it.
   one PR, not a dependency anything else can key off.
 - **Depends on** — S6b for the canvas convention. **Jira** — KAN-31.
 
-### S6b3 · Amateur Drawings: find the structure, validate it, sample it
+### S6b3 · Amateur Drawings strata and samplers
 
-*size: medium · stage 3 is person-launched while `torch` is the CPU wheel*
+*size: small*
 
-`src/primer/data/` gains the strata, a cluster-id **sidecar**, and **two** sampling functions over
-Amateur Drawings. Nothing here trains or evaluates a model; it decides which rows anything else
-should take, and it is a spike in that its later stages may legitimately conclude "stop". It sits
-with the other `S6b*` slices rather than after S6b2 because all of them are about what reaches a
-model rather than about a model.
+`src/primer/data/` gains strata over Amateur Drawings and **two** sampling functions over them.
+Nothing here embeds, clusters, captions or loads a model. It sits with the other `S6b*` slices
+because all of them are about what reaches a model rather than about a model.
 
-- **Why separate** — `quickdraw` picks rows by `max_per_category: 2000`, "first N". Quick, Draw! is
-  pre-partitioned by category so the damage is bounded to within-category order, which nobody has
-  checked either; Amateur Drawings is one undifferentiated pile of
-  ~178,000 uploads, where "first N" inherits Meta's upload order and whatever it correlates with.
-  Every consumer of this corpus needs the answer — KAN-111's `humanoid` class if it is accepted,
-  and S6c2's stability sample either way — so it is built once, before either.
-- **Stage 1, free** — strata from what the parquet already holds and nothing reads:
-  `original_width`/`original_height` (the size *before* Meta's 512 px resize) plausibly separate a
-  photograph from a scan from a digital canvas; `bbox_width × bbox_height` against `width × height`
-  is framing — derived, not a stored column, there is no `bbox_area`; segmentation `area` is figure
-  complexity. **Not `n_keypoints`** — `schemas.py` records it as "17 for every Amateur Drawings row
-  today", so it is a constant and cannot stratify anything; named here only so nobody reaches for
-  it again. That those columns really do separate capture modes is an assumption nobody has
-  checked, and confirming or refuting it is part of what this stage reports. **It is the baseline
-  stages 3–4 have to beat.**
-- **Stage 2, the gate** — the caption-quality check
-  `docs/briefs/drawing-recognition-model-candidates.md` already asks for and nobody has run: 2–3
-  captioners over ~50 drawings. **If captions come back uniformly generic, stages 3 *and* 4 must
-  not run** — not stage 4 alone, because stage 3 is the expensive one and clusters nobody can
-  caption cannot be validated. That is not a failure; it is the captioner reporting it cannot see
-  this domain, which S6e needs to know before committing to the same model.
-- **Stage 3, person-launched for now** — embed and cluster with **both** candidate encoders
-  (SigLIP 2's tower, pinned and measured in S6a but circular since it is the model being trained;
-  and DINOv2, an independent view). 178,000 images × 2 encoders at 0.12 s is about **12 hours** on
-  this machine's CPU wheel. That 0.12 s is S6a's measured warm `analyse` for SigLIP — image encode
-  plus the cached 345-prompt comparison — and is **assumed** for DINOv2, which has never been run
-  here. `docs/adrs/bounded-local-training-for-agents.md` governs *training* and does not reach an
-  embedding sweep, so this bound rests on its own footing: a half-day job on the project's only
-  machine, with no checkpointing and no partial result, is not something an unattended agent should
-  start. **An agent must not run stage 3 to completion here.** Either a person launches it, or it
-  runs on a documented random subsample and the Verified fact says which — 20,000 is ample for
-  finding modes but is ~80 minutes across both encoders, so an agent-sized draw is nearer **7,000**
-  (~28 minutes). With a CUDA build the full sweep is an estimated 20–60 minutes, which would let
-  this gate be revisited.
-- **Stage 4, caption the groups** — caption centroid-nearest and boundary members **separately**,
-  ~50 of each per cluster. At k ≈ 20 that is 20 clusters × 50 × 2 positions × 2 encoders ≈ **4,000
-  captions**, not 178,000; `k` is recorded as a Decision and this arithmetic moves with it. Report
-  **coherence** (within- against between-cluster caption similarity) and **distinctive terms**
-  (TF-IDF) per cluster.
-- **Who judges the coherence — not SigLIP's text tower.** Its text and image towers are trained to
-  be aligned, so clusters from SigLIP's *image* tower score higher in SigLIP's *text* space than
-  DINOv2's do **by construction**, and the bake-off would be rigged for the incumbent. Score with a
-  text encoder independent of both candidates, or rest the decision on the distinctive terms, which
-  are neutral and which this slice already says matter more than the number.
-- **Where it still misleads** — a cluster can cohere on something irrelevant, brightness say, and
-  score well; a person has to read the terms and recognise a wrong axis. And it is **not** the
-  cross-corpus shortcut test KAN-111 needs: this clusters *within* Amateur Drawings and never
-  touches a render, so it can report whether capture mode dominates this corpus — useful — but it
-  cannot establish what a two-class model would key on. That test belongs to KAN-111.
-- **Acceptance, always** — the stage 1 strata exist, with **two** samplers over them:
-  uniform-per-stratum for training (coverage, so rare modes are learned rather than averaged away)
-  and proportional for evaluation (fidelity, because an eval set's job is to predict production).
-  A test asserts each returns the distribution it claims; conflating them biases a measurement
-  silently, which is why the split is in the acceptance rather than left to the caller. Stage 2's
-  verdict is recorded **whether it passed or fired**, since S6e needs it either way, and the
-  photographed/scanned/digital mix is reported, which answers an Open question below.
-- **Acceptance, and then one of three endings.** They are genuinely different, and an acceptance
-  that blurs them stalls a `loop-worker` run on a slice that did exactly what it was asked:
+- **Why separate** — `quickdraw` picks rows with `max_per_category: 2000`, "first N drawings". For
+  Quick, Draw! the damage is bounded to within-category order, which nobody has checked either;
+  Amateur Drawings is one undifferentiated pile of ~178,000 uploads, so "first N" inherits Meta's
+  upload order and whatever it correlates with. Both consumers need an answer — KAN-111's
+  `humanoid` class if it is accepted, and S6c2's stability sample either way.
+- **The strata** — derived from what the parquet already holds and nothing reads:
+  `original_width`/`original_height` (the size *before* Meta's 512 px resize) and their aspect
+  ratio; `bbox_width × bbox_height` against `width × height` for framing (derived — there is no
+  `bbox_area` column); segmentation `area` for figure complexity. **Not `n_keypoints`** —
+  `schemas.py` records it as "17 for every Amateur Drawings row today", so it is a constant and
+  cannot stratify anything; named here so nobody reaches for it again.
+- **Two samplers, not one** — uniform-per-stratum for **training** (coverage, so rare modes are
+  learned rather than averaged away) and proportional for **evaluation** (fidelity, because an eval
+  set's job is to predict production). Conflating them biases a measurement silently, which is why
+  the split is in the acceptance rather than left to the caller. Keyed on **strata**, so they work
+  whether or not S6b4 ever runs; if it adopts a cluster id, that becomes one more stratum and the
+  samplers take it unchanged.
+- **What the strata do *not* establish** — that a size signature really separates photographs from
+  scans from digital canvases. That is an assumption, so this slice reports a histogram of size
+  signatures rather than a claim about capture mode. S6b4 is what would validate it.
+- **Acceptance** — the strata exist, both samplers exist, and a test asserts each returns the
+  distribution it claims. A one-valued stratum column fails that test — the `n_keypoints` case made
+  executable. A proportional draw from a deliberately skewed fixture reproduces the skew while a
+  uniform draw flattens it. Every derived record carries `license` and `attribution`.
+- **Testing** — the three cases in the acceptance, plus a fixture whose strata are absent entirely,
+  which must raise rather than silently return the whole corpus.
+- **CI covers all of it** — the strata and both samplers are pandas over columns that already
+  exist, like `stratify_key` in `src/primer/data/bias.py`. No `torch`, no extra.
+- **Depends on** — KAN-24's ingest. Not S6a, S6b or S6b1: no model, no rendering.
+  **Jira** — KAN-117.
 
-| Ending | Clusters | Deliverable |
-|---|---|---|
-| Stage 2's gate fired | never computed | the verdict, as a Verified fact |
-| Stages 3–4 ran, metadata baseline held | computed, not adopted | the comparison, as a Verified fact; no sidecar published |
-| Stages 3–4 ran and beat the baseline | adopted | the cluster-id sidecar, and a Decision naming the encoder, the method and `k` |
+### S6b4 · Spike: does visual clustering beat the strata?
 
-- **Testing** — a one-valued stratum column fails the sampler test (the `n_keypoints` case); a
-  proportional draw from a deliberately skewed fixture reproduces the skew while a uniform draw
-  flattens it; a fixture with no cluster ids still satisfies the always-clauses.
-- **What this slice needs that no slice provides** — DINOv2 and a captioner are external models
-  that nothing in this plan delivers and neither is in `pyproject.toml`; stage 2 exists partly to
-  vet the captioner *before* S6e commits to one. `scikit-learn>=1.5` is already a core dependency,
-  so stage 1's strata and both samplers — the whole always-true part of the acceptance — are
-  CI-coverable with no extra, while stages 3–4 are not. S6b1 argues at length for staying
-  `numpy`-only so CI covers it; this slice cannot make that claim for its later stages and should
-  not imply it.
-- **The cluster id is a sidecar, not a schema change** — `CHARACTER_DRAWINGS` is a frozen processed
-  schema whose DVC pointer is a `gs://` path, so a new column means a re-run and a new data
-  version. Write the ids to a separate artefact keyed by `record_id`, carrying `license` and
-  `attribution` like any derived record, and feed `stratify_key` in `src/primer/data/bias.py` from
-  the join.
+*size: medium · spike, person-led*
+
+**A spike, not a slice**, and the distinction is load-bearing: its deliverable is a recorded
+verdict, not a feature, and "we tried and it did not help" closes it. Nothing downstream waits on
+it — S6b3 ships the samplers, and S6b4 can only ever add a stratum.
+
+- **The question** — do image embeddings find structure in Amateur Drawings that S6b3's size and
+  framing signatures do not? If not, S6b3 is the answer and this closes.
+- **Method** — embed and cluster with two encoders (SigLIP 2's tower, pinned and measured in S6a
+  but circular since it is the model being trained; and DINOv2, an independent view), then
+  **validate the clusters with captions**: caption centroid-nearest and boundary members
+  separately, and report caption coherence and TF-IDF distinctive terms per cluster. Structure
+  found in image space, checked in an independent modality.
+- **Caption quality first, or not at all** — `docs/briefs/drawing-recognition-model-candidates.md`
+  asks for 2–3 captioners over ~50 drawings and nobody has run it. **If captions come back
+  uniformly generic the validation is vacuous and the spike stops there**, with that verdict as its
+  result — which is what S6e needs before it commits to a captioner.
+- **How "beat" is decided** — the comparison has to be like for like: score the stratum partition
+  and each cluster partition with the **same** caption measures over **comparable samples**, which
+  roughly doubles the caption budget. Record the method as a Decision *before* running it. **A
+  comparison whose metric is chosen after seeing the numbers is not a comparison.**
+- **The judge must not be SigLIP's text tower.** Its towers are trained aligned, so SigLIP's image
+  clusters score higher in SigLIP's text space than DINOv2's do **by construction**. Use a text
+  encoder independent of both candidates, or decide on the distinctive terms, which are neutral.
+- **Why person-led** — the full sweep is 178,000 images × 2 encoders ≈ **12 hours** on this
+  machine's CPU wheel (0.12 s is S6a's measured warm `analyse` for SigLIP, **assumed** for DINOv2,
+  and counts forward passes only — not PNG decode, not reading ~48 GB), and captioning is
+  autoregressive, so its per-image cost is well above a single forward pass and has **not been
+  measured at all**. `bounded-local-training-for-agents.md` governs training and does not reach
+  this, so it is precedent rather than rule. **An agent must not start either stage.** A subsample
+  makes the sweep cheaper but cannot produce an adoptable cluster id — ids covering 7,000 of
+  178,000 rows stratify nothing — so the subsample path can only ever reach "did not beat the
+  strata".
+- **Where it misleads** — a cluster can cohere on something irrelevant, brightness say, and score
+  well, so a person reads the terms and recognises a wrong axis. And this is **not** KAN-111's
+  shortcut test, which is cross-corpus; this clusters *within* Amateur Drawings and never touches a
+  render.
+- **If it is adopted** — the cluster id is a **sidecar** keyed by `record_id`, not a column:
+  `CHARACTER_DRAWINGS` is frozen with its DVC pointer at a `gs://` path, so a new column would mean
+  a re-run and a new data version. It carries `license` and `attribution` like any derived record,
+  and S6b3's samplers take it as one more stratum.
 - **Privacy** — children's drawings. Montages stay on local scratch, never in the repository or
   logs, per AGENTS.md. **Captions need the same care**: children write their names on drawings and
-  a captioner with OCR ability may transcribe them, so scrub before recording anything.
-- **Depends on** — S6a for the SigLIP tower and KAN-24's ingest, plus the two external models
-  named above, which no slice supplies. Not S6b or S6b1: this reads source
-  images, not rendered strokes. **Jira** — KAN-117.
+  a captioner with OCR ability may transcribe them, so scrub before recording anything. TF-IDF
+  terms are shareable in a Verified fact where the images are not.
+- **Needs what nothing supplies** — DINOv2 and a captioner are external models that no slice
+  delivers, and neither is in `pyproject.toml`. Part of why this is person-led.
+- **Done when** — a dated Verified fact records the verdict, whichever it is: captions too generic
+  to validate anything; clusters computed and beaten by the strata; or clusters adopted, with a
+  Decision naming the encoder, the method, `k`, and the comparison agreed beforehand.
+- **Depends on** — S6b3 for the strata it is measured against, S6a for the SigLIP tower, KAN-24's
+  ingest, and the two external models above. **Jira** — KAN-117.
 
 ### S6b2 · Rendered QuickDraw split for the recogniser
 
@@ -409,7 +406,9 @@ often the prediction changes between variants, not whether it is right.
 - **Decide while building** — which rank statistic "how far the top-5 ranking moves" is: Kendall's
   tau, top-5 set overlap, or mean rank displacement. Record the choice and the reason as a Decision.
 - **Acceptance** — the pairwise stability figures, the margin figures, the sample size and its data
-  version are reported from one MLflow run, or in Verified facts with a note that no host exists
+  version are reported from one MLflow run — naming **which sampler drew it**, which is the only
+  thing that shows the S6b3 edge was honoured rather than quietly falling back to a random
+  draw — or in Verified facts with a note that no host exists
   yet (KAN-107). Every derived record carries `license` and `attribution` from Amateur Drawings,
   which is **CC-BY-NC-4.0** (`configs/sources.yaml`, flagged there as metadata not checked) — a
   non-commercial corpus behind a release-gate number is worth seeing without digging. A Decision
@@ -421,7 +420,8 @@ often the prediction changes between variants, not whether it is right.
   finding rather than a failure, and one KAN-111 needs. It is not accuracy either way, so it does
   not close the distance between the gate's number and the product's. That distance also spans a
   change of corpus and subject matter, which none of these variants decomposes.
-- **Depends on** — S6a, **S6b1**, and **S6b3** for the proportional sampler. Not S6c: both slices
+- **Depends on** — S6a and **S6b1**; **S6b3 softly**, for the proportional sampler — a documented
+  random draw is an acceptable fallback, so this does not park behind it. Not S6c: both slices
   write `evaluate.py`, but that is merge
   ordering rather than a dependency — the file already imports `primer.evaluation.contract` and
   derives `OWNED_METRICS` from it, so there is no contract shape for S6c to establish first. Adding
@@ -435,8 +435,7 @@ often the prediction changes between variants, not whether it is right.
 | Binarised to black on white | photography, lighting, paper texture | none |
 | Cropped to the annotated box, then binarised | framing | the dataset's `bbox_*` |
 
-**Each row differs from the one above it by exactly one *operation*** — that is the point of the
-column.** An earlier draft folded cropping and binarisation into a single row, which made its
+**Each row differs from the one above it by exactly one *operation*.** An earlier draft folded cropping and binarisation into a single row, which made its
 figure a combined effect attributable to neither — report pairs of adjacent rows, or name the
 combination explicitly when reporting a non-adjacent pair.
 
@@ -593,7 +592,8 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6a | merged | [#18](https://github.com/keithfernandes12/young-illustrators-primer/pull/18) | zero-shot SigLIP 2 baseline; no measured number until S6c |
 | S6b | merged | [#19](https://github.com/keithfernandes12/young-illustrators-primer/pull/19) | `render_strokes` + config + PNG; numpy only, so CI covers it. KAN-87 |
 | S6b1 | not started | | the shared preprocessing module, both directions. Unblocks S6b2 and S6c2. KAN-31 |
-| S6b3 | not started | | which Amateur Drawings rows anything takes; stage 3 is person-launched on the CPU wheel, and later stages may stop. KAN-117 |
+| S6b3 | not started | | ready: strata and two samplers over Amateur Drawings, pandas only, CI covers it. KAN-117 |
+| S6b4 | not started | | **spike, person-led**: needs DINOv2 and a captioner, which no slice supplies. Can only add a stratum. KAN-117 |
 | S6b2 | not started | | S6b merged; waits on S6b1 |
 | S6c | not started | | the gate's number, over rendered Quick, Draw! — not the product's. Ceiling back to 1.0 since KAN-116 merged |
 | S6c2 | not started | | preprocessing stability over Amateur Drawings; no labels needed. Needs S6a, S6b1 and S6b3's sampler. KAN-109 |
@@ -937,14 +937,21 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   it would present as an unexplained plateau just below the gate. Tracked as KAN-116.
 - **2026-11-15 — Superseded: the cap above is gone, KAN-116 is merged.** PR #26 (`cf48752`,
   2026-11-14 23:38Z) regenerated the scenarios, replacing `boat` with `sailboat` and `kite` with
-  `cloud`. Re-counted on `origin/main`: the file holds 100 scenarios, all carrying a
-  `drawing_label`, of which `golden.py` scores the **80 `kind: book`** ones — the same population
-  as the fact above. 16 distinct values across them,
+  `cloud`. Re-counted on `origin/main`: 100 scenarios carry a `drawing_label`, 16 distinct values,
   **none absent from `quickdraw_categories.txt`**, so the ceiling is 1.0 and the 0.85 gate has its
-  full headroom back. The fact above stayed in this branch for 42 minutes after #26 merged
+  full headroom back. The fact above stayed in this branch for seventeen minutes after #26 merged
   because the branch is cut from `375d0cd` and never saw it — which is the lesson worth keeping:
   **a ceiling is a property of whatever `configs/golden/scenarios.jsonl` holds that day.** S6c
   re-counts rather than quoting either number.
+- **2026-11-15 — Two corrections to the fact above, which was already on `main` and should not
+  have been edited in place.** First: "100 scenarios carry a `drawing_label`" is true but names
+  the wrong population — all 100 carry one, while `golden.py` scores only the **80 `kind: book`**
+  scenarios, which is the 80 the superseded fact above it counts. The 16 distinct values and the
+  1.0 ceiling are unchanged. Second: "seventeen minutes" is the gap to this branch's fifth
+  commit; the gap to the commit that recorded the supersession is **42 minutes**. Both were
+  rewritten in place in an earlier commit on this branch, against `documentation.md`'s
+  "append, do not rewrite, the record"; this entry restores the original and corrects it here
+  instead.
 - **2026-11-14 — kiddraw is black-stroke only, so it does not answer the colour question.**
   Measured from the repository rather than the paper: `experiments/museumstation/trial-sequence.js`
   sets `path.strokeColor = 'black'`, `strokeCap = 'round'`, `strokeWidth = 10`, and the analysis
@@ -1001,7 +1008,9 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   person while Amateur Drawings is ~178,000 drawings of human figures **whose label is free** — the
   corpus definition supplies it, so nothing needs hand-labelling. *Recommended:* add the class,
   drawing ~2,000 rows through S6b3's **uniform-per-stratum** sampler and holding the rest back as
-  the first accuracy number on real children's drawings. Three riders, all load-bearing:
+  the first accuracy measurement on real children's drawings — **single-class recall, not
+  345-way accuracy**, since every held-back row is humanoid by the corpus definition. Three
+  riders, all load-bearing:
 
   1. **Both classes must pass through S6b1's preprocessing**, or the model separates them on paper
      texture and answers `humanoid` to every upload, dragons included. Test it rather than assume
@@ -1012,7 +1021,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   2. **Single-class recall is reported beside the 345-way number**, since answering `humanoid` to
      everything scores 100%.
   3. **The licence follows the weights.** Quick, Draw! is CC-BY-4.0; Amateur Drawings is
-     **CC-BY-NC-4.0**, so training on it arguably makes the resulting weights non-commercial. The
+     **CC-BY-NC-4.0** (`configs/sources.yaml`, flagged there as metadata not checked), so training on it arguably makes the resulting weights non-commercial. The
      only rider with a legal consequence, and the only one attaching to a trained artefact rather
      than to a measurement. Fine for coursework; record it before it is discovered later.
 
