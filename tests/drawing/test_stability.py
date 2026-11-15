@@ -7,6 +7,7 @@ variant it was asked for, so every statistic can be checked by hand.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import pytest
 
@@ -111,6 +112,45 @@ def test_flips_that_are_only_near_ties_leave_the_confident_rate_below_the_overal
 def test_pair_stats_refuses_mismatched_sets():
     with pytest.raises(ValueError, match="same, non-empty"):
         pair_stats([ranked((0, 1))], [])
+
+
+def test_the_label_share_is_the_commonest_label_over_all_drawings_not_distinct_over_total():
+    """Distinct labels / drawings would be 3/6 here; the collapse detector is the share, 4/6."""
+    scores = [ranked((0, 1, 2))] * 4 + [ranked((1, 0, 2)), ranked((2, 0, 1))]
+
+    stats = variant_stats(scores)
+
+    assert stats["distinct_top1"] == 3
+    assert stats["top1_label_share"] == pytest.approx(4 / 6)
+    assert stats["top1_label_share"] != pytest.approx(stats["distinct_top1"] / len(scores))
+
+
+def test_the_confident_half_is_cut_at_the_median_margin_not_the_mean():
+    """Margins 0.1, 0.1, 0.9: the median is 0.1, so all three qualify; the mean (0.37) would keep one."""
+    before = [ranked((0, 1, 2), 0.2, 0.1), ranked((0, 1, 2), 0.2, 0.1), ranked((0, 1, 2), 1.0, 0.1)]
+    after = [ranked((1, 0, 2)), ranked((1, 0, 2)), ranked((0, 1, 2))]
+
+    stats = pair_stats(before, after)
+
+    assert stats["confident_drawings"] == 3
+    assert stats["top1_change_rate_confident"] == pytest.approx(2 / 3)
+
+
+def test_when_the_median_margin_is_zero_the_confident_subset_is_everyone_and_says_so():
+    """A saturated model: the confident rate equals the overall one by construction. The count shows it."""
+    before = [ranked((0, 1, 2), 1.0, 1.0)] * 4
+    after = [ranked((1, 0, 2))] * 2 + [ranked((0, 1, 2))] * 2
+
+    stats = pair_stats(before, after)
+
+    assert stats["confident_drawings"] == 4
+    assert stats["top1_change_rate_confident"] == stats["top1_change_rate"] == 0.5
+
+
+@pytest.mark.parametrize("bad", [float("nan"), 1.5, -0.1])
+def test_scores_that_are_not_sigmoid_outputs_are_refused_not_ranked(bad):
+    with pytest.raises(ValueError, match="0-1"):
+        scored([0.5, bad, 0.2])
 
 
 def test_variant_stats_report_confidence_margin_and_concentration():
@@ -226,61 +266,134 @@ def test_the_stability_cli_can_pin_the_device():
         parser.parse_args(["--version", "v", "--out", "o", "--device", "tpu"])
 
 
+BOX = (11, 22, 333, 444)  # four distinct values, so a swapped pair cannot hide
+LICENCE = "CC-BY-4.0 (test)"
+CREDIT = "Somebody, Some Dataset (test)"
+
+
+class CliWorld:
+    """A fake store, data read and encoder, wired into `evaluate._stability` by monkeypatch."""
+
+    def __init__(self, monkeypatch, *, uri_prefix="gs://bucket", frame_edit=None, winner=5):
+        import hashlib
+
+        import pandas as pd
+
+        from primer.data import catalog, storage
+        from primer.drawing import model
+
+        self.boxes: list[object] = []
+        self.devices: list[object] = []
+        ids = evaluate.load_sample()
+        self.frame = pd.DataFrame(
+            {
+                "record_id": ids,
+                "image_uri": [f"{uri_prefix}/images/{i}.png" for i in ids],
+                "image_sha256": hashlib.sha256(b"png").hexdigest(),
+                "bbox_x": BOX[0],
+                "bbox_y": BOX[1],
+                "bbox_width": BOX[2],
+                "bbox_height": BOX[3],
+                "license": LICENCE,
+                "attribution": CREDIT,
+            }
+        )
+        if frame_edit:
+            self.frame = frame_edit(self.frame)
+        world = self
+
+        class FakeStore:
+            uri = "gs://bucket"
+
+            def read_bytes(self, relative):
+                return b"png"
+
+        class FakeEncoder:
+            def __init__(self, config, device=None):
+                world.devices.append(device)
+                self.device = device or "auto-picked"
+                self.dtype_name = "bfloat16" if device == "cuda" else "float32"
+
+            def encode(self, image, prompts, *, prepare=None, box=None):
+                world.boxes.append(box)
+                size = len(prompts)
+                scores = [0.1] * size
+                scores[winner] = 0.9  # a winner that is not label 0
+                return SimpleNamespace(confidences=scores)
+
+        monkeypatch.setattr(catalog, "read_dataset", lambda *args, **kwargs: self.frame)
+        monkeypatch.setattr(storage, "Store", FakeStore)
+        monkeypatch.setattr(model, "SiglipEncoder", FakeEncoder)
+
+
+def run_cli(tmp_path, *extra):
+    out = tmp_path / "stability.json"
+    code = evaluate.main(["stability", "--version", "v1.1", "--out", str(out), *extra])
+    return code, out
+
+
 @pytest.mark.parametrize("device", ["cpu", "cuda", None])
 def test_the_stability_cli_passes_the_device_on_and_records_what_ran(monkeypatch, tmp_path, device):
-    """End to end on fakes: the store, the data read and the encoder are stand-ins."""
     import json
-    from types import SimpleNamespace
 
-    import pandas as pd
+    world = CliWorld(monkeypatch)
 
-    from primer.data import catalog, storage
-    from primer.drawing import model
-
-    ids = evaluate.load_sample()
-    frame = pd.DataFrame(
-        {
-            "record_id": ids,
-            "image_uri": [f"gs://bucket/images/{i}.png" for i in ids],
-            "bbox_x": 0,
-            "bbox_y": 0,
-            "bbox_width": 10,
-            "bbox_height": 10,
-            "license": "CC-BY-4.0",
-            "attribution": "someone",
-        }
-    )
-    seen: dict[str, object] = {}
-
-    class FakeStore:
-        uri = "gs://bucket"
-
-        def read_bytes(self, relative):
-            return b"png"
-
-    class FakeEncoder:
-        def __init__(self, config, device=None):
-            seen["device"] = device
-            self.device = device or "auto-picked"
-            self.dtype_name = "bfloat16" if device == "cuda" else "float32"
-
-        def encode(self, image, prompts, *, prepare=None, box=None):
-            return SimpleNamespace(confidences=[(i * 37 % len(prompts)) / len(prompts) for i in range(len(prompts))])
-
-    monkeypatch.setattr(catalog, "read_dataset", lambda *args, **kwargs: frame)
-    monkeypatch.setattr(storage, "Store", FakeStore)
-    monkeypatch.setattr(model, "SiglipEncoder", FakeEncoder)
-    out = tmp_path / "stability.json"
-    argv = ["stability", "--version", "v1.1", "--out", str(out)] + (["--device", device] if device else [])
-
-    assert evaluate.main(argv) == 0
+    code, out = run_cli(tmp_path, *(["--device", device] if device else []))
 
     result = json.loads(out.read_text(encoding="utf-8"))
-    assert seen["device"] == device, "the chosen device reaches the encoder"
+    assert code == 0 and world.devices == [device], "the chosen device reaches the encoder"
     assert result["device"] == (device or "auto-picked")
     assert result["dtype"] == ("bfloat16" if device == "cuda" else "float32")
     assert result["drawings"] == 1000 and result["prompt_count"] == 345
     assert result["scoring"]["prompt_template"] and result["preprocessing"]["binarised"]["binarise"] is True
+
+
+def test_the_stability_cli_carries_the_box_the_licence_and_the_label_through(monkeypatch, tmp_path):
+    import json
+
+    from primer.drawing.model import DrawingConfig
+
+    world = CliWorld(monkeypatch, winner=5)
+
+    _, out = run_cli(tmp_path)
+
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert world.boxes[:4] == [None, None, None, BOX], "(x, y, width, height), and only the last variant crops"
+    assert result["license"] == [LICENCE] and result["attribution"] == [CREDIT]
+    labels = DrawingConfig.from_yaml().labels()
+    assert labels[5] != labels[0]
+    assert {stats["top1_label"] for stats in result["variants"].values()} == {labels[5]}
+
+
+def test_an_image_outside_the_store_is_refused(monkeypatch, tmp_path):
+    CliWorld(monkeypatch, uri_prefix="gs://somewhere-else")
+
+    with pytest.raises(ValueError, match="is not in gs://bucket"):
+        run_cli(tmp_path)
+
+
+def test_bytes_that_are_not_the_recorded_bytes_are_refused(monkeypatch, tmp_path):
+    CliWorld(monkeypatch, frame_edit=lambda frame: frame.assign(image_sha256="0" * 64))
+
+    with pytest.raises(ValueError, match="do not match the recorded image_sha256"):
+        run_cli(tmp_path)
+
+
+def test_a_record_id_that_repeats_is_refused_rather_than_scored_twice(monkeypatch, tmp_path):
+    import pandas as pd
+
+    CliWorld(monkeypatch, frame_edit=lambda frame: pd.concat([frame, frame.iloc[:1]], ignore_index=True))
+
+    with pytest.raises(ValueError, match="matched 1001 rows"):
+        run_cli(tmp_path)
+
+
+def test_an_unusable_output_folder_is_refused_before_any_scoring(monkeypatch, tmp_path):
+    world = CliWorld(monkeypatch)
+
+    with pytest.raises(SystemExit):
+        evaluate.main(["stability", "--version", "v1.1", "--out", str(tmp_path / "missing" / "s.json")])
+    assert world.boxes == [], "nothing was scored first"
 
 
 def test_the_gate_cli_is_still_s6cs_stub():
