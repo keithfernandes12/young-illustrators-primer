@@ -571,7 +571,10 @@ the licence constraint on each.
   conditioning, so it is worth keeping independent of the gate work in S6c and S6d.
 - **Acceptance** — a multi-character drawing returns one sheet per character with every field
   populated, and `test_every_character_sheet_field_reaches_the_illustrator` passes against the
-  real recogniser rather than the Fake.
+  real recogniser rather than the Fake. (The real-recogniser version is
+  `test_every_character_sheet_field_reaches_the_illustrator_from_the_real_recogniser` in
+  `tests/drawing/test_sheet.py`; the unsuffixed name is the Fake's, in
+  `tests/models/test_area_interfaces.py`.)
 - **Not in this slice** — `reference_image_ref` and `approved`, which the stylise-and-approve step
   sets; who owns that step is still open between KAN-38 and KAN-42.
 - **Depends on** — S6a. **Jira** — KAN-38.
@@ -1278,6 +1281,19 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   drawings, not on all of them; the misses are the detector boxing two figures as one. In CI the
   acceptance runs on fake weights through `build_book`, with a stand-in for the approve step
   (KAN-64). Not in MLflow (KAN-107). Unstratified sample, as S6c2's.
+- **2026-11-15 — S6e: what review changed, and what it did not.** Sheets now come back **most
+  confident first**, which is what `DrawingAnalysis.characters` and `.main` promise and what
+  `build_book` takes as the story's subject; they had been in box-area order, so a large doubtful
+  object could have become the subject ahead of a smaller, sure one. Joints are normalised
+  against the pixel bounds the crop is actually saved at (floor of the top-left, ceil of the
+  bottom-right) rather than the raw float box, so a fractional detection no longer shifts the
+  skeleton by up to a pixel on the saved crop. A mask with no pixels falls back to the unmasked
+  box instead of whitening the child's lines; a box wholly outside the drawing is dropped; a
+  joint that is NaN or infinite is kept as not visible; and a failing model call now says which
+  step, and which character, failed. None of these changes a count above (sheets per drawing,
+  body types), but the figures were **not** re-measured with the real models afterwards.
+  `HuggingFaceSheetModels` itself — the pose box conversion, the detection pairing — runs only
+  against the real weights and is not exercised in CI; the measured figures above are its test.
 - **2026-11-15 — S6c2: what the figures above were taken under, and what review changed.** The
   figures are from the **CPU, fp32** run (S6a's baseline, as stated), before the summary recorded
   its own execution. It now records the resolved `device` and `dtype`, the prompt template,
@@ -1535,6 +1551,27 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   `.venv/Scripts/python.exe -m pip install --force-reinstall --no-deps "torch==2.14.1" --index-url https://download.pytorch.org/whl/cu130`
   followed by `pip install accelerate`. Whether to pin torch in the extra, and to which build, is
   the KAN-38 owner's decision; this plan does not change `pyproject.toml` or the requirements.
+- **Should a part-label box that escapes its figure be a character, and should containment look at
+  labels?** Found in review of #35, and left as it is because either answer moves the measured
+  counts above. Containment ignores labels, so a person drawn inside a house box (80% or more
+  within it) is folded into the house, and the house becomes the subject. And a part label whose
+  box is less than 80% inside its figure — a face half outside the person — becomes a character
+  of its own; `human face` contains `human`, so it is read as humanoid and ViTPose runs on a face
+  box. The same happens to a lone face when the person box is missed (the figure is found at
+  IoU ≥ 0.5 on 37 of the 40 drawings).
+  *Recommended:* a list of part words (face, head, hand, shoe, ...) dropped before grouping, never
+  scored or posed, and a label-aware fold, measured on the 40 drawings and 20 composites before it
+  ships, since both can only lower the sheet counts. *Decides:* the KAN-38 owner.
+- **When is a SAM mask too small to use?** Only an empty mask falls back to the unmasked box now.
+  A mask covering a sliver of its box still whitens the rest, and SAM covers 31% of the box
+  against the annotation's 40%, so a threshold needs the distribution of mask share over the 82
+  sheets, which has not been taken. *Recommended:* measure it, then add `min_mask_share` to
+  `drawing_sheet.yaml`.
+- **The default artifact store is a process-lifetime dictionary.** `MemoryArtifactStore` never
+  evicts a child's crops and masks, a `mem://` ref cannot be read by another process (KAN-42's
+  worker), and a content-hash name means two children's identical crops would share one object
+  once the GCS store exists, which complicates deleting one child's data. *Recommended:* serving
+  passes a store explicitly and the GCS one decides its naming against the deletion path (KAN-64).
 
 ## Out of scope
 

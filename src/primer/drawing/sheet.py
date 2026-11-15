@@ -4,7 +4,8 @@
 
 - ``description`` -- Florence-2's caption of the whole drawing, for the story writer.
 - one ``Character`` per character Florence-2 detects (parts of a figure folded into the figure,
-  see ``characters_in``), each with:
+  see ``characters_in``), **most confident first** -- the order ``DrawingAnalysis.characters`` and
+  ``.main`` promise, and ``main`` is the story's subject -- each with:
 
   - ``label`` / ``candidates`` / ``embedding`` from the SigLIP 2 recogniser, scored on that
     character's box through ``prepare_drawing`` -- the one preprocessing path;
@@ -33,6 +34,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import math
 import re
 import threading
 from collections.abc import Callable, Sequence
@@ -171,6 +173,9 @@ def characters_in(
 ) -> list[tuple[str | None, Box]]:
     """The detections that are characters, largest first; the whole drawing if there are none.
 
+    Largest first is the order grouping needs (a part is folded into the larger box that holds it);
+    ``analyse`` puts the finished sheets in confidence order.
+
     A box lying ``containment`` or more inside a larger kept box is a part of that character -- a
     face, a shoe -- not a second one; boxes under ``min_area`` of the drawing are specks. With no
     box left, the whole drawing is one character whose label is ``None`` (body type unknown):
@@ -182,7 +187,9 @@ def characters_in(
         (label, (max(0.0, b[0]), max(0.0, b[1]), min(float(width), b[2]), min(float(height), b[3])))
         for label, b in detections
     ]
-    big = [(label, b) for label, b in clipped if _area(b) >= config.min_area * width * height]
+    # `_area(b) > 0` as well as the share: a box wholly outside the drawing clips to a reversed
+    # rectangle of zero area, which `min_area = 0` would otherwise keep and crash on later.
+    big = [(label, b) for label, b in clipped if _area(b) > 0 and _area(b) >= config.min_area * width * height]
     kept: list[tuple[str | None, Box]] = []
     for label, box in sorted(big, key=lambda item: _area(item[1]), reverse=True):
         if all(_inside(box, outer) < config.containment for _, outer in kept):
@@ -203,28 +210,44 @@ def body_type_of(label: str | None, config: SheetConfig | None = None) -> BodyTy
     return BodyType.OBJECT
 
 
+def crop_bounds(box: Box) -> tuple[int, int, int, int]:
+    """The whole-pixel rectangle ``box`` is cut out at: top-left rounded down, bottom-right up.
+
+    One definition for the saved crop (``cutouts``) and for what keypoints are normalised against,
+    so a joint lands on the same pixel of the crop that a consumer reconstructs the skeleton on.
+    """
+    return math.floor(box[0]), math.floor(box[1]), math.ceil(box[2]), math.ceil(box[3])
+
+
 def keypoints_in(
     points: Sequence[tuple[float, float, float]], box: Box, threshold: float
 ) -> tuple[Keypoint, ...]:
     """ViTPose's 17 joints, as ``Keypoint``s normalised to the crop and clipped to 0..1.
 
-    Positional: index 3 is the same joint on every character (``interface.Keypoint``). A joint
-    below ``threshold`` is kept with ``visible`` False, never dropped.
+    Normalised against ``crop_bounds(box)`` -- the saved crop -- not the raw float box, which differs
+    by up to a pixel on each side for a fractional detection. Positional: index 3 is the same joint
+    on every character (``interface.Keypoint``). A joint below ``threshold`` is kept with
+    ``visible`` False, never dropped, and so is one whose coordinates or score are not finite (a
+    NaN would otherwise clip to the crop's corner and be reported as a seen joint).
     """
     if len(points) != len(KEYPOINT_NAMES):
         raise ValueError(f"expected {len(KEYPOINT_NAMES)} COCO joints, got {len(points)}")
-    width, height = box[2] - box[0], box[3] - box[1]
-    if width <= 0 or height <= 0:
+    if box[2] - box[0] <= 0 or box[3] - box[1] <= 0:
         raise ValueError(f"box {box} has no area")
-    return tuple(
-        Keypoint(
+    x0, y0, x1, y1 = crop_bounds(box)
+    width, height = x1 - x0, y1 - y0
+
+    def joint(name: str, x: float, y: float, score: float) -> Keypoint:
+        if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(score)):
+            return Keypoint(name=name, x=0.0, y=0.0, visible=False)
+        return Keypoint(
             name=name,
-            x=float(min(1.0, max(0.0, (x - box[0]) / width))),
-            y=float(min(1.0, max(0.0, (y - box[1]) / height))),
+            x=float(min(1.0, max(0.0, (x - x0) / width))),
+            y=float(min(1.0, max(0.0, (y - y0) / height))),
             visible=bool(score >= threshold),
         )
-        for name, (x, y, score) in zip(KEYPOINT_NAMES, points, strict=True)
-    )
+
+    return tuple(joint(name, x, y, score) for name, (x, y, score) in zip(KEYPOINT_NAMES, points, strict=True))
 
 
 def cutouts(image: RGB, mask: Mask, box: Box) -> tuple[RGB, Mask]:
@@ -234,14 +257,19 @@ def cutouts(image: RGB, mask: Mask, box: Box) -> tuple[RGB, Mask]:
     ``prepare_drawing`` -- but the child's own lines kept for KAN-42 and the parent's
     confirmation screen. Outside the mask is set to white paper, not transparency, so the crop
     reads the same everywhere it is shown.
+
+    A mask with no pixels in it -- SAM found nothing in the box -- is not a cut-out: whitening
+    everything outside it would erase the child's lines. The unmasked box is returned instead, with
+    a mask that covers the whole box (the honest "no cut-out was made").
     """
     if mask.shape != image.shape[:2]:
         raise ValueError(f"mask {mask.shape} does not match the drawing {image.shape[:2]}")
-    x0, y0 = int(np.floor(box[0])), int(np.floor(box[1]))
-    x1, y1 = int(np.ceil(box[2])), int(np.ceil(box[3]))
+    x0, y0, x1, y1 = crop_bounds(box)
     region, inside = image[y0:y1, x0:x1].copy(), mask[y0:y1, x0:x1]
     if region.size == 0:
         raise ValueError(f"box {box} is outside the drawing")
+    if not inside.any():
+        return region, np.ones_like(inside)
     region[~inside] = 255
     return region, inside
 
@@ -266,6 +294,20 @@ def decode(image: bytes, background: int) -> RGB:
 
 
 # ------------------------------------------------------------------------------- the recogniser
+
+
+def _step(name: str, call: Callable[[], Any], character: int | None = None) -> Any:
+    """Run one model call, naming the step (and the character) if it fails.
+
+    A malformed model output otherwise surfaces as a bare ``zip() argument 2 is shorter`` with no
+    hint which of four models, or which character, produced it. The message carries the step and
+    the position of the character, never its pixels or any field of the sheet.
+    """
+    try:
+        return call()
+    except Exception as error:
+        where = "" if character is None else f"character {character}: "
+        raise RuntimeError(f"{where}{name} failed: {error}") from error
 
 
 class CharacterSheetRecognizer:
@@ -293,17 +335,27 @@ class CharacterSheetRecognizer:
             raise ValueError("analyse needs the drawing's bytes; got none")
         pixels = self._decode(image)
         height, width = pixels.shape[:2]
-        found = characters_in(self.models.detect(pixels), (width, height), self.config)
-        characters = tuple(self._sheet(image, pixels, label, box) for label, box in found)
-        return DrawingAnalysis(description=self.models.caption(pixels).strip(), characters=characters)
+        detections = _step("detect", lambda: self.models.detect(pixels))
+        found = characters_in(detections, (width, height), self.config)
+        sheets = [self._sheet(index, image, pixels, label, box) for index, (label, box) in enumerate(found)]
+        # Most confident first, as `DrawingAnalysis.characters` and `.main` promise and `build_book`
+        # relies on: detection order is by box area, and a large low-confidence background object
+        # must not become the story's subject ahead of a smaller, confidently recognised character.
+        # The sort is stable, so equal confidences keep their largest-first order.
+        characters = tuple(sorted(sheets, key=lambda character: character.confidence, reverse=True))
+        description = _step("caption", lambda: self.models.caption(pixels))
+        return DrawingAnalysis(description=description.strip(), characters=characters)
 
-    def _sheet(self, image: bytes, pixels: RGB, label: str | None, box: Box) -> Character:
+    def _sheet(self, index: int, image: bytes, pixels: RGB, label: str | None, box: Box) -> Character:
         x0, y0, x1, y1 = box
-        ranked = self.recognizer.character(image, box=(x0, y0, x1 - x0, y1 - y0))
+        ranked = _step("score", lambda: self.recognizer.character(image, box=(x0, y0, x1 - x0, y1 - y0)), index)
         body_type = body_type_of(label, self.config)
-        crop, inside = cutouts(pixels, self.models.segment(pixels, box), box)
+        mask = _step("segment", lambda: self.models.segment(pixels, box), index)
+        crop, inside = cutouts(pixels, mask, box)
         keypoints = (
-            keypoints_in(self.models.pose(pixels, box), box, self.config.keypoint_threshold)
+            keypoints_in(
+                _step("pose", lambda: self.models.pose(pixels, box), index), box, self.config.keypoint_threshold
+            )
             if body_type is BodyType.HUMANOID
             else ()
         )
