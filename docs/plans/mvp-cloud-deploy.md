@@ -696,7 +696,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6b4 | not started | | **spike, person-only**: waits on S6b3, S6a and KAN-24, plus DINOv2 and a captioner that no slice supplies. Can only add a stratum. KAN-117 |
 | S6b2 | not started | | S6b merged; waits on S6b1 |
 | S6c | not started | | the gate's number, over rendered Quick, Draw! — not the product's. Ceiling back to 1.0 since KAN-116 merged |
-| S6c2 | not started | | preprocessing stability over Amateur Drawings; no labels needed. Needs S6a and S6b1; S6b3's sampler softly, random draw is a stated fallback. KAN-109 |
+| S6c2 | in review | [#33](https://github.com/keithfernandes12/young-illustrators-primer/pull/33) | 1,000 frozen drawings (unstratified), four variants: top-1 moves 25% / 50% / 41% between adjacent variants; over half the drawings come out `squiggle`. Reproduces exactly. KAN-109 |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); still waits on S6b2 (#32) and S6c. Reads S6c2's stability figures |
 | S6e | not started | | unblocks KAN-42's reposing and IP-Adapter branches |
 | S7a | in progress | branch `feat/KAN-42-controlnet-baseline` | pretrained SD 1.5 + ControlNet-Scribble, one page, local output; synthetic inputs only until KAN-94 |
@@ -1196,6 +1196,81 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   nor to explain a processor without a fixed square, and `import torchvision` followed by
   `torchvision.transforms.…` slipping past the guard — each now closed with a mutation-checked
   test.
+- **2026-11-15 — S6c2: the sample.** 1,000 Amateur Drawings record ids, frozen in
+  `src/primer/drawing/configs/stability_sample.txt`, drawn once from `v1.1`'s
+  `character_drawings` (174,981 rows) as `default_rng(20261115).choice(sorted(record_id), 1000)`.
+  **Unstratified** — a uniform random draw, the plan's stated fallback, because S6b3's
+  proportional sampler is in #29 and not on `main`. It matches the corpus where checked: 1.6%
+  square and 89.8% portrait against the corpus's 1.35% and 88.17%; all 1,000 CC-BY-NC-4.0. The
+  same file in `v1` holds **174,983** rows against `v1.1`'s 174,981 — the two versions pin
+  different generations of one path — so the sample names its version and S6d must read `v1.1`.
+- **2026-11-15 — S6c2: preprocessing moves the baseline's answer on most children's drawings.**
+  S6a's zero-shot baseline on CPU, 4,000 forward passes in 802 s, `v1.1`, the sample above.
+  *Hypothesis:* on a corpus the vocabulary cannot name, preprocessing would flip top-1 often, but
+  mostly where the margin is thin. *Result:* both halves, and the second less than expected.
+
+  | Adjacent pair | top-1 changes | ... where the margin was above median | top-5 overlap |
+  |---|---|---|---|
+  | as published → greyscale | **25.5%** | 10.0% | 0.765 |
+  | greyscale → binarised | **49.9%** | 35.8% | 0.393 |
+  | binarised → cropped to the box | **41.3%** | 24.6% | 0.561 |
+
+  | Variant | top-1 confidence median | top-1/top-2 margin median | distinct top-1 labels | most common top-1 share |
+  |---|---|---|---|---|
+  | as published | 0.103 | 0.051 | 108 | 53.3% |
+  | greyscale | 0.081 | 0.037 | 110 | 50.8% |
+  | binarised | 0.085 | 0.039 | 127 | 51.5% |
+  | cropped, binarised | 0.093 | 0.044 | 123 | 54.6% |
+
+  Colour alone moves one drawing in four, and one in ten even where the model had a preference.
+  Binarising is the largest single move: half of all answers change and **only 39% of the top
+  five survives** — so the local threshold (S6b1) changes what the model sees far more than
+  colour does, and the binarised row is a different input, not a cleaned-up one. Cropping to the
+  annotated box moves 41% again; that row is an upper bound the product cannot reach (no box at
+  upload). Margins are thin everywhere (median 0.04–0.05 on sigmoid scores, against 0.098 between
+  `house` and `barn` on S6a's smoke drawing), which is the "forced near-miss" the plan predicted —
+  yet the above-median half still flips 10–36%, so the movement is not only tie-breaking.
+  **Over half of all drawings get one label under every variant, and it is `squiggle`**
+  (`top1_label_share` 0.51–0.55): asked to name a child's drawing of a person from a vocabulary
+  with no person in it, the baseline reaches for the category that means "a scribble". That is
+  KAN-111's gap made concrete, and a reason for that ticket rather than for this slice to act on.
+  It also means the baseline is already concentrated before any fine-tune — the collapse
+  signature S6d is told to watch for — so S6d must read its stability against this, not against
+  zero, and a fine-tune that moves drawings *off* `squiggle` may show as *less* stable while
+  being better. *Second hypothesis:* the measurement reproduces. *Result:* a full re-run gave
+  every figure above **identically** (779 s), so S6d's comparison is against fixed numbers. **Not accuracy**, and nothing here says which variant is right. Not in MLflow:
+  there is no host (KAN-107); the summary JSON's fields are what an MLflow run would log.
+- **2026-11-15 — S6c2: the decision the plan asked for, and the one it did not.** The rank
+  statistic is **top-5 set overlap** (`evaluate.py` docstring has why). Whether the 0.85 gate
+  keeps reading the rendered Quick, Draw! number is **not decided here** — it is the KAN-38
+  owner's, and the plan's acceptance asked for a recorded decision this slice is not entitled to
+  make. What these numbers add to that decision: the gate's number is taken on drawings a
+  classifier already recognised (S6b2), while on children's drawings the same model's answer
+  moves 25–50% under preprocessing alone.
+- **2026-11-15 — S6c2: what the figures above were taken under, and what review changed.** The
+  figures are from the **CPU, fp32** run (S6a's baseline, as stated), before the summary recorded
+  its own execution. It now records the resolved `device` and `dtype`, the prompt template,
+  count and a hash of the prompt text, every scoring setting, and each variant's preprocessing
+  settings, and `stability --device cpu` pins the CPU baseline on a machine with a GPU, whose
+  bf16 moves confidences about 20% (Verified fact on the CUDA torch). Review also fixed three
+  things that do not move the table: top-5 overlap is divided by the labels there are when fewer
+  than five (this vocabulary has 345, so the table is unchanged), a per-call `prepare` whose
+  `render.size` differs from the checkpoint's resolution is now refused rather than resampled
+  twice, and the `top1_change_rate_confident` docstring said the opposite of what it measures:
+  flips that were only near-ties would pile up below the median margin and leave this rate near
+  zero, and a rate close to the overall one would say the flips are spread evenly. In all three
+  pairs it sits below the overall rate (10.0% against 25.5%, 35.8% against 49.9%, 24.6% against
+  41.3%) but far above zero: some flips are near-ties, and confident answers moved too. The
+  figures were **not** re-measured after these changes; none of them touches a number in the
+  tables. A second review round added guards that cost nothing on the real data: each image's
+  bytes must match its recorded `image_sha256` (checked on five sample drawings against the
+  bucket: all match; `record_id` is unique across `v1.1`'s 174,981 rows, so the 1,000 ids match
+  1,000 rows), scores must be sigmoid outputs in 0-1, `--out`'s folder must exist before the
+  13-minute run starts, and each pair's summary carries `confident_drawings`, the size of the
+  above-median subset, which is half the sample unless the median margin is 0 (a saturated or
+  collapsed model, S6d's case to watch). Left for later, not done here: a `--data-uri` flag like
+  `primer.data.cli` has, and the share of drawings whose top-1/top-2 margin is exactly 0, which
+  would make a bf16 GPU run comparable with this CPU baseline.
 - **2026-11-15 — Local GPU work runs: `.venv`'s torch is now a CUDA build.** *Supersedes* the
   2026-11-15 fact "The GPU is present; the installed `torch` cannot see it" and the CPU-only notes
   in earlier facts, which stay as the record of what was true then. `torch` went from
