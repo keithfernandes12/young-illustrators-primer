@@ -132,8 +132,15 @@ def bin_column(
     every row. Store them with the strata and pass them back rather than recomputing.
 
     Pass ``edges`` from an earlier call to re-use that binning instead of deriving new
-    quantiles -- which is the point of returning them, and what makes a draw reproducible
-    against a corpus that has since gained or lost rows.
+    quantiles, which is the point of returning them: quantiles are a property of the corpus,
+    so re-deriving them against a corpus that has gained or lost rows silently re-bins every
+    row.
+
+    This reproduces the **bins**, not the **strata**. :func:`_pool` still derives
+    pooling from whatever sizes the new frame has, so a smaller corpus can put a row in a
+    different stratum even with identical edges -- measured at 2.7% of rows on a 50,000-row
+    subset of the real corpus. Reproducing strata as well would mean shipping the pooling map
+    alongside the edges.
 
     A concentrated column can have fewer distinct quantile edges than ``bins`` -- ``pd.qcut`` would
     raise on the duplicates -- so duplicate edges are dropped and the column simply gets fewer bins.
@@ -170,13 +177,19 @@ def _pool(keys: pd.Series, min_size: int) -> pd.Series:
     """Strata under ``min_size`` folded into the nearest stratum that is already big enough.
 
     "Nearest" is how many bin labels two keys share, which is the natural distance over a key built
-    by concatenation. Ties go to the larger target -- which value_counts ordering already
-    gives, so that tier is defensive rather than load-bearing and no test can reach it -- then
-    by a stable ordering of the key
-    itself, so the result never depends on dict ordering. (That last tier compares
-    character by character, so a longer key beats a prefix of itself -- irrelevant here,
-    where every key has the same shape, but it is not plain lexicographic order.) If no stratum reaches ``min_size`` the whole frame
-    becomes one stratum, the same terminal fallback ``split_strata`` uses.
+    by concatenation. Ties go to the larger target, then by a stable ordering of the key
+    itself, so the result never depends on the order rows arrive in.
+
+    **Both tiers matter.** An earlier revision called the size tier unreachable, reasoning
+    that ``value_counts`` already orders its result -- that is wrong, because the character
+    tier breaks the tie before ``max`` ever falls back to input order. Drop the size tier and
+    small rows pool into the alphabetically earlier stratum rather than the larger one, which
+    a test catches. (That last tier compares character by character, so a longer key beats a
+    prefix of itself -- irrelevant here, where every key has the same shape, but it is not
+    plain lexicographic order.)
+
+    If no stratum reaches ``min_size`` the whole frame becomes one stratum, the same terminal
+    fallback ``split_strata`` uses.
     """
     sizes = keys.value_counts()
     big = sizes[sizes >= min_size]
@@ -212,6 +225,14 @@ def build_strata(
     inputs = stratum_inputs(drawings)
     labelled: dict[str, pd.Series] = {}
     out_edges: dict[str, list[float]] = {}
+    if edges is not None:
+        absent = [c for c in inputs.columns if c not in edges]
+        if absent:
+            raise KeyError(
+                f"edges is missing {', '.join(absent)}; supply every input's edges or none,"
+                " since a mix would bin some columns against this corpus and some against"
+                " another"
+            )
     for name in inputs.columns:
         labelled[name], out_edges[name] = bin_column(
             inputs[name], bins, None if edges is None else edges[name]
@@ -228,9 +249,11 @@ def occupancy(strata: pd.Series) -> pd.DataFrame:
     drawing was captured.
 
     Strata labelled NaN are counted, so the shares always sum to 1. :func:`build_strata` never
-    emits one, but a caller-supplied series can.
+    emits one, but a caller-supplied series can. Categories no row uses are left out -- a
+    categorical declares them, and this table is where the stratum *count* is read from.
     """
     counts = strata.value_counts(dropna=False)
+    counts = counts[counts > 0]
     return pd.DataFrame({"rows": counts, "share": counts / len(strata)})
 
 
@@ -251,7 +274,10 @@ def _draw(
     wanted: Mapping[str, int],
     seed: int,
 ) -> pd.DataFrame:
-    """``wanted[stratum]`` rows from each stratum, seeded, returned in index order."""
+    """``wanted[stratum]`` rows from each stratum, seeded, returned in index order.
+
+    Index order rather than stratum order so two draws that select the same rows compare
+    equal regardless of how the strata were enumerated."""
     require_unique_index(drawings)
     groups = strata.groupby(strata, observed=True).groups
     picked = []
@@ -309,6 +335,13 @@ def _even_split(n: int, sizes: Mapping[str, int]) -> dict[str, int]:
     Strata that cannot meet their share are taken whole and their shortfall is redistributed over
     the strata that can, repeating until nothing more can be moved. Without this a single small
     stratum would silently shrink the whole sample.
+
+    When fewer rows remain than there are strata, the last few go to the **largest** of the
+    open strata. That is at most one row each and it is pinned by a test, but note it cuts
+    slightly against this sampler's purpose: handing the remainder to the smallest open
+    strata would flatten marginally harder. Deliberate only in the sense that it is now
+    recorded -- worth revisiting if the sample is small enough for a handful of rows to
+    matter.
     """
     wanted = {k: 0 for k in sizes}
     remaining, open_keys = n, [k for k, size in sizes.items() if size > 0]

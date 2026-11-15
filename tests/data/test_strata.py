@@ -77,9 +77,9 @@ def test_build_strata_returns_labels_and_the_edges_that_produced_them():
 
 
 def test_building_strata_twice_on_one_frame_gives_the_same_edges():
-    """Determinism, which is all this can show. The edges are returned so a later draw
-    *could* re-use them, but no function accepts them yet, so reproducing a draw across
-    data versions is not achievable through this API today."""
+    """Determinism on one frame. `build_strata(..., edges=...)` re-uses them across frames,
+    covered separately -- and note that reproduces the bins, not the strata, because pooling
+    is re-derived from whatever sizes the new frame has."""
     frame = spread()
     _, first = build_strata(frame, min_size=1)
     _, again = build_strata(frame, min_size=1)
@@ -585,3 +585,78 @@ def test_the_default_min_stratum_is_pinned():
     """It equals `bias.SMALL_SLICE` today but is a separate decision; nothing should move it
     without this failing."""
     assert MIN_STRATUM == 100
+
+
+# --- round 3: the contracts the third commit added but did not hold ---------------------------
+
+
+def test_occupancy_counts_nan_strata_so_the_shares_still_sum_to_one():
+    """`value_counts()` drops NaN while the denominator is `len(strata)`, which would make the
+    table silently omit rows and the shares sum to less than 1."""
+    strata = pd.Series(["a"] * 5 + ["b"] * 3 + [None] * 2)
+
+    table = occupancy(strata)
+
+    assert table["rows"].sum() == 10
+    assert table["share"].sum() == pytest.approx(1.0)
+
+
+def test_occupancy_leaves_out_categories_no_row_uses():
+    """The stratum count is read from this table, so a declared-but-unused category would
+    inflate it."""
+    strata = pd.Series(pd.Categorical(["a"] * 5 + ["b"] * 5, categories=["a", "b", "c"]))
+
+    assert len(occupancy(strata)) == 2
+
+
+def test_pooling_is_stable_whatever_order_the_rows_arrive_in():
+    """Two equally sized targets with equal label overlap: without the character tier the answer
+    depends on which one `max` happens to see first."""
+    small = ["x=0 / y=1"] * 4
+    one = pd.Series(["x=0 / y=0"] * 150 + ["x=1 / y=1"] * 150 + small)
+    other = pd.Series(["x=1 / y=1"] * 150 + ["x=0 / y=0"] * 150 + small)
+
+    first = _pool(one, min_size=150)
+    second = _pool(other, min_size=150)
+
+    assert set(first[one == "x=0 / y=1"]) == set(second[other == "x=0 / y=1"]) == {"x=0 / y=0"}
+
+
+def test_a_draw_comes_back_in_index_order():
+    """Two draws that select the same rows must compare equal regardless of stratum enumeration."""
+    frame = spread(400)
+    strata, _ = build_strata(frame, min_size=1)
+
+    drawn = sample_uniform(frame, strata, 40, seed=0)
+
+    assert drawn.index.tolist() == sorted(drawn.index.tolist())
+
+
+def test_the_uniform_remainder_goes_to_the_largest_open_strata():
+    """Pins the direction, which the docstring now records: one row left over goes to the
+    larger stratum, not the smaller."""
+    frame = drawings([(3024, 4032)] * 105)
+    strata = pd.Series(["big"] * 100 + ["small"] * 5, index=frame.index)
+
+    drawn = sample_uniform(frame, strata, 1, seed=0)
+
+    assert strata.loc[drawn.index].tolist() == ["big"]
+
+
+def test_partial_edges_name_the_input_they_are_missing():
+    frame = spread(400)
+    _, edges = build_strata(frame, min_size=1)
+    del edges["aspect"]
+
+    with pytest.raises(KeyError, match="supply every input's edges or none"):
+        build_strata(frame, min_size=1, edges=edges)
+
+
+def test_min_stratum_still_matches_the_reporting_floor_it_was_taken_from():
+    """Not a coupling -- `MIN_STRATUM` is deliberately its own constant. This fails if
+    `bias.SMALL_SLICE` moves, so the choice to follow it or not is made on purpose."""
+    from primer.data.bias import SMALL_SLICE
+
+    assert MIN_STRATUM == SMALL_SLICE, (
+        "bias.SMALL_SLICE has changed; decide whether pooling should follow it"
+    )

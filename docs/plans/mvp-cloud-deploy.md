@@ -1061,8 +1061,9 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 
 - **2026-11-15 — The stratum-occupancy distribution, which acceptance clause 5 asks for.**
   Over the 87 pooled strata: smallest **106** rows, median **884**, largest **10,991**. Deciles of
-  stratum size are 106 / 183 / 354 / 884 / 2,509 / 5,545 / 10,991 at the 0th, 10th, 25th, 50th,
-  75th, 90th and 100th percentiles. Half the corpus sits in the largest **12** strata, 80% in the
+  stratum size are 106 / 183.6 / 354 / 884 / 2,509.5 / 5,545.4 / 10,991 at the 0th, 10th,
+  25th, 50th, 75th, 90th and 100th percentiles — interpolated, so only the 0th, 25th, 50th
+  and 100th are sizes an actual stratum has. Half the corpus sits in the largest **12** strata, 80% in the
   largest 31, 90% in the largest 46. So the distribution has a long thin tail rather than a few
   dominant modes, which is why the uniform and proportional samplers diverge as much as they do —
   the uniform draw gives the 46 smallest strata the same weight as the 12 that hold half the rows.
