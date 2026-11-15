@@ -804,7 +804,7 @@ TinyStories ratio (3:1, 10:1, 30:1, all drawn from the step-2 pool) and the LoRA
 | Slice | State | PR | Notes |
 |---|---|---|---|
 | S0 | merged | [#28](https://github.com/keithfernandes12/young-illustrators-primer/pull/28) | this plan; level decided by Keith (option B, with conditions); other four defaults revisable in review; Keith's review fixes; all in Decisions |
-| M1 | in review | [#36](https://github.com/keithfernandes12/young-illustrators-primer/pull/36) | small pretrained models on the Mac, ages 3–5; built and measured. Reduced grid (4 configurations × 20 requests) ran 2026-11-15: **nothing selected**, best inclusion 0.36 against 0.95 (Verified facts) |
+| M1 | in review | [#36](https://github.com/keithfernandes12/young-illustrators-primer/pull/36) | small pretrained models on the Mac, ages 3–5; built and measured. Reduced grid (4 configurations × 20 requests) re-run 2026-11-15 on the post-fix requests: **nothing selected**, best inclusion 0.20 against 0.95 (Verified facts) |
 | S1 | not started | | KAN-92's scope, built by Diya on KAN-39; M1 delivers the types and the 3–5 preset |
 | S2 | not started | | KAN-127. Expect the 0–1 level floor to fail (3.8% of val books, Verified facts). pure-hash split, one pair per book, cross-source dedupe, shared `fk_grade` (review F1–F5); helper moves to `src/primer/data` with KAN-120 |
 | S2b | not started | | runs on the hash-sampled pool, not 1.8M rows |
@@ -1110,6 +1110,43 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
   - `9f11f0a` → `9c182ca` (the SQLite store; the commit reviewed in the first self-review);
   - `813c6c2` → `bac7bca` (the self-review fixes; `selection@1` is frozen here);
   - `323de91` → `7ddc022` (the reduced grid; the grid's runs carry `git_sha=323de91`).
+- **2026-11-15** — **The grid result above is superseded: it was computed on pre-fix requests.**
+  PR #36 review F2 (the Learn to Read vocabulary) and the hard filter changed the target words of
+  15 of the 20 graded requests. Those requests are kept as a record:
+  `.local-data/story/validation_requests.prefix.jsonl`, sha256 `10b0c4baa94dc5f4…`. Their 4 MLflow
+  runs (`git_sha=323de91`, no `requests_sha256` tag) are kept too.
+- **2026-11-15** — **Re-run on the post-fix requests: nothing selected again, and lower than before.**
+  - Commit `f07d2a8`, 17:28:36–17:41:44 on Diya's MacBook Air, 4 configurations × the first 20
+    requests (sha256 `23c55df0c3d2268d…`; every target word from Dolch pre-primer–grade 1 or Fry
+    1–300), exit code 2.
+  - The summary run is `69d093b6915745ea82c2a9785faa7c97`.
+
+  | Configuration (run id) | success | target-word inclusion | first-try valid JSON | page limit | sentence limit | FK mean | raw safety flags | mean attempts | p95 s |
+  |---|---|---|---|---|---|---|---|---|---|
+  | 0.5B, t 0.3 (`f8ba2728…`) | 0.05 | 0.04 | 0.70 | 0.00 | 0.00 | 2.5 | 0.0 | 2.90 | 6.1 |
+  | **0.5B, t 0.7 — baseline** (`312123fc…`) | 0.10 | 0.08 | 0.60 | 0.00 | 0.00 | 2.75 | 0.0 | 2.95 | 6.4 |
+  | 1.5B, t 0.3 (`c6ab3dba…`) | 0.05 | 0.06 | 0.85 | 1.00 | 0.00 | 4.5 | 0.0 | 2.95 | 18.5 |
+  | 1.5B, t 0.7 (`7b5c2e52…`) | **0.20** | **0.20** | 0.85 | 0.25 | 0.00 | 4.6 | 0.0 | 2.80 | 21.1 |
+
+  - **Every configuration fails the success filter.** Best inclusion is 0.20 against the gate's
+    0.95, and the baseline's is 0.08. `metrics.json` has an empty `overall`.
+  - **Learn to Read words did not make inclusion easier, against expectation.** A hand check of 8
+    requests on 1.5B at 0.7 found:
+    - 1 missed word was inflected (a requested "jump" written as "jumped" or "jumping");
+    - 3 missed words were simply absent;
+    - 2 requests produced invalid JSON on that attempt;
+    - 1 request used every word.
+
+    So inflection is one cause, not the main one. With 20 requests, the drop from 0.36 to 0.20 on
+    the best configuration is about 3 requests: treat the direction, not the size, as the finding.
+  - **No returned story met the sentence limit.** FK means are 2.5–4.6 against targets of 0–1.
+  - **Spreads** (model, then temperature): inclusion +0.07 and +0.09, first-try JSON +0.20 and
+    −0.05. 1.5B at temperature 0.7 is still the best configuration.
+  - **Slices** (1.5B, t 0.7; all below the 100-row floor, not judged): inclusion 0.33 / 0.12 / 0.17
+    for african_storybook / storyweaver / tinystories, and 0.19 / 0.28 / 0.12 for ages 3 / 4 / 5.
+  - **Implication, unchanged:** the case for a larger model, word-forcing constrained decoding and
+    the fine-tune. A word-matching rule that accepts inflections ("jumped" for "jump") is a product
+    question, not something to change quietly to raise a number. Raised in the PR #36 reply.
 
 ## Open questions
 
