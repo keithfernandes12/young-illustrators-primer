@@ -35,7 +35,11 @@ deliberately small v0: the bar is "end-to-end and measured", not "best model".
   `yip-api` on Cloud Run (staging), and receives a narrated, illustrated book whose text passed the
   readability and safety gate; the golden-gate metrics for every component are logged in MLflow;
   alerts email the team; a canary can be promoted or rolled back with one command.
-- **Not doing** — Whisper read-aloud, IP-Adapter, style LoRA (stretch goals, §5.4). The three
+- **Not doing** — IP-Adapter and the style LoRA (stretch goals, §5.4). Whisper read-aloud was on
+  this list and is **not any more**: the speech area landed on `main` while this plan was open
+  (KAN-95/96/97/100 — `SpeechRecognizer` and page alignment, Whisper and wav2vec2 recognisers, an
+  evaluation harness and model selection). This plan carries no slice for it, which is a statement
+  about this plan and not about the project. The three
   team-trained models the MVP requires (drawing recognizer, story LoRA, readability scorer) each get a
   pretrained baseline slice first, so the end-to-end path works even if a training run slips.
 - **Patterns to follow** — `src/primer/data/` (pure functions, Airflow only wires them; fakes in tests).
@@ -936,5 +940,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 
 ## Out of scope
 
-- Whisper read-aloud scoring and IP-Adapter character consistency: after the MVP.
+- IP-Adapter character consistency: after the MVP.
+- Whisper read-aloud scoring: out of scope **for this plan**, not for the project — it shipped
+  under KAN-95/96/97/100 and lives in `src/primer/speech/`.
 - Bias slicing and drift alerts: PRs #7 and #8.
