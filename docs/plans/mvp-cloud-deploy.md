@@ -1262,7 +1262,15 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   pairs it sits below the overall rate (10.0% against 25.5%, 35.8% against 49.9%, 24.6% against
   41.3%) but far above zero: some flips are near-ties, and confident answers moved too. The
   figures were **not** re-measured after these changes; none of them touches a number in the
-  tables.
+  tables. A second review round added guards that cost nothing on the real data: each image's
+  bytes must match its recorded `image_sha256` (checked on five sample drawings against the
+  bucket: all match; `record_id` is unique across `v1.1`'s 174,981 rows, so the 1,000 ids match
+  1,000 rows), scores must be sigmoid outputs in 0-1, `--out`'s folder must exist before the
+  13-minute run starts, and each pair's summary carries `confident_drawings`, the size of the
+  above-median subset, which is half the sample unless the median margin is 0 (a saturated or
+  collapsed model, S6d's case to watch). Left for later, not done here: a `--data-uri` flag like
+  `primer.data.cli` has, and the share of drawings whose top-1/top-2 margin is exactly 0, which
+  would make a bf16 GPU run comparable with this CPU baseline.
 - **2026-11-15 — Local GPU work runs: `.venv`'s torch is now a CUDA build.** *Supersedes* the
   2026-11-15 fact "The GPU is present; the installed `torch` cannot see it" and the CPU-only notes
   in earlier facts, which stay as the record of what was true then. `torch` went from
