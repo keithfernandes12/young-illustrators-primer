@@ -59,8 +59,11 @@ def scribble_style_sketch() -> bytes:
 #
 # `expect_pass` is the verdict once a threshold exists. `ConsistencyScorer` (#24) gives no verdict
 # until KAN-104 sets one, so a test that needs pass or fail builds the scorer with an explicit
-# threshold, e.g. `ConsistencyScorer(FakeEmbedder(), threshold=...)`. With no references, `score()`
-# returns 0.0; what `consistency()` and `build_book()` do then is the open KAN-105 question.
+# threshold and an embedder that sees the picture: real CLIP B/32 behind the `consistency` extra, or
+# a test embedder that reads decoded pixels. Not `FakeEmbedder`: it counts the PNG's compressed bytes,
+# so these books score within 0.01 of each other and its verdicts would follow the zlib and Pillow
+# versions, not the characters. With no references, `score()` returns 0.0; what `consistency()` and
+# `build_book()` do then is the open KAN-105 question.
 #
 # Characters are storybook-style renders, not crayon: the reference a page is scored against is the
 # approved `reference_image_ref`, never the child's crop.
