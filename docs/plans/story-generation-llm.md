@@ -531,7 +531,7 @@ TinyStories ratio and the LoRA rank.
 
 | Slice | State | PR | Notes |
 |---|---|---|---|
-| S0 | in progress | | this plan; five chosen defaults in Decisions, revisable in review |
+| S0 | in review | [#28](https://github.com/keithfernandes12/young-illustrators-primer/pull/28) | this plan; five chosen defaults in Decisions, revisable in review |
 | S1 | not started | | KAN-92's scope, built by Diya on KAN-39 |
 | S2 | not started | | level = FK grade with `level_source` (chosen default) |
 | S2b | not started | | |
