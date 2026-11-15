@@ -43,6 +43,11 @@ One server holds every run the team logs, local runs included
   network), no deny rule, and the VM untagged. Until a person runs **Harden the live server**
   below, any VM added to the default network can read and write every run, and SSH is open to the
   internet. Today `mlflow` is the project's only VM. Delete this bullet once that step is done.
+- **Cloud jobs.** The server has no public address, and after hardening only IAP can reach it, so
+  a Vertex or Cloud Run job has no path in. Today a job in the same VPC reaches it only through
+  `default-allow-internal`, which hardening closes. How cloud runs log is an open decision (an
+  internal-only rule for a tagged range, or a login proxy); until it is made, log from a machine
+  with the tunnel open.
 
 ## Before you start
 
@@ -50,14 +55,16 @@ One server holds every run the team logs, local runs included
   `roles/iap.tunnelResourceAccessor` and read access to Compute Engine. The tunnel command looks
   the VM up first (`compute.instances.get`, `compute.instances.list`), which the IAP role does not
   include. `roles/compute.viewer` is enough.
-- **Name the project every time.** Every `gcloud` line below passes
-  `--project=young-illustrators-primer`. A teammate's default project is usually their own, and
-  the create and delete commands would act there.
-- **Person-only steps.** Every step that creates a resource or grants a role — steps 1–3,
-  **Harden the live server** and **Grant a teammate access** — is for a person to run. Agents cannot make IAM grants
-  (`.claude/settings.json`, `guard_cloud.py`) and must not create service-account keys.
+- **Name the project every time.** Every `gcloud compute`, `gcloud iam` and `gcloud services` line
+  below passes `--project=young-illustrators-primer`; the `gcloud storage` lines name the bucket,
+  which is global. A teammate's default project is usually their own, and the create and delete
+  commands would act there.
+- **Person-only steps.** Every step that creates a resource or grants a role — **Build it from
+  scratch** steps 1–4, **Harden the live server** and **Grant a teammate access** — is for a
+  person to run. Agents cannot make IAM grants (`.claude/settings.json`, `guard_cloud.py`) and must
+  not create service-account keys.
 - **Windows shells.** On Windows, the `gcloud` lines below are written so they run unchanged in
-  both PowerShell and Git Bash. Three PowerShell traps cost time on the first setup:
+  both PowerShell and Git Bash. Four PowerShell traps cost time on the first setup:
   - `export` does not exist. Use `$env:NAME = "value"`, or `setx NAME value` to persist it.
   - A bare `$NAME` is an empty PowerShell variable. Use `$env:NAME`, or type the value out in full.
   - An unquoted comma splits an argument into an array. Quote it: `--allow="tcp:22,tcp:5000"`.
@@ -116,8 +123,11 @@ gcloud projects add-iam-policy-binding young-illustrators-primer --member="user:
 
 The second line is needed only when they have no Compute read access yet. It takes a minute or two
 to apply. They then follow **Reach it from your machine**. If their SSH or tunnel still fails,
-`gcloud compute ssh mlflow --zone=us-central1-a --project=young-illustrators-primer
---tunnel-through-iap --troubleshoot` names the missing permission.
+this command names the missing permission:
+
+```
+gcloud compute ssh mlflow --zone=us-central1-a --project=young-illustrators-primer --tunnel-through-iap --troubleshoot
+```
 
 ## Harden the live server (person-only)
 
@@ -146,7 +156,7 @@ not been run yet, so it is untested.
 1. **Bucket and service account:**
 
    ```
-   gcloud storage buckets create gs://yip-mlflow-artifacts --project=young-illustrators-primer --location=us-central1 --uniform-bucket-level-access
+   gcloud storage buckets create gs://yip-mlflow-artifacts --project=young-illustrators-primer --location=us-central1 --uniform-bucket-level-access --public-access-prevention
    gcloud iam service-accounts create mlflow-server --project=young-illustrators-primer
    gcloud storage buckets add-iam-policy-binding gs://yip-mlflow-artifacts --member="serviceAccount:mlflow-server@young-illustrators-primer.iam.gserviceaccount.com" --role=roles/storage.objectAdmin
    ```
@@ -173,6 +183,12 @@ not been run yet, so it is untested.
    gcloud compute ssh mlflow --zone=us-central1-a --project=young-illustrators-primer --tunnel-through-iap
    ```
 
+   **Do not re-run the `scp` on a server that is already running** if you have an
+   `infra/mlflow/.env` locally: it overwrites the VM's `.env`. Postgres applies its password only
+   when the `pgdata` volume is first created, so a different password locks MLflow out of its own
+   database. To update a changed compose file or Dockerfile, copy just that file
+   (`mlflow:~/mlflow/`) and run `sudo docker-compose up -d --build` on the VM.
+
 4. **On the VM: swap, Docker, password, start.** The e2-micro has 1 GB of RAM, so do not skip
    the swap.
 
@@ -184,7 +200,8 @@ not been run yet, so it is untested.
    sleep 20; curl -s localhost:5000/health
    ```
 
-   The last line prints `OK`. If the `mlflow` container keeps restarting, run
+   Run the `.env` line only on a fresh VM: on a running one it makes a new password that does not
+   match the existing `pgdata` volume. The last line prints `OK`. If the `mlflow` container keeps restarting, run
    `sudo docker-compose logs --tail=40 mlflow`. One failed start while Postgres initialises is
    normal, and `restart: unless-stopped` retries it.
 
@@ -194,13 +211,17 @@ not been run yet, so it is untested.
   `roles/iap.tunnelResourceAccessor` or Compute read access
   (`compute.instances.get`, `compute.instances.list`); see **Grant a teammate access**.
 - **The VM rebooted.** Both containers restart on their own. The swap file is in `/etc/fstab`.
-- **Rebuild the server only.** `sudo docker-compose up -d --build` in `~/mlflow` rebuilds it. Runs
-  survive, because they live in the `pgdata` volume and the bucket.
+- **Rebuild the server only.** `sudo docker-compose up -d --build` in `~/mlflow` rebuilds it from
+  the copy of the files on the VM, not from the repo; copy a changed file up first (see step 3
+  above). Runs survive, because they live in the `pgdata` volume and the bucket.
 - **Cannot be undone:** `sudo docker-compose down -v`, or deleting the VM, destroys the `pgdata`
   volume and with it **every run's params, metrics and tags**. Only the artifacts in the bucket
   survive. There is no backup of the database yet; that is an open question in
   `docs/engineering/model-development.md`.
-- **Tear it all down (person-only)**, in this order:
+- **Tear it all down (person-only).** This deletes every run and every artifact. Export what you
+  need first; step 3 removes the bucket and everything in it. Teammates' project-level
+  `roles/iap.tunnelResourceAccessor` and `roles/compute.viewer` grants stay in place; remove them
+  separately if they should go. In this order:
   1. `gcloud compute instances delete mlflow --zone=us-central1-a --project=young-illustrators-primer`
   2. `gcloud compute firewall-rules delete allow-iap-mlflow deny-non-iap-mlflow --project=young-illustrators-primer`
      (on a server that was never hardened, only `allow-iap-mlflow` exists; delete just that)

@@ -702,7 +702,7 @@ Results and mitigations go in `CARD.md`. SHAP is stated as inapplicable (`model-
 
 - **Acceptance**
   - One MLflow run per ablation and sweep point, with per-slice metrics logged as
-    `slice/<key>=<value>/<metric>`.
+    `slice/<key>/<value>/<metric>` (MLflow rejects `=` in metric names).
   - Any slice of at least 100 rows whose `target_word_inclusion` is more than 5 points below overall
     is named in `CARD.md`, with a mitigation proposed or ruled out.
 - **Testing**
