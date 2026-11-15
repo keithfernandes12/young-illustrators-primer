@@ -31,7 +31,8 @@ inference:
   # same reason as above.
   binarise: false
   # How binarising decides: a pixel is ink when it is more than `binarise_offset` darker than the
-  # mean of the square around it, `binarise_window` of `size` across (28px at 224). A local
+  # mean of the square around it, `binarise_window` of `size` across (29px at 224: a half-width of
+  # 14 either side of the pixel). A local
   # threshold, because two global ones were measured on real Amateur Drawings and both turned the
   # photograph's lighting into ink (`preprocess._marks` has the numbers). 1/8 and 15% are Bradley
   # and Roth's published defaults, not tuned here: nothing has measured which values suit
@@ -53,11 +54,13 @@ training:
   wobble_wavelength: 48.0
 
   # Partial erasure: lift the ink inside up to `erasure_patches` rectangles, each at most
-  # `erasure_size` of the canvas side, to between 60% and 100% -- gaps, smudges and rubbed-out
-  # lines.
+  # `erasure_size` of the canvas side, by between `erasure_strength_min` and `_max` of itself --
+  # gaps, smudges and rubbed-out lines.
   erasure_probability: 0.3
   erasure_patches: 3
   erasure_size: 0.2
+  erasure_strength_min: 0.6
+  erasure_strength_max: 1.0
 
   # Ink colour: draw with a crayon from this palette instead of black. RGB, 0-255.
   ink_colour_probability: 0.6
@@ -70,10 +73,15 @@ training:
     - [90, 60, 30]
 
   # Colour fill: colour in part of the drawing's enclosed area, translucently, the way a child
-  # colours inside the lines. Opacity is drawn between the two bounds.
+  # colours inside the lines. Opacity is drawn between the two bounds. Which part: where a smooth
+  # random field, `fill_coverage_wavelength` of the canvas side across, rises above a level drawn
+  # from +/- `fill_coverage_spread` (the field runs -1 to 1, so 0 colours about half the area and
+  # the spread varies that from drawing to drawing).
   fill_probability: 0.4
   fill_opacity_min: 0.3
   fill_opacity_max: 0.8
+  fill_coverage_wavelength: 0.5
+  fill_coverage_spread: 0.5
   fill_colours:
     - [250, 210, 60]
     - [120, 190, 240]
@@ -81,15 +89,19 @@ training:
     - [140, 210, 120]
     - [250, 170, 90]
 
-  # Paper: a tint from this palette, low-frequency mottling (`paper_texture`, peak levels) and
-  # per-pixel grain (`paper_grain`, standard deviation in levels). Always applied: there is no
-  # untextured paper in a photograph.
+  # Paper: a tint from this palette, low-frequency mottling (`paper_texture`, peak levels, over a
+  # field `paper_texture_wavelength` of the canvas side across) and per-pixel grain
+  # (`paper_grain`, standard deviation in levels). Always applied: there is no untextured paper in
+  # a photograph. No tint is white: texture on white is clipped at 255 instead of seen (a
+  # pure-white tint left 54.8% of paper values at exactly 255), so every tint leaves room for
+  # `paper_texture` plus three standard deviations of grain below 255, which the loader enforces.
   paper_tints:
-    - [255, 255, 255]
-    - [250, 246, 235]
-    - [242, 242, 242]
-    - [246, 240, 225]
+    - [240, 240, 240]
+    - [240, 236, 225]
+    - [232, 232, 232]
+    - [238, 232, 217]
   paper_texture: 6.0
+  paper_texture_wavelength: 0.333
   paper_grain: 3.0
 
   # Lighting: darken towards one side by up to `lighting_gradient`, lose up to `lighting_exposure`

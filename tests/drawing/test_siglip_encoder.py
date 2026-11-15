@@ -16,6 +16,7 @@ from __future__ import annotations
 import io
 import math
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -175,8 +176,11 @@ class CountingTower(StubTower):
 class StubProcessor:
     """Turns prompts into row counts and any bytes into a pixel tensor. No tokeniser, no PIL."""
 
-    def __init__(self):
+    def __init__(self, size: Any = None):
         self.text_kwargs: dict = {}
+        #: The input resolution `load()` checks against `prepare_drawing`'s output. The real
+        #: processor's is a `SizeDict` read by attribute; a plain dict is accepted too.
+        self.image_processor = SimpleNamespace(size=size or SimpleNamespace(height=224, width=224))
         #: What reached the processor: `prepare_drawing`'s array. The pixels, not just the shape,
         #: because they are the only place alpha compositing is observable -- a dropped alpha
         #: channel leaves three channels and every pixel black, so a shape assertion passes while
@@ -205,9 +209,9 @@ class Batch(dict):
         return super().keys()
 
 
-def stubbed(config, dtype):
+def stubbed(config, dtype, prepare=None):
     """A `SiglipEncoder` with its tower already stubbed, so `load()` is a no-op."""
-    built = SiglipEncoder(config, device="cpu")
+    built = SiglipEncoder(config, device="cpu", prepare=prepare)
     built._model = StubTower(weights=[0.0, 2.0, 0.0, -2.0], dtype=dtype)
     built._processor = StubProcessor()
     built._dtype = dtype
@@ -318,6 +322,30 @@ def test_load_selects_the_dtype_that_goes_with_the_device(config, monkeypatch, d
     assert tower.evaluated, "dropout and the like off; the tower is only ever used for inference"
 
 
+@pytest.mark.parametrize(
+    "size",
+    [SimpleNamespace(height=256, width=256), {"height": 256, "width": 256}, None],
+    ids=["size-dict", "plain-dict", "no-size"],
+)
+def test_load_refuses_a_processor_whose_resolution_is_not_the_prepared_one(config, monkeypatch, size):
+    """`prepare_drawing` is the only resampling only while the two sizes agree; nothing else checks.
+
+    `drawing_render.yaml` marks its `size` provisional, so the checkpoint and the render settings
+    can part. When they do, the processor would resize every prepared drawing a second time.
+    """
+    import transformers
+
+    processor = StubProcessor()
+    processor.image_processor = SimpleNamespace(size=size)
+    monkeypatch.setattr(transformers.AutoModel, "from_pretrained", lambda name, **kwargs: StubTower([0.0] * 4))
+    monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", lambda name, **kwargs: processor)
+    built = SiglipEncoder(config, device="cpu")
+
+    with pytest.raises(ValueError, match="prepared at 224 x 224"):
+        built.load()
+    assert built._model is None, "nothing is published from a refused load"
+
+
 def test_the_pixels_are_cast_to_the_towers_dtype(half, png):
     """Without the cast, the first matmul on CUDA raises "mat1 and mat2 must have the same dtype".
 
@@ -386,8 +414,7 @@ def test_a_wide_drawing_reaches_the_tower_padded_rather_than_squashed(encoder):
 def test_the_encoder_prepares_with_the_settings_it_was_given(config):
     """How S6c2 runs its variants: a `PrepareConfig` handed to the encoder reaches every drawing."""
     greyscale = replace(default_prepare_config(), greyscale=True)
-    built = stubbed(config, torch.float32)
-    built.prepare = greyscale
+    built = stubbed(config, torch.float32, prepare=greyscale)  # through the constructor, as S6c2 will
     red = Image.new("RGB", (8, 8), (255, 0, 0))
 
     built.encode(as_png(red), PROMPTS)

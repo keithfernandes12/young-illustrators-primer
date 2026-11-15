@@ -1049,8 +1049,12 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   S6b3's sampler is in #29, not on `main`) the median drawing came out **74.2% ink** and the worst
   exactly **75.0%**, the share of a 384 x 512 drawing left after padding it square: the white
   padding was the brightest class, so the whole page fell on the ink side. Fixed by thresholding
-  before padding; `test_binarising_a_non_square_photograph_thresholds_the_drawing_not_the_padding`
-  fails on the old order (32 ink pixels where it requires 2).
+  before padding. The order still matters under the local threshold that replaced Otsu (next
+  fact) — padding first draws a bar of ink along each seam — and
+  `test_binarising_a_non_square_photograph_thresholds_the_drawing_not_the_padding` pins it on
+  grey paper: 268 ink pixels padding first, against the drawing's 12. (Its first version used
+  light paper on an 8px canvas and, once the threshold went local, passed in either order; an
+  independent review caught that, and a pad-first mutation now fails it.)
 - **2026-11-14 — S6b1: a global threshold turns lighting into ink, so binarising is local.**
   *Hypothesis:* Otsu on the drawing alone is enough. *Result:* no. Same 60 drawings: in the
   median one **39.8%** of the photograph's own edge binarised to ink, and in 42 of 60 more than a
@@ -1103,8 +1107,41 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   S6c2's numbers. None of these figures is in MLflow: they measure preprocessing rather than
   compare models, and there is no host yet (KAN-107). S6b2 inherits the remaining half of the
   single-path guard — asserting the training loader imports `augment_canvas` from here.
+- **2026-11-15 — S6b1: the first independent review found the single-path guard half-blind.**
+  *Hypothesis:* the guard catches a second preprocessing path in the drawing path. *Result:* not
+  as written. It read only `node.module`, so `from torchvision import transforms` and
+  `from scipy import ndimage` passed, as did `.convert(mode="L")` and every Pillow `resize`,
+  `crop` and `thumbnail`: a reviewer added a torchvision `Compose([Grayscale, Resize])` to
+  `drawing/data.py` and the guard stayed green. All four forms are now caught, each with a test,
+  and the same mutation fails it. The guard is still a guard rather than a proof — a second path
+  written in plain numpy under a new name passes it, as it passes KAN-87's. The same round found
+  the encoder's `prepare=` argument and the processor-size coupling untested (both now pinned by
+  a mutation-checked test), hard-coded augmentation constants (now in the YAML), a white paper
+  tint that clipped 54.8% of the texture away (tints now leave room for it, enforced at load),
+  and an augmentation config with inverted levels that drew blank pages (now refused).
 
 ## Open questions
+
+- **What S6b1 hands to S6b2 and S6c2.** Recorded here so they are not found only in Verified
+  facts. *S6b2:* assert the training loader imports `augment_canvas` from `preprocess.py`, the
+  half of the single-path guard that needs a loader to exist; run augmentation in loader workers,
+  since at ~8 ms a canvas it costs about 70 minutes an epoch single-threaded; and decide whether
+  training should see non-square framing — 98.65% of Amateur Drawings reach the tower padded with
+  bars of their own paper colour, while rendered and augmented canvases are always square, so
+  training never sees a bar (raised on KAN-38). *S6c2:* its binarised row now measures a local
+  threshold, not a global one, and its cropped row cannot run through the encoder at all —
+  `Encoder.encode(bytes, prompts)` has no way to pass a box, so either the box travels through
+  that seam or S6c2 calls `prepare_drawing` itself before encoding (raised on KAN-109).
+- **Where does EXIF orientation get applied?** A phone JPEG with Orientation=6 reaches
+  `prepare_drawing` unrotated, as it reached the tower before this slice. The standard fix,
+  `PIL.ImageOps.exif_transpose` at the decode site, is decode rather than preprocessing, but the
+  single-path guard bans `PIL.ImageOps` wholesale and would fail CI on it. *Recommended:* apply it
+  in `encode` beside `flattened` and narrow the guard to allow exactly `exif_transpose`. Raised
+  on KAN-64, which owns uploads.
+- **Should a full-resolution upload be shrunk before the area resize?** A 4032 x 3024 photo costs
+  0.3–0.4 s to prepare and peaks around 337 MB of allocations (the float64 copy), and the
+  resampling-weight cache can hold 32 matrices of ~7 MB. An integer block-mean pre-shrink would
+  cut both. *Recommended:* yes, when KAN-71 budgets the upload path. Raised on KAN-71.
 
 - **Should CI run any line of `SiglipEncoder`?** **Tracked as KAN-106.** Today it runs none: CI installs `.[dev]`, `torch`
   is only in the `drawing` extra, and `tests/drawing/test_siglip_encoder.py` skips wholesale. Both

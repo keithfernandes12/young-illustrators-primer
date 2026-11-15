@@ -35,7 +35,7 @@ import numpy as np
 import yaml
 
 from primer.drawing.interface import Candidate, Character, DrawingAnalysis
-from primer.drawing.preprocess import PrepareConfig, prepare_drawing
+from primer.drawing.preprocess import PrepareConfig, default_prepare_config, prepare_drawing
 
 CONFIG_DIR = Path(__file__).parent / "configs"
 CONFIG_PATH = CONFIG_DIR / "drawing_baseline.yaml"
@@ -241,6 +241,28 @@ class SiglipEncoder:
         #: start, not a rare interleaving.
         self._lock = threading.Lock()
 
+    def _check_resolution(self, processor: Any) -> None:
+        """Refuse a processor whose input size is not the square `prepare_drawing` produces.
+
+        `prepare_drawing` is the only resampling between a decoded drawing and the tower only while
+        `drawing_render.yaml`'s `size` -- marked provisional there -- equals the checkpoint's own
+        resolution. If they part, the processor quietly resizes every prepared drawing a second
+        time, squashing nothing but resampling everything, and a measured number stops being
+        comparable with the rendered split it was meant to match. Checked once, at load.
+        """
+        expected = (self.prepare or default_prepare_config()).size
+        size = getattr(getattr(processor, "image_processor", None), "size", None)
+        if isinstance(size, dict):
+            height, width = size.get("height"), size.get("width")
+        else:
+            height, width = getattr(size, "height", None), getattr(size, "width", None)
+        if (height, width) != (expected, expected):
+            raise ValueError(
+                f"{self.config.encoder} expects {width} x {height} input, but drawings are "
+                f"prepared at {expected} x {expected}; change `size` in drawing_render.yaml to the "
+                "checkpoint's resolution (and re-render the split) rather than resample twice"
+            )
+
     def load(self) -> None:
         import torch
         from transformers import AutoModel, AutoProcessor
@@ -266,6 +288,7 @@ class SiglipEncoder:
             processor = AutoProcessor.from_pretrained(
                 self.config.encoder, revision=self.config.encoder_revision
             )
+            self._check_resolution(processor)
             # `dtype`, not `torch_dtype`: the latter is deprecated in transformers 5 and warns on
             # every load.
             model = AutoModel.from_pretrained(

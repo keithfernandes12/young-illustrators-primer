@@ -15,8 +15,10 @@ Two entry points, one module:
 They are in one file for KAN-87's reason a second time: if training degraded images one way and
 inference normalised them another, a measured ``drawing_top5_acc`` would compare a model with two
 preprocessing paths, and nobody could say which one moved. ``tests/drawing/test_preprocess.py``
-asserts there is one entry point per direction and that nothing else in the drawing path
-preprocesses an image, rather than trusting it.
+asserts there is one entry point per direction, and fails if anything else in the drawing path
+imports an image-processing library or calls Pillow's resize, crop, thumbnail or a non-RGB
+``convert`` -- the forms a second path takes in practice. That is a guard, not a proof: a second
+path written in plain numpy under another name would pass it, as it would pass KAN-87's.
 
 The contract between the two: ``augment_canvas``'s output is always something ``prepare_drawing``
 accepts -- ``uint8``, ``H x W x 3``, 0-255 -- and ``prepare_drawing`` leaves an un-augmented canvas
@@ -30,9 +32,11 @@ keeping decode at the call site is what lets CI cover every line of this file. T
 Pillow function that runs before an array exists, so decode and composite are one step at the call
 site, and this module takes the composited RGB array.
 
-Every setting lives in ``configs/drawing_preprocess.yaml``, except the three that belong to the
-renderer -- ``size``, ``ink`` and ``background`` -- which are read from ``drawing_render.yaml`` so
-that the inference output lands on exactly the canvas the renderer draws.
+Every probability, magnitude, range and scale lives in ``configs/drawing_preprocess.yaml``, except
+the three that belong to the renderer -- ``size``, ``ink`` and ``background`` -- which are read from
+``drawing_render.yaml`` so that the inference output lands on exactly the canvas the renderer
+draws. What stays in code is structure, named below: how many waves make a smooth field, how much
+coverage counts as a line, and where contrast pivots.
 """
 
 from __future__ import annotations
@@ -63,6 +67,14 @@ LUMA = np.array([0.299, 0.587, 0.114])
 
 #: ``augment_canvas``'s operations, one random stream each, in this order.
 OPERATIONS = ("wobble", "erasure", "paper", "fill", "ink", "lighting")
+
+#: Plane waves summed into one smooth random field (``_waves``). Structure, not a setting: the
+#: field's scale and strength are configured wherever it is used.
+WAVES = 3
+#: Ink coverage above which a pixel counts as part of a line, for deciding what is enclosed.
+LINE_COVERAGE = 0.5
+#: The level contrast pivots on (``_light``): mid-grey, so the pivot does not depend on the drawing.
+PIVOT = 127.5
 
 
 # ---------------------------------------------------------------------------------------- config
@@ -99,8 +111,9 @@ def _settings(cls: type, section: dict[str, Any], path: Path, name: str) -> dict
 
 
 def _real(name: str, value: object) -> float:
-    # `bool` is an `int`, so `true` in YAML would otherwise read as 1.0.
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    # `bool` is an `int`, so `true` in YAML would otherwise read as 1.0. numpy numbers are welcome:
+    # a box read from a dataframe column of int64 or float32 is still four numbers.
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, float, np.integer, np.floating)):
         raise TypeError(f"{name} must be a number, not {value!r}")
     if not math.isfinite(value):
         raise ValueError(f"{name} must be finite, not {value}")
@@ -181,14 +194,19 @@ class AugmentConfig:
     erasure_probability: float
     erasure_patches: int
     erasure_size: float
+    erasure_strength_min: float
+    erasure_strength_max: float
     ink_colour_probability: float
     ink_colours: tuple[Colour, ...]
     fill_probability: float
     fill_opacity_min: float
     fill_opacity_max: float
+    fill_coverage_wavelength: float
+    fill_coverage_spread: float
     fill_colours: tuple[Colour, ...]
     paper_tints: tuple[Colour, ...]
     paper_texture: float
+    paper_texture_wavelength: float
     paper_grain: float
     lighting_probability: float
     lighting_gradient: float
@@ -217,20 +235,44 @@ class AugmentConfig:
         for name in ("wobble_amplitude", "paper_texture", "paper_grain"):
             if getattr(self, name) < 0:
                 raise ValueError(f"{name} cannot be negative, not {getattr(self, name)}")
-        if self.wobble_wavelength <= 0:
-            raise ValueError(f"wobble_wavelength must be positive, not {self.wobble_wavelength}")
+        for name in ("wobble_wavelength", "fill_coverage_wavelength", "paper_texture_wavelength"):
+            if getattr(self, name) <= 0:
+                raise ValueError(f"{name} must be positive, not {getattr(self, name)}")
         if not 0.0 < self.erasure_size <= 1.0:
             raise ValueError(f"erasure_size is a fraction of the canvas side, not {self.erasure_size}")
-        if not 0.0 <= self.fill_opacity_min <= self.fill_opacity_max <= 1.0:
-            raise ValueError(
-                f"fill opacity needs 0 <= min <= max <= 1, not {self.fill_opacity_min}..."
-                f"{self.fill_opacity_max}"
-            )
+        for low, high in (
+            ("erasure_strength_min", "erasure_strength_max"),
+            ("fill_opacity_min", "fill_opacity_max"),
+        ):
+            if not 0.0 <= getattr(self, low) <= getattr(self, high) <= 1.0:
+                raise ValueError(
+                    f"{low} and {high} need 0 <= min <= max <= 1, not "
+                    f"{getattr(self, low)}...{getattr(self, high)}"
+                )
+        if not 0.0 <= self.fill_coverage_spread <= 1.0:
+            raise ValueError(f"fill_coverage_spread must be in 0-1, not {self.fill_coverage_spread}")
         # At 1, the gradient can shade one side to black, the exposure the whole page, and the
         # contrast flatten it to uniform grey -- each erases the drawing it is meant to perturb.
         for name in ("lighting_gradient", "lighting_exposure", "lighting_contrast"):
             if not 0.0 <= getattr(self, name) < 1.0:
                 raise ValueError(f"{name} must be in 0-1 (exclusive), not {getattr(self, name)}")
+        # Two ways a valid-looking config draws nothing. Texture on paper near white is clipped at
+        # 255 rather than seen -- measured with a pure-white tint, 54.8% of paper values came out at
+        # exactly 255, the failure `_light` was already fixed for. And uncoloured ink that is not
+        # darker than the paper composites a drawing into a blank page.
+        headroom = self.paper_texture + 3.0 * self.paper_grain
+        for tint in self.paper_tints:
+            if max(tint) + headroom > 255:
+                raise ValueError(
+                    f"paper tint {tint} plus texture {self.paper_texture} and three standard "
+                    f"deviations of grain {self.paper_grain} passes 255, so the texture is clipped "
+                    "away; use a darker tint, as a photographed page is"
+                )
+            if min(tint) <= self.render.ink:
+                raise ValueError(
+                    f"paper tint {tint} is no lighter than the renderer's ink ({self.render.ink}), "
+                    "so an uncoloured drawing would vanish into the paper"
+                )
 
     @classmethod
     def from_yaml(cls, path: Path = CONFIG_PATH, render: RenderConfig | None = None) -> AugmentConfig:
@@ -424,7 +466,10 @@ def _marks(values: Pixels, config: PrepareConfig) -> npt.NDArray[np.bool_]:
     A local threshold (Bradley and Roth's): a pixel is ink when it is more than ``binarise_offset``
     darker than the mean of the ``binarise_window`` square around it. Paper is uniform at the scale
     of the window wherever the light falls, so it stays paper on the bright side of a page and the
-    shaded side alike, and a table round the sheet stays background too.
+    shaded side alike, and so does the inside of a uniform table round the sheet. **The edge where
+    sheet meets table does not**: within a window of it, the table is darker than its neighbourhood
+    and comes out as a band of ink about half a window wide -- measured on a blank 230-grey sheet
+    on a 120-grey table, 6,828 ink pixels, all along that seam. Same mechanism as the outline below.
 
     **Two global thresholds failed before this one, both measured on 60 real Amateur Drawings.**
     Otsu applied after padding split the white padding from the page and returned the whole
@@ -525,11 +570,11 @@ def _waves(shape: tuple[int, int], rng: np.random.Generator, wavelength: float) 
     """
     rows, columns = np.indices(shape, dtype=np.float64)
     total = np.zeros(shape)
-    for _ in range(3):
+    for _ in range(WAVES):
         angle, phase = rng.uniform(0.0, 2.0 * math.pi, size=2)
         direction = columns * math.cos(angle) + rows * math.sin(angle)
         total += np.sin(2.0 * math.pi * direction / wavelength + phase)
-    return total / 3.0
+    return total / WAVES
 
 
 def _wobble(alpha: Pixels, rng: np.random.Generator, config: AugmentConfig) -> Pixels:
@@ -548,7 +593,7 @@ def _wobble(alpha: Pixels, rng: np.random.Generator, config: AugmentConfig) -> P
 
 
 def _erase(alpha: Pixels, rng: np.random.Generator, config: AugmentConfig) -> Pixels:
-    """Ink lifted by 60-100% inside a few random rectangles."""
+    """Ink lifted by ``erasure_strength_min``-``max`` of itself inside a few random rectangles."""
     erased = alpha.copy()
     rows, columns = alpha.shape
     for _ in range(int(rng.integers(1, config.erasure_patches + 1))):
@@ -556,14 +601,16 @@ def _erase(alpha: Pixels, rng: np.random.Generator, config: AugmentConfig) -> Pi
         width = int(rng.integers(1, max(1, int(config.erasure_size * columns)) + 1))
         top = int(rng.integers(0, rows - height + 1))
         left = int(rng.integers(0, columns - width + 1))
-        erased[top : top + height, left : left + width] *= 1.0 - rng.uniform(0.6, 1.0)
+        erased[top : top + height, left : left + width] *= 1.0 - rng.uniform(
+            config.erasure_strength_min, config.erasure_strength_max
+        )
     return erased
 
 
 def _paper(shape: tuple[int, int], rng: np.random.Generator, config: AugmentConfig) -> Pixels:
     """A sheet of paper: a tint, low-frequency mottling and per-pixel grain, ``H x W x 3``."""
     tint = np.array(config.paper_tints[int(rng.integers(len(config.paper_tints)))], dtype=np.float64)
-    mottling = config.paper_texture * _waves(shape, rng, max(shape) / 3.0)
+    mottling = config.paper_texture * _waves(shape, rng, config.paper_texture_wavelength * max(shape))
     grain = rng.normal(0.0, 1.0, size=shape) * config.paper_grain
     return tint[None, None, :] + (mottling + grain)[:, :, None]
 
@@ -590,8 +637,9 @@ def _fill(paper: Pixels, alpha: Pixels, rng: np.random.Generator, config: Augmen
     shape = (alpha.shape[0], alpha.shape[1])
     # Which part gets coloured: a smooth field above a random level, so a drawing is coloured in
     # patches rather than all or nothing.
-    coverage = _waves(shape, rng, max(shape) / 2.0) > rng.uniform(-0.5, 0.5)
-    region = _enclosed(alpha > 0.5) & coverage
+    field = _waves(shape, rng, config.fill_coverage_wavelength * max(shape))
+    coverage = field > rng.uniform(-config.fill_coverage_spread, config.fill_coverage_spread)
+    region = _enclosed(alpha > LINE_COVERAGE) & coverage
     filled = paper.copy()
     filled[region] = filled[region] * (1.0 - opacity) + colour * opacity
     return filled
@@ -621,7 +669,7 @@ def _light(image: Pixels, rng: np.random.Generator, config: AugmentConfig) -> Pi
     low, high = float(np.min(ramp)), float(np.max(ramp))
     ramp = (ramp - low) / (high - low) if high > low else np.zeros(shape)
     shaded = image * (1.0 - depth * ramp)[:, :, None]
-    result: Pixels = ((shaded - 127.5) * contrast + 127.5) * exposure
+    result: Pixels = ((shaded - PIVOT) * contrast + PIVOT) * exposure
     return result
 
 
@@ -631,10 +679,12 @@ def augment_canvas(canvas: Image, seed: int, config: AugmentConfig | None = None
     ``canvas`` is ``render_strokes``'s output. The same canvas, seed and config give the same array
     on every call. Each operation draws from its own stream, spawned from ``seed`` by
     ``numpy.random.SeedSequence`` -- so whether one operation fires, and how many numbers it uses,
-    never shifts another's. Turning one off, or changing its probability, leaves every other
-    operation's pixels where they were, and an ablation compares like with like. Repeatable run to
-    run on one machine and one numpy; bit-identical across platforms is not promised, because
-    ``sin`` is not.
+    never shifts another's **random draws**. That is independence of the dice, not of the pixels:
+    fill colours whatever the lines enclose *after* wobble and erasure, and its enclosure test runs
+    along whole rows and columns, so erasing one gap can change which paper is filled far from it
+    (measured: in 18 of 50 seeds with fill forced on). Paper, ink colour and lighting depend on
+    nothing upstream, so their pixels do stay put. Repeatable run to run on one machine and one
+    numpy; bit-identical across platforms is not promised, because ``sin`` is not.
 
     The canvas is read as ink coverage between the renderer's ``ink`` and ``background``, so the
     operations act on the drawing and not on two particular grey levels: wobble and erasure move

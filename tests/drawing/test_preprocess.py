@@ -107,19 +107,22 @@ def test_the_padding_takes_the_paper_colour_from_the_drawings_edge():
 
 
 def test_binarising_a_non_square_photograph_thresholds_the_drawing_not_the_padding():
-    """The measured bug: white padding was the brightest class, so the whole page became ink.
+    """Threshold first, pad after -- or the padding's white is part of what is thresholded.
 
-    On 60 real Amateur Drawings the median came out 74.2% ink, the worst exactly the 75% of a
-    384 x 512 drawing that is left after padding it square. Grey paper here, as there.
+    Under the retired global threshold that turned whole photographs into ink (median 74.2% on 60
+    real Amateur Drawings). Under the local one it draws bars: paper beside white padding is
+    darker than its neighbourhood, so padding first returns 268 ink pixels here -- two rows of bar
+    along each seam -- where the drawing has 12. An earlier version of this test used light paper
+    on a small canvas and passed in either order; this one is the case that tells them apart.
     """
-    photo = np.full((4, 8), 180, dtype=np.uint8)
-    photo[1:3, 2] = 40
-    binary = colour_only(render=replace(FOUR, size=8), greyscale=True, binarise=True)
+    photo = np.full((32, 64), 150, dtype=np.uint8)  # grey paper, as a photograph has
+    photo[10:22, 20] = 40  # one mark, twelve pixels long
+    binary = colour_only(render=replace(FOUR, size=64), greyscale=True, binarise=True)
 
     prepared = prepare_drawing(photo, binary)[:, :, 0]
 
-    assert (prepared == 0).sum() == 2, "the two marks, and nothing else"
-    assert prepared[3, 0] == 255 and prepared[0, 0] == 255, "page and padding are both paper"
+    assert (prepared == 0).sum() == 12, "the mark, and nothing else"
+    assert (prepared[16] == 255).all() and (prepared[47] == 255).all(), "no bar along either seam"
 
 
 def test_shrinking_averages_the_pixels_each_output_pixel_covers():
@@ -298,6 +301,14 @@ def test_a_box_that_does_not_fit_the_drawing_is_refused(box, error, message):
         prepare_drawing(np.zeros((10, 10), dtype=np.uint8), box=box)
 
 
+@pytest.mark.parametrize(
+    "box", [np.array([1, 1, 4, 4]), np.array([1.5, 1.5, 4, 4], dtype=np.float32), (np.int64(1), 1, 4, 4)]
+)
+def test_a_box_of_numpy_numbers_is_a_box(box):
+    """What a dataframe column hands over: int64 or float32 elements, not Python numbers."""
+    assert prepare_drawing(np.zeros((10, 10), dtype=np.uint8), box=box).shape == (224, 224, 3)
+
+
 @pytest.mark.parametrize("box", [(-1.0, 0, 4, 4), (0, 0, 11.0, 4), (6.3, 6.3, 4.7, 4.7)])
 def test_a_box_reaching_a_pixel_past_the_edge_is_clamped_not_refused(box):
     """1.89% of Amateur Drawings' boxes do this once rounded outwards, all by at most 1.00px."""
@@ -407,9 +418,16 @@ def test_the_shipped_file_loads_both_directions():
         ({"erasure_patches": 0}, ">= 1"),
         ({"erasure_size": 0.0}, "fraction"),
         ({"fill_opacity_min": 0.9, "fill_opacity_max": 0.5}, "min <= max"),
+        ({"erasure_strength_min": 0.9, "erasure_strength_max": 0.5}, "min <= max"),
+        ({"erasure_strength_max": 1.5}, "min <= max"),
+        ({"fill_coverage_spread": 1.5}, "in 0-1"),
         ({"lighting_gradient": 1.0}, "exclusive"),
         ({"paper_grain": -1.0}, "negative"),
         ({"wobble_wavelength": 0.0}, "positive"),
+        ({"fill_coverage_wavelength": 0.0}, "positive"),
+        ({"paper_texture_wavelength": -1.0}, "positive"),
+        ({"paper_tints": ((255, 255, 255),)}, "clipped away"),
+        ({"paper_texture": 20.0}, "clipped away"),
         ({"ink_colours": ()}, "non-empty"),
         ({"fill_colours": ((255, 0),)}, "three whole levels"),
         ({"paper_tints": ((256, 0, 0),)}, "three whole levels"),
@@ -418,6 +436,14 @@ def test_the_shipped_file_loads_both_directions():
 def test_an_augmentation_setting_that_would_mislead_is_refused(override, message):
     with pytest.raises((TypeError, ValueError), match=message):
         replace(default_augment_config(), **override)
+
+
+def test_ink_no_darker_than_the_paper_is_refused():
+    """With inverted render levels every uncoloured drawing composited into a blank page."""
+    inverted = replace(default_config(), ink=255, background=0)
+
+    with pytest.raises(ValueError, match="vanish"):
+        replace(default_augment_config(), render=inverted)
 
 
 # -------------------------------------------------------------------------------------- training
@@ -473,6 +499,13 @@ def test_erasure_only_ever_removes_ink(canvas):
     assert min(counts) < ink(rgb(canvas))
 
 
+def test_erasure_lifts_ink_by_the_configured_strength(canvas):
+    """The strength comes from the YAML: at zero, erasure fires and lifts nothing."""
+    gentle = replace(QUIET, erasure_probability=1.0, erasure_strength_min=0.0, erasure_strength_max=0.0)
+
+    assert np.array_equal(augment_canvas(canvas, seed=3, config=gentle), rgb(canvas))
+
+
 def test_coloured_ink_comes_from_the_palette(canvas):
     crayon = augment_canvas(canvas, seed=3, config=replace(QUIET, ink_colour_probability=1.0))
 
@@ -490,24 +523,39 @@ def test_fill_colours_inside_the_lines_and_nowhere_else(canvas):
 
 
 @pytest.mark.parametrize("seed", range(8))
-def test_lighting_always_reaches_the_paper_and_never_clips(canvas, seed):
+def test_lighting_always_reaches_the_paper(canvas, seed):
     """Seed 3 is the one that used to fire and change nothing: brightened paper clipped to 255."""
     lit = augment_canvas(canvas, seed=seed, config=replace(QUIET, lighting_probability=1.0))
 
     paper, marks = lit[canvas == 255], lit[canvas == 0]
     assert (paper < 255).any(), "the page is darker somewhere than a render's white"
-    assert paper.max() <= 255 and marks.min() >= 0 and (marks > 0).any(), "flattened, not clipped"
+    assert (marks > 0).any(), "and flatter: black ink is lifted towards grey"
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_lighting_never_pushes_a_level_out_of_range(seed):
+    """Checked before rounding, where it can fail: `_levels` clamps whatever reaches it."""
+    for level in (0.0, 255.0):
+        page = np.full((16, 16, 3), level)
+        lit = preprocess._light(page, np.random.default_rng(seed), default_augment_config())
+        assert lit.min() >= 0.0 and lit.max() <= 255.0
+
+
+#: The shipped-style tint that leaves room below 255 for texture and three sigmas of grain.
+TEXTURED = replace(QUIET, paper_tints=((240, 240, 240),), paper_texture=6.0, paper_grain=3.0)
 
 
 def test_paper_texture_reaches_every_pixel_of_paper(canvas):
-    textured = replace(QUIET, paper_texture=6.0, paper_grain=3.0)
-
-    assert len(np.unique(augment_canvas(canvas, seed=3, config=textured)[canvas == 255])) > 10
+    assert len(np.unique(augment_canvas(canvas, seed=3, config=TEXTURED)[canvas == 255])) > 10
 
 
-def test_turning_one_operation_off_leaves_the_others_where_they_were(canvas):
-    """One random stream per operation, so an ablation changes only what it ablates."""
-    textured = replace(QUIET, paper_texture=6.0, paper_grain=3.0, lighting_probability=1.0)
+def test_turning_one_operation_off_leaves_unrelated_pixels_where_they_were(canvas):
+    """One random stream per operation, so toggling wobble does not reshuffle paper or lighting.
+
+    That is independence of the random draws. Fill is the exception it does not cover: it colours
+    what the lines enclose, so it follows wobble and erasure by design (see `augment_canvas`).
+    """
+    textured = replace(TEXTURED, lighting_probability=1.0)
     wobbled = replace(textured, wobble_probability=1.0)
 
     plain, moved = augment_canvas(canvas, 11, textured), augment_canvas(canvas, 11, wobbled)
@@ -554,7 +602,13 @@ def definitions(name: str) -> list[str]:
             assigned = isinstance(node, ast.Assign) and any(
                 isinstance(target, ast.Name) and target.id == name for target in node.targets
             )
-            if defined or assigned:
+            # `prepare_drawing: Callable = ...` is an annotated assignment, a different node.
+            annotated = (
+                isinstance(node, ast.AnnAssign)
+                and isinstance(node.target, ast.Name)
+                and node.target.id == name
+            )
+            if defined or assigned or annotated:
                 found.append(path.relative_to(REPO).as_posix())
     return found
 
@@ -594,12 +648,27 @@ ALLOWED_IMPORTS = frozenset(
 
 
 def imported_modules(tree: ast.Module) -> set[str]:
+    """The modules a file imports: `import a.b` gives `a.b`, `from a import b` gives `a`."""
     found: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             found |= {alias.name for alias in node.names}
         elif isinstance(node, ast.ImportFrom) and node.module:
             found.add(node.module)
+    return found
+
+
+def imported_names(tree: ast.Module) -> set[str]:
+    """`imported_modules`, plus `a.b` for every `from a import b`.
+
+    `from torchvision import transforms` and `from primer import drawing` name their module only
+    in the alias, so a check that reads `node.module` alone sees `torchvision` and `primer` -- and
+    the first version of the guard below missed a whole torchvision pipeline that way.
+    """
+    found = imported_modules(tree)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            found |= {f"{node.module}.{alias.name}" for alias in node.names}
     return found
 
 
@@ -630,25 +699,35 @@ IMAGE_PROCESSING = (
 #: `"L"`, `"1"`, `"P"` -- is greyscale, binarisation or quantisation, which is this module's job.
 DECODE_MODES = frozenset({"RGB", "RGBA"})
 
+#: Pillow's geometry: resizing, cropping and thumbnailing are `prepare_drawing`'s job. Nothing in
+#: the drawing path calls them today; the illustration area does, for its own model, and is out of
+#: scope (see `in_the_drawing_path`).
+GEOMETRY = frozenset({"resize", "crop", "thumbnail"})
+
+
+def convert_mode(call: ast.Call) -> ast.expr | None:
+    """The target mode of a `.convert(...)` call, positional or `mode=`."""
+    if call.args:
+        return call.args[0]
+    return next((keyword.value for keyword in call.keywords if keyword.arg == "mode"), None)
+
 
 def array_preprocessing(tree: ast.Module) -> set[str]:
     found = {
-        module
-        for module in imported_modules(tree)
+        name
+        for name in imported_names(tree)
         for banned in IMAGE_PROCESSING
-        if module == banned or module.startswith(banned + ".")
+        if name == banned or name.startswith(banned + ".")
     }
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == "PIL":
-            found |= {f"PIL.{alias.name}" for alias in node.names if f"PIL.{alias.name}" in IMAGE_PROCESSING}
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "convert"
-            and node.args
-            and not (isinstance(node.args[0], ast.Constant) and node.args[0].value in DECODE_MODES)
-        ):
-            found.add(f".convert({ast.unparse(node.args[0])})")
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        if node.func.attr in GEOMETRY:
+            found.add(f".{node.func.attr}()")
+        elif node.func.attr == "convert":
+            mode = convert_mode(node)
+            if mode is not None and not (isinstance(mode, ast.Constant) and mode.value in DECODE_MODES):
+                found.add(f".convert({ast.unparse(mode)})")
     return found
 
 
@@ -657,15 +736,17 @@ def in_the_drawing_path(path: Path, tree: ast.Module) -> bool:
 
     Other areas process their own images for their own models -- the illustration area resizes
     pictures for CLIP -- and that is not a recogniser input. Anything that imports `primer.drawing`
-    can feed one, so it is in scope. Tests are not: their fixtures build inputs (a palette PNG, a
-    transparent canvas) rather than prepare them for the recogniser.
+    can feed one, so it is in scope, however it spells the import. Tests are not: their fixtures
+    build inputs (a palette PNG, a transparent canvas) rather than prepare them for the recogniser.
     """
     relative = path.relative_to(REPO).as_posix()
     if relative.startswith("tests/"):
         return False
     if relative.startswith("src/primer/drawing/"):
         return True
-    return any(module.startswith("primer.drawing") for module in imported_modules(tree))
+    return any(
+        name == "primer.drawing" or name.startswith("primer.drawing.") for name in imported_names(tree)
+    )
 
 
 def test_nothing_else_in_the_drawing_path_preprocesses_an_image():
@@ -681,8 +762,40 @@ def test_nothing_else_in_the_drawing_path_preprocesses_an_image():
     assert offenders == {}
 
 
-def test_the_guard_would_see_a_greyscale_conversion():
-    """The guard above passes on today's tree; this shows it is not passing because it is blind."""
-    tree = ast.parse("from PIL import ImageOps\nimage = image.convert('L')\nimport cv2.typing\n")
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("from PIL import ImageOps", "PIL.ImageOps"),
+        ("import cv2.typing", "cv2.typing"),
+        ("from torchvision import transforms", "torchvision.transforms"),
+        ("from torchvision.transforms import Grayscale", "torchvision.transforms"),
+        ("from scipy import ndimage", "scipy.ndimage"),
+        ("image = image.convert('L')", ".convert('L')"),
+        ("image = image.convert(mode='1')", ".convert('1')"),
+        ("image = image.resize((224, 224))", ".resize()"),
+        ("image = image.crop((0, 0, 8, 8))", ".crop()"),
+        ("image.thumbnail((224, 224))", ".thumbnail()"),
+    ],
+)
+def test_the_guard_sees_each_form_a_second_path_takes(source, expected):
+    """The guard passes on today's tree; this shows it is not passing because it is blind.
 
-    assert array_preprocessing(tree) == {"PIL.ImageOps", ".convert('L')", "cv2.typing"}
+    The first version of it missed the `from X import Y` forms, the `mode=` keyword and Pillow's
+    geometry -- a torchvision `Compose([Grayscale, Resize])` in a loader passed it untouched.
+    """
+    assert expected in array_preprocessing(ast.parse(source))
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["from PIL import Image", "drawing = drawing.convert('RGB')", "canvas.convert(mode='RGBA')"],
+)
+def test_the_guard_leaves_decoding_alone(source):
+    """Decode and composite stay at the call site, so what `flattened` needs is not an offence."""
+    assert array_preprocessing(ast.parse(source)) == set()
+
+
+def test_a_module_that_imports_the_drawing_package_by_its_parent_is_in_scope():
+    tree = ast.parse("from primer import drawing")
+
+    assert in_the_drawing_path(REPO / "src" / "primer" / "serving" / "example.py", tree)
