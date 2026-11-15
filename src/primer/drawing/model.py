@@ -31,9 +31,11 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any, Protocol
 
+import numpy as np
 import yaml
 
 from primer.drawing.interface import Candidate, Character, DrawingAnalysis
+from primer.drawing.preprocess import PrepareConfig, default_prepare_config, prepare_drawing
 
 CONFIG_DIR = Path(__file__).parent / "configs"
 CONFIG_PATH = CONFIG_DIR / "drawing_baseline.yaml"
@@ -201,9 +203,13 @@ class Encoding:
 
 
 class Encoder(Protocol):
-    """Scores a drawing against text prompts. The real one wraps SigLIP 2; tests pass a fake."""
+    """Scores a drawing against text prompts. The real one wraps SigLIP 2; tests pass a fake.
 
-    def encode(self, image: bytes, prompts: Sequence[str]) -> Encoding: ...
+    ``box`` -- ``(x, y, width, height)`` -- restricts scoring to one character of the drawing
+    (S6e). ``None`` scores the whole drawing.
+    """
+
+    def encode(self, image: bytes, prompts: Sequence[str], *, box: object = None) -> Encoding: ...
 
 
 class SiglipEncoder:
@@ -219,9 +225,14 @@ class SiglipEncoder:
     should know which of the two it is holding.
     """
 
-    def __init__(self, config: DrawingConfig, device: str | None = None) -> None:
+    def __init__(
+        self, config: DrawingConfig, device: str | None = None, prepare: PrepareConfig | None = None
+    ) -> None:
         self.config = config
         self.device = device
+        #: How a decoded drawing becomes the tower's input (`preprocess.prepare_drawing`). None is
+        #: the shipped `drawing_preprocess.yaml`; S6c2 passes its variants here.
+        self.prepare = prepare
         self._model: Any = None
         self._processor: Any = None
         self._dtype: Any = None
@@ -233,6 +244,49 @@ class SiglipEncoder:
         #: requests arriving before the first finishes loading are the normal case on a cold
         #: start, not a rare interleaving.
         self._lock = threading.Lock()
+
+    @property
+    def dtype_name(self) -> str | None:
+        """The tower's dtype as text (``float32``, ``bfloat16``), or None before it is loaded."""
+        return None if self._dtype is None else str(self._dtype).removeprefix("torch.")
+
+    def _check_resolution(self, processor: Any, prepare: PrepareConfig | None = None) -> None:
+        """Refuse a processor whose input size is not the square `prepare_drawing` produces.
+
+        `prepare_drawing` is the only resampling between a decoded drawing and the tower only while
+        `drawing_render.yaml`'s `size` -- marked provisional there -- equals the checkpoint's own
+        resolution. If they part, the processor quietly resizes every prepared drawing a second
+        time, squashing nothing but resampling everything, and a measured number stops being
+        comparable with the rendered split it was meant to match. Checked once, at load, and again
+        for a per-call ``prepare``, whose ``render.size`` can differ from the encoder's own.
+        """
+        expected = (prepare or self.prepare or default_prepare_config()).size
+        size = getattr(getattr(processor, "image_processor", None), "size", None)
+        if isinstance(size, dict):
+            height, width = size.get("height"), size.get("width")
+        else:
+            height, width = getattr(size, "height", None), getattr(size, "width", None)
+        if height is None or width is None:
+            # A shortest-edge (CLIP, DINOv2) or patch-budget (SigLIP 2 NaFlex) processor has no
+            # fixed square, so there is no resolution to change `size` to -- the fix is different.
+            raise ValueError(
+                f"{self.config.encoder}'s processor declares no fixed height x width (size: "
+                f"{size!r}), but `prepare_drawing` hands it a {expected} x {expected} square; a "
+                "checkpoint that resizes by shortest edge or patch budget needs this coupling "
+                "rethought, not a new `size`"
+            )
+        if (height, width) != (expected, expected) and prepare is not None:
+            raise ValueError(
+                f"this call's `prepare` renders at {expected} x {expected}, but {self.config.encoder} "
+                f"expects {width} x {height}; a variant must keep the checkpoint's resolution, or "
+                "the processor resamples every prepared drawing a second time"
+            )
+        if (height, width) != (expected, expected):
+            raise ValueError(
+                f"{self.config.encoder} expects {width} x {height} input, but drawings are "
+                f"prepared at {expected} x {expected}; change `size` in drawing_render.yaml to the "
+                "checkpoint's resolution (and re-render the split) rather than resample twice"
+            )
 
     def load(self) -> None:
         import torch
@@ -259,6 +313,7 @@ class SiglipEncoder:
             processor = AutoProcessor.from_pretrained(
                 self.config.encoder, revision=self.config.encoder_revision
             )
+            self._check_resolution(processor)
             # `dtype`, not `torch_dtype`: the latter is deprecated in transformers 5 and warns on
             # every load.
             model = AutoModel.from_pretrained(
@@ -295,23 +350,45 @@ class SiglipEncoder:
         self._text_cache = (wanted, features)
         return features
 
-    def encode(self, image: bytes, prompts: Sequence[str]) -> Encoding:
+    def encode(
+        self,
+        image: bytes,
+        prompts: Sequence[str],
+        *,
+        prepare: PrepareConfig | None = None,
+        box: object = None,
+    ) -> Encoding:
+        """Score ``image`` against ``prompts``.
+
+        ``prepare`` overrides the encoder's own settings for this call and ``box`` crops to an
+        annotated character first; both go straight to ``prepare_drawing``. They exist for
+        evaluation (S6c2's variants), so a variant is a setting of the one preprocessing path
+        rather than a second path built beside it. The product passes neither.
+        """
         import io
 
         import torch
         from PIL import Image
 
         self.load()
+        if prepare is not None:
+            self._check_resolution(self._processor, prepare)
         text_features = self._encode_prompts(prompts)
         # RGB: the tower expects three channels, and a child's drawing arrives as anything from a
         # 1-bit PNG to an RGBA screenshot. Composited rather than converted -- see `flattened`,
         # where dropping alpha is the difference between a drawing and a black square.
         drawing = flattened(Image.open(io.BytesIO(image)), self.config.alpha_background)
+        # Decode and composite stop here; everything after them is `prepare_drawing`, the one
+        # inference preprocessing path (KAN-31), which the training loader applies to rendered
+        # canvases too. It hands the processor a square at the processor's own resolution, so the
+        # processor's resize -- which would otherwise squash a non-square upload -- has nothing
+        # left to do.
+        pixels = prepare_drawing(np.asarray(drawing), prepare or self.prepare, box=box)
         # The dtype as well as the device. The processor always returns float32 `pixel_values`, and
         # `BatchFeature.to(device)` moves them without casting, so on CUDA -- where the tower is in
         # reduced precision -- the first matmul raises "mat1 and mat2 must have the same dtype".
         # The CPU path never sees it, which is why a CPU smoke run cannot prove the GPU one.
-        inputs = self._processor(images=drawing, return_tensors="pt").to(self.device, self._dtype)
+        inputs = self._processor(images=pixels, return_tensors="pt").to(self.device, self._dtype)
         with torch.no_grad():
             raw = pooled(self._model.get_image_features(**inputs))
             normalised = l2_normalised(raw, torch.finfo(raw.dtype).tiny)
@@ -395,10 +472,19 @@ class DrawingRecognizerModel:
         from different models. An empty string is honest here, while a label echoed into a sentence
         would read like a caption the story writer could use.
         """
+        return DrawingAnalysis(characters=(self.character(image),))
+
+    def character(self, image: bytes, box: Sequence[float] | None = None) -> Character:
+        """Score one character -- the whole drawing, or the part inside ``box`` -- and rank it.
+
+        ``box`` is ``(x, y, width, height)`` in the decoded drawing's pixels. It goes to
+        ``prepare_drawing`` through the encoder, so a character cut from a drawing reaches the
+        tower through the one preprocessing path (S6e's per-character sheets, KAN-31's rule).
+        """
         if not image:
             raise ValueError("analyse needs the drawing's bytes; got none")
 
-        encoding = self.encoder.encode(image, self._prompts)
+        encoding = self.encoder.encode(image, self._prompts, box=box)
         if len(encoding.confidences) != len(self._labels):
             raise ValueError(
                 f"the encoder scored {len(encoding.confidences)} prompts for "
@@ -438,4 +524,4 @@ class DrawingRecognizerModel:
             embedding=tuple(round(value, EMBEDDING_DECIMALS) for value in encoding.embedding),
             candidates=candidates,
         )
-        return DrawingAnalysis(characters=(character,))
+        return character
