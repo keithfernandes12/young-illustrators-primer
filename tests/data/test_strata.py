@@ -16,6 +16,7 @@ from primer.data.strata import (
     EVERYTHING,
     MIN_STRATUM,
     DegenerateStratum,
+    _draw,
     _pool,
     bin_column,
     build_strata,
@@ -644,12 +645,67 @@ def test_the_uniform_remainder_goes_to_the_largest_open_strata():
 
 
 def test_partial_edges_name_the_input_they_are_missing():
+    """Both halves, because the name claims both: that it refuses, and which input it names.
+    Matching only the generic tail let `', '.join(absent)` be replaced by a constant."""
     frame = spread(400)
     _, edges = build_strata(frame, min_size=1)
     del edges["aspect"]
 
-    with pytest.raises(KeyError, match="supply every input's edges or none"):
+    with pytest.raises(KeyError) as caught:
         build_strata(frame, min_size=1, edges=edges)
+
+    assert "aspect" in str(caught.value)
+    assert "supply every input's edges or none" in str(caught.value)
+
+
+def test_an_edges_mapping_with_a_null_value_is_refused_like_a_missing_one():
+    """A mapping round-tripped through JSON or YAML carries nulls. Keyed-presence-only would let
+    that column re-derive its quantiles against the new corpus while the others use the old
+    edges -- the mixed binning the guard's own message says it refuses."""
+    frame = spread(400)
+    _, edges = build_strata(frame, min_size=1)
+    edges["aspect"] = None  # type: ignore[assignment]
+
+    with pytest.raises(KeyError) as caught:
+        build_strata(frame, min_size=1, edges=edges)
+
+    assert "aspect" in str(caught.value)
+
+
+def test_a_draw_refuses_a_stratum_no_row_is_in_rather_than_quietly_coming_up_short():
+    """`_sizes` keeps an unused categorical level out of `wanted`, so this is unreachable through
+    the samplers -- but `observed=True` is what makes the failure loud if it ever becomes
+    reachable, and an earlier round was wrong to call a guard untestable without trying."""
+    frame = spread(8)
+    strata = pd.Series(
+        pd.Categorical(["a"] * 4 + ["b"] * 4, categories=["a", "b", "unused"]),
+        index=frame.index,
+    )
+
+    with pytest.raises(KeyError):
+        _draw(frame, strata, {"a": 2, "unused": 2}, seed=0)
+
+
+def test_supplied_edges_reproduce_the_bins_but_not_the_strata():
+    """The limitation the docstring claims, made falsifiable. The only other `edges` test runs at
+    `min_size=1`, which switches pooling off -- precisely why the earlier round could not see
+    this. Same edges, a 40% subset: the unpooled cells come back identical, and 300 of 800 rows
+    still land in a different stratum once pooling runs against the smaller frame."""
+    frame = spread(2000)
+    _, edges = build_strata(frame, min_size=100)
+    subset = frame.iloc[:800]
+
+    cells_full, _ = build_strata(frame, min_size=1, edges=edges)
+    cells_subset, _ = build_strata(subset, min_size=1, edges=edges)
+    pooled_full, _ = build_strata(frame, min_size=100, edges=edges)
+    pooled_subset, _ = build_strata(subset, min_size=100, edges=edges)
+
+    assert cells_full.loc[subset.index].equals(cells_subset), "the edges should pin the bins"
+    moved = (pooled_full.loc[subset.index] != pooled_subset).sum()
+    assert moved > 0, (
+        "if this passes, pooling has become reproducible across frames and bin_column's "
+        "docstring should stop saying it is not"
+    )
 
 
 def test_min_stratum_still_matches_the_reporting_floor_it_was_taken_from():

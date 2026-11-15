@@ -127,10 +127,6 @@ def bin_column(
 ) -> tuple[pd.Series, list[float]]:
     """``values`` cut into quantile bins, with the realised edges returned alongside.
 
-    The edges come back because they are what makes a later draw reproducible: quantiles are a
-    property of the corpus, so re-deriving them from a different data version silently re-bins
-    every row. Store them with the strata and pass them back rather than recomputing.
-
     Pass ``edges`` from an earlier call to re-use that binning instead of deriving new
     quantiles, which is the point of returning them: quantiles are a property of the corpus,
     so re-deriving them against a corpus that has gained or lost rows silently re-bins every
@@ -221,12 +217,17 @@ def build_strata(
     Returns the labels and the edges together because neither is much use alone: the labels say
     which rows go together and the edges say what "together" meant, which is what a later draw
     needs to reproduce the same bins.
+
+    ``edges`` is all-or-nothing, and a ``None`` value counts as missing rather than as "derive
+    this one": the annotation keeps a typed caller honest, but a mapping round-tripped through
+    JSON or YAML carries nulls, and silently re-deriving one column's quantiles is the mixed
+    binning the guard exists to refuse.
     """
     inputs = stratum_inputs(drawings)
     labelled: dict[str, pd.Series] = {}
     out_edges: dict[str, list[float]] = {}
     if edges is not None:
-        absent = [c for c in inputs.columns if c not in edges]
+        absent = [c for c in inputs.columns if edges.get(c) is None]
         if absent:
             raise KeyError(
                 f"edges is missing {', '.join(absent)}; supply every input's edges or none,"
@@ -248,8 +249,9 @@ def occupancy(strata: pd.Series) -> pd.DataFrame:
     the corpus distributes over size signatures, not that those signatures correspond to how a
     drawing was captured.
 
-    Strata labelled NaN are counted, so the shares always sum to 1. :func:`build_strata` never
-    emits one, but a caller-supplied series can. Categories no row uses are left out -- a
+    Strata labelled NaN are counted, so the shares sum to 1 for any non-empty series -- an
+    empty one gives an empty table, not a division by zero. :func:`build_strata` never emits a
+    NaN stratum, but a caller-supplied series can. Categories no row uses are left out -- a
     categorical declares them, and this table is where the stratum *count* is read from.
     """
     counts = strata.value_counts(dropna=False)
@@ -277,7 +279,12 @@ def _draw(
     """``wanted[stratum]`` rows from each stratum, seeded, returned in index order.
 
     Index order rather than stratum order so two draws that select the same rows compare
-    equal regardless of how the strata were enumerated."""
+    equal regardless of how the strata were enumerated.
+
+    ``observed=True`` looks redundant next to :func:`_sizes`' zero-count filter, which is what
+    keeps an unused categorical level out of ``wanted`` in the first place. It stays because the
+    two fail differently: without it an unobserved key would silently draw zero rows and return a
+    short sample, where with it the key is simply absent and the lookup raises."""
     require_unique_index(drawings)
     groups = strata.groupby(strata, observed=True).groups
     picked = []
