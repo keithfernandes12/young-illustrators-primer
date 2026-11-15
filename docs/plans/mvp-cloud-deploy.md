@@ -226,6 +226,53 @@ need it and neither can start without it.
   one PR, not a dependency anything else can key off.
 - **Depends on** — S6b for the canvas convention. **Jira** — KAN-31.
 
+### S6b3 · Amateur Drawings: find the structure, validate it, sample it
+
+*size: medium*
+
+`src/primer/data/` gains the strata, the cluster-id column and **two** sampling functions over
+Amateur Drawings. Nothing here trains or evaluates a model; it decides which rows anything else
+should take, and it is a spike in that its later stages may legitimately conclude "stop".
+
+- **Why separate** — `quickdraw` picks rows by `max_per_category: 2000`, "first N". Quick, Draw! is
+  pre-partitioned by category so that is harmless; Amateur Drawings is one undifferentiated pile of
+  ~178,000 uploads, where "first N" inherits Meta's upload order and whatever it correlates with.
+  Every consumer of this corpus needs the answer — KAN-111's `humanoid` class if it is accepted,
+  and S6c2's stability sample either way — so it is built once, before either.
+- **Stage 1, free** — strata from columns the parquet already holds and nothing reads:
+  `original_width`/`original_height` (the size *before* Meta's 512 px resize) separate a photograph
+  from a scan from a digital canvas; `bbox_area / (width × height)` is framing; `n_keypoints` and
+  segmentation area are figure complexity. **This is the baseline the later stages must beat** — if
+  embeddings find nothing the metadata did not, that is the finding and the slice stops.
+- **Stage 2, the gate** — the caption-quality check
+  `docs/briefs/drawing-recognition-model-candidates.md` already asks for and nobody has run: 2–3
+  captioners over ~50 drawings. **If captions come back uniformly generic, stage 4 is vacuous and
+  must not be run.** That is not a failure; it is the captioner reporting it cannot see this
+  domain, which S6e needs to know before committing to the same model.
+- **Stages 3–4, image clusters validated in caption space** — embed and cluster with **both**
+  candidate encoders (SigLIP 2's tower, already vendored but circular since it is the model being
+  trained; and DINOv2, an independent view), then caption ~50 members per cluster — centroid-nearest
+  and boundary separately — and report **coherence** (within- against between-cluster caption
+  similarity) and **distinctive terms** per cluster. The encoder whose clusters cohere in caption
+  space wins; the decision is an experiment rather than an argument. ~1,000 captions, not 178,000.
+- **Why captions, and where they still mislead** — structure found in image space, checked in an
+  independent modality. It doubles as the shortcut detector KAN-111 needs: if clusters split on
+  capture artefacts rather than content, the captions expose it or fail to separate at all. But a
+  cluster can cohere on something irrelevant — brightness, say — and score well, so **the
+  distinctive terms matter more than the number**, because a person has to read them and recognise
+  a wrong axis.
+- **Acceptance** — **two** samplers, not one: uniform-per-stratum for training (coverage, so rare
+  modes are learned rather than averaged away) and proportional for evaluation (fidelity, because
+  an eval set's job is to predict production). A test asserts each returns the distribution it
+  claims. Conflating them biases a measurement silently, which is why the split is in the
+  acceptance rather than left to the caller. The cluster-id column feeds `stratify_key` in
+  `src/primer/data/bias.py`.
+- **Privacy** — children's drawings. Montages stay on local scratch, never in the repository or
+  logs, per AGENTS.md. **Captions need the same care**: children write their names on drawings and
+  a captioner with OCR ability may transcribe them, so scrub before recording anything.
+- **Depends on** — S6a for the SigLIP tower, KAN-24's ingest. Not S6b or S6b1: this reads source
+  images, not rendered strokes. **Jira** — KAN-117.
+
 ### S6b2 · Rendered QuickDraw split for the recogniser
 
 *size: medium*
@@ -301,6 +348,11 @@ often the prediction changes between variants, not whether it is right.
   and resolves a change rate to about ±3 points at 95%, finer than any effect worth acting on here.
   Freezing the ids matters as much as the size: S6d re-measures this statistic on the same
   drawings, and a redrawn sample makes the two incomparable.
+  **Draw it with S6b3's *proportional* sampler, not uniformly and not at random.** This is an
+  evaluation sample, so it has to match the corpus it is standing in for; the uniform-per-stratum
+  sampler is for training and would over-represent rare modes here, reporting a stability figure
+  the product never sees. If S6b3 has not landed, a documented random draw is acceptable, and the
+  Verified fact has to say the sample is unstratified so the number is read accordingly.
 - **Decide while building** — which rank statistic "how far the top-5 ranking moves" is: Kendall's
   tau, top-5 set overlap, or mean rank displacement. Record the choice and the reason as a Decision.
 - **Acceptance** — the pairwise stability figures, the margin figures, the sample size and its data
@@ -487,9 +539,10 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6a | merged | [#18](https://github.com/keithfernandes12/young-illustrators-primer/pull/18) | zero-shot SigLIP 2 baseline; no measured number until S6c |
 | S6b | merged | [#19](https://github.com/keithfernandes12/young-illustrators-primer/pull/19) | `render_strokes` + config + PNG; numpy only, so CI covers it. KAN-87 |
 | S6b1 | not started | | the shared preprocessing module, both directions. Unblocks S6b2 and S6c2. KAN-31 |
+| S6b3 | not started | | which Amateur Drawings rows anything takes; a spike whose later stages may stop. KAN-117 |
 | S6b2 | not started | | S6b merged; waits on S6b1 |
 | S6c | not started | | the gate's number, over rendered Quick, Draw! — not the product's. Ceiling back to 1.0 since KAN-116 merged |
-| S6c2 | not started | | preprocessing stability over Amateur Drawings; no labels needed. Needs S6a and S6b1. KAN-109 |
+| S6c2 | not started | | preprocessing stability over Amateur Drawings; no labels needed. Needs S6a, S6b1 and S6b3's sampler. KAN-109 |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap. Reads S6c2's stability figures |
 | S6e | not started | | unblocks KAN-42's reposing and IP-Adapter branches |
 | S7 | not started | | needs GPU quota in region |
@@ -835,6 +888,16 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   file and so cannot be ingested as it stands — KAN-110. No PNG was opened; the colour finding is
   from source code.
 
+- **2026-11-15 — The GPU is present; the installed `torch` cannot see it.** Measured today:
+  `nvidia-smi` reports an **RTX 4060 Laptop, 8188 MiB, driver 592.82**, while `.venv`'s torch is
+  `2.15.0+cpu` with `torch.version.cuda` `None` and `torch.cuda.is_available()` `False`. The cause
+  is packaging, not hardware: the `drawing` extra asks for `torch>=2.4` with no build, and PyPI's
+  default index serves the CPU wheel on Windows; a CUDA build needs
+  `--index-url https://download.pytorch.org/whl/cu124` and about 2.5 GB. **Every "CPU-only" figure
+  in the facts above is therefore a property of this environment, not a limit of this machine** —
+  including S6d being unrunnable and the measured VRAM figure AGENTS.md asks for being
+  unobtainable. Both are one install away.
+
 ## Open questions
 
 - **Should CI run any line of `SiglipEncoder`?** **Tracked as KAN-106.** Today it runs none: CI installs `.[dev]`, `torch`
@@ -865,6 +928,18 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   before S6d. Not before S6b1: that module is specified to make greyscale optional, so it can be
   built either way, and S6c2 — which needs it — is what produces the number this decision wants.
   Deciding earlier would mean deciding without the measurement.
+- **Does the recogniser get a `humanoid` class?** **Tracked as KAN-111.** The 345 name no whole
+  person while Amateur Drawings is ~178,000 drawings of human figures **whose label is free** — the
+  corpus definition supplies it, so nothing needs hand-labelling. *Recommended:* add the class,
+  drawing ~2,000 rows through S6b3's uniform sampler and holding the rest back as the first
+  accuracy number on real children's drawings. Two conditions, both load-bearing: **both classes
+  must pass through S6b1's preprocessing**, or the model separates them on paper texture and
+  answers `humanoid` to every upload including the dragons; and **single-class recall is reported
+  beside the 345-way number**, since answering `humanoid` to everything scores 100%. The cheaper
+  alternative leaves the vocabulary alone and has KAN-64 suppress the label when `body_type` is
+  humanoid — no accuracy number, but no change to the gate either. *Decides:* the KAN-38 owner with
+  the product owner, **before S6d**, because it changes the gate's denominator to 346 and makes
+  every prior run incomparable.
 - **Does the 345-category vocabulary fit what children actually draw?** **Tracked as KAN-111.** It
   cannot name a whole person
   (see the Verified fact above), and KAN-64's flow is "name each character" — children draw
