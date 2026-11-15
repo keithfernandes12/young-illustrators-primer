@@ -28,7 +28,8 @@ refusal here means the two definitions of a valid stroke have diverged, and that
 for. Measured over every record of ``v1.1`` before shipping -- see the plan's Verified facts.
 
 **Licence and attribution** travel with every item: ``RenderedSplit.record(i)`` returns them, and a
-frame with either column missing or null is refused before anything is rendered.
+frame with either column missing, null, blank or not text is refused before anything is rendered --
+on every path that builds a ``RenderedSplit``, the constructor included, not only ``read_dataset``.
 """
 
 from __future__ import annotations
@@ -63,6 +64,9 @@ CONFIG_PATH = Path(__file__).parent / "configs" / "drawing_data.yaml"
 SPLITS = ("train", "val", "test")
 #: Columns a frame must carry. `license` and `attribution` are AGENTS.md's rule for every record.
 REQUIRED = ("record_id", "source_id", "label", "strokes", "license", "attribution")
+
+#: The two columns AGENTS.md requires on every record; they must hold text, not merely be present.
+PROVENANCE = ("license", "attribution")
 
 Image = npt.NDArray[np.uint8]
 
@@ -230,15 +234,31 @@ def label_index(labels: Sequence[str]) -> dict[str, int]:
     return index
 
 
+def is_usable_text(value: object) -> bool:
+    """A provenance value that says something: a string with a non-space character in it.
+
+    ``None``, ``NaN`` and ``pd.NA`` are not strings, so they fail here along with numbers, and
+    ``""`` or ``"   "`` would reach ``DrawingRecord`` as a licence nobody can read.
+    """
+    return isinstance(value, str) and bool(value.strip())
+
+
 def check_frame(frame: pd.DataFrame, labels: Sequence[str]) -> None:
     """Refuse a frame the loader cannot honour, before anything is rendered."""
     missing = [column for column in REQUIRED if column not in frame.columns]
     if missing:
         raise ValueError(f"drawings frame lacks {missing}")
-    for column in ("license", "attribution", "strokes", "source_id"):
+    for column in ("record_id", "source_id", "label", "strokes"):
         nulls = int(frame[column].isna().sum())
         if nulls:
             raise ValueError(f"{nulls} drawings have no {column}; every record must carry one")
+    for column in PROVENANCE:
+        unusable = int((~frame[column].map(is_usable_text)).sum())
+        if unusable:
+            raise ValueError(
+                f"{unusable} drawings have no {column} (missing, blank or not text); every record "
+                "must carry one"
+            )
     known = label_index(labels)
     outside = sorted({label for label in frame["label"] if label.casefold() not in known})
     if outside:

@@ -184,10 +184,40 @@ def test_a_drawing_the_renderer_refuses_raises_naming_its_record():
         (frame(license=[None] * 60), "no license"),
         (frame(attribution=[None] * 60), "no attribution"),
         (frame(label=["dragon"] * 60), "not in the recogniser's vocabulary"),
+        (frame(label=[None] * 60), "no label"),
+        (frame(record_id=[None] * 60), "no record_id"),
     ],
 )
 def test_a_frame_the_loader_cannot_honour_is_refused_before_rendering(bad, message):
     with pytest.raises(ValueError, match=message):
+        build_splits(bad, labels=LABELS)
+
+
+UNUSABLE_TEXT = [
+    pytest.param("", id="empty"),
+    pytest.param("   ", id="whitespace"),
+    pytest.param("\t\n", id="tab-newline"),
+    pytest.param(7, id="number"),
+    pytest.param(pd.NA, id="pd.NA"),
+    pytest.param(float("nan"), id="nan"),
+]
+
+
+@pytest.mark.parametrize("column", ["license", "attribution"])
+@pytest.mark.parametrize("value", UNUSABLE_TEXT)
+def test_provenance_that_is_blank_or_not_text_is_refused(column, value):
+    """Present is not enough: `""` and `7` are not a licence anyone can read."""
+    bad = frame(**{column: [value] + ["usable"] * 59})
+
+    with pytest.raises(ValueError, match=f"1 drawings have no {column}"):
+        build_splits(bad, labels=LABELS)
+
+
+@pytest.mark.parametrize("column", ["license", "attribution"])
+def test_one_blank_row_among_good_ones_is_still_counted(column):
+    bad = frame(**{column: ["usable"] * 57 + ["", "  ", None]})
+
+    with pytest.raises(ValueError, match=f"3 drawings have no {column}"):
         build_splits(bad, labels=LABELS)
 
 
