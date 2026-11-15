@@ -162,6 +162,14 @@ def select(runs: Sequence[dict[str, Any]], rule: dict[str, Any], size_rank: dict
     return min(contenders, key=key)
 
 
+def limit_requests(requests: Sequence[ValidationRequest], n: int | None) -> list[ValidationRequest]:
+    """The first `n` requests (all of them when `n` is None). The file is written round-robin by source,
+    with ages cycling within each source, so a prefix keeps both balanced."""
+    if n is not None and n < 1:
+        raise ValueError("max_requests must be at least 1")
+    return list(requests if n is None else requests[:n])
+
+
 def config_params(raw: dict[str, Any]) -> dict[str, str]:
     """The whole config as MLflow params (review Q3; model-development section 2): scalars as text,
     lists and mappings (models, grid, baseline, selection rule) as JSON."""
@@ -277,7 +285,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     config = load_config(args.config)
-    requests = read_requests(args.requests or Path(config.raw["requests"]))
+    requests = limit_requests(read_requests(args.requests or Path(config.raw["requests"])),
+                              config.raw.get("max_requests"))
+    print(f"{len(requests)} requests x {len(config.points())} configurations")
     logger = MlflowLogger(str(config.raw["mlflow_tracking_uri"]), str(config.raw["experiment"]),
                           config.raw.get("mlflow_artifact_location"))
     sha = git_sha()

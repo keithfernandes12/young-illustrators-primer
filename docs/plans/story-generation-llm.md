@@ -977,6 +977,16 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
     logs the whole config as params, plus `dvc/<dataset>` tags.
   - **Grammar-constrained decoding is deferred in M1** (KAN-39 asks for it). M1 samples freely and
     retries on invalid JSON, and the grid's valid-JSON rate measures how much constraint is needed.
+- **2026-11-15** — **Reduced grid for the Mac (Diya; hardware constraint).** The grid is both models ×
+  temperature {0.3, 0.7} × max_new_tokens {512}, so **4 configurations, on the first 20 of the 30
+  requests** (`max_requests: 20`). The first 20 are balanced 7/7/6 by source and by age.
+  - Why: the fanless MacBook Air heats and throttles on a long MPS run, and the full 12-configuration
+    grid on 30 requests ran ~75 min and was stopped twice.
+  - Kept: the baseline configuration (0.5B, 0.7, 512) is still a grid point, and the selection rule
+    is unchanged (`selection@1`).
+  - Not measured in this submission: temperature 1.0, max_new_tokens 256 (so no token-limit
+    sensitivity), and requests 21–30. The full grid runs where there is a GPU.
+  - Recorded in `CARD.md` ("Grid (hardware constraint)").
 
 ## Verified facts
 

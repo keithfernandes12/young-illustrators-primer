@@ -17,6 +17,7 @@ young reading level, and free of the topics on the avoid-list. Plan:
 | Decoding | ordinary sampling, then parse-and-retry. **Grammar-constrained decoding** (which KAN-39 asks for) is **deferred** in M1: the JSON validity rate measures how much it is needed first |
 | Level | `fk_formula@1` (`levels.fk_grade`: whole story, clamped at 0, rounded to 0.5) |
 | Hardware | the owner's MacBook Air (Apple M4, 16 GB), MPS, fp16 |
+| Grid (hardware constraint) | **Reduced to 4 configurations on 20 requests**: both models × temperature {0.3, 0.7} × max_new_tokens {512}. The Air is fanless, so it heats and throttles over a long MPS run, and the full 2 × 3 × 2 grid on all 30 requests took ~75 min. Temperature 1.0 and max_new_tokens 256 are not measured in this submission. 512 was kept over 256 because a 4–6 page JSON story can be cut off at 256, which would score the token limit, not the model. The full grid runs where there is a GPU |
 | Owner | DiyaKaswa11 (member 2) |
 
 ## How it works
@@ -55,7 +56,7 @@ attempts, p95 latency.
 
 ## Slices
 
-`source` (picture-book origin or TinyStories) and `age` (3, 4, 5). With ~30 requests every slice is
+`source` (picture-book origin or TinyStories) and `age` (3, 4, 5). With 20 requests every slice is
 below the 100-row floor `primer.data.bias` uses, so slices are reported with `judged: false`; no
 disparity is claimed from them.
 
@@ -69,7 +70,7 @@ disparity is claimed from them.
 | Bias detection by slicing | **Partial** | Per-slice metrics by source and age in `metrics.json` and MLflow. Gender-swapped prompt pairs (the slice `model-development` names) are deferred: they need paired requests |
 | Code that checks bias and reports | **Partial** | `slices.py` reports every slice with its size and `judged`. Not Fairlearn `MetricFrame`: with all slices under the floor there is nothing to judge yet |
 | Bias mitigation | **Not applicable yet** | Nothing is trained, so there is no training data to re-weight; `balance_by_swap` applies to training pairs (plan S2) |
-| Hyperparameter tuning | **Done (grid)** | temperature × max_new_tokens per model, exhaustive. Optuna is unnecessary for 12 points; it arrives with QLoRA |
+| Hyperparameter tuning | **Partial (reduced grid)** | temperature × max_new_tokens per model, exhaustive over a 4-point grid cut down for the Mac (see "Grid" above); max_new_tokens has one value, so its sensitivity is not measured here. Optuna arrives with QLoRA |
 | Experiment tracking | **Done** | One MLflow run per grid point, local git-ignored SQLite store (`.local-data/mlflow.db`, artifacts in `.local-data/mlartifacts`), with the section 2 tags plus `level_source`; re-logged to the shared server when it exists |
 | Result visualisations | **Done** | `charts.py`: comparison bars and the temperature sweep (needs the `story` extra) |
 | Sensitivity analysis | **Partial** | Hyperparameter spreads (`sensitivity.py`). Prompt-constraint ablation is deferred (plan S8a). SHAP/LIME do not apply to a generative stage |

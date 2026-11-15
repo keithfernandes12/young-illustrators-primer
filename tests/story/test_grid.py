@@ -18,6 +18,7 @@ from primer.story.grid import (
     config_params,
     dvc_tags,
     finish,
+    limit_requests,
     load_config,
     run_grid,
     select,
@@ -237,6 +238,21 @@ def test_the_backend_is_created_once_per_model():
     run_grid(small_config(), REQUESTS, counting, RecordingLogger(), owner="t", sha="s",
              clock=itertools.count().__next__)
     assert sorted(made) == ["qwen2.5-0.5b-instruct", "qwen2.5-1.5b-instruct"]
+
+
+def test_the_shipped_grid_is_the_reduced_mac_grid():
+    """The hardware-constrained grid recorded in CARD.md: 2 models x 2 temperatures x 1 token limit."""
+    config = load_config(CONFIG)
+    assert len(config.points()) == 4
+    assert config.raw["max_requests"] == 20
+
+
+def test_limit_requests_takes_a_prefix():
+    assert limit_requests(REQUESTS, 2) == REQUESTS[:2]
+    assert limit_requests(REQUESTS, None) == REQUESTS
+    assert limit_requests(REQUESTS, 99) == REQUESTS
+    with pytest.raises(ValueError):
+        limit_requests(REQUESTS, 0)
 
 
 def test_config_params_and_dvc_tags_shapes():

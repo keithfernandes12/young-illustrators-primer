@@ -7,7 +7,7 @@ group is visible rather than averaged away. The keys for this submission:
 - `age` -- 3, 4 or 5.
 
 `primer.data.bias` judges a slice only at 100 rows or more (`SMALL_SLICE`). The Mac submission has
-about 30 requests, so **every slice here is below that floor**: the numbers are reported, and each row
+20-30 requests, so **every slice here is below that floor**: the numbers are reported, and each row
 says `judged: false`, rather than presenting a 10-request difference as a finding. Gender-swapped
 prompts (the slice `model-development` names for stage 2) need paired requests and are deferred
 (`CARD.md`).

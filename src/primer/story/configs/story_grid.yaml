@@ -35,9 +35,16 @@ models:
     revision: 989aa7980e4cf806f80c7fef2b1adb7bc71aa306
     license: apache-2.0
 
+# Reduced for the Mac (Diya, 2026-11-15): a fanless MacBook Air heats and throttles over a long MPS
+# run, and the full 2 x 3 x 2 grid on 30 requests took ~75 min. So: both models, 2 temperatures, 1 token
+# limit (4 configurations), on the first 20 requests. The first 20 stay balanced (7/7/6 by source and by
+# age) because the requests file is written round-robin. 512 tokens, not 256: a 4-6 page JSON story can
+# be cut off at 256, which would score the token limit as invalid JSON rather than the model. The full
+# grid (temperature 1.0, max_new_tokens 256, all 30 requests) runs where there is a GPU.
+max_requests: 20
 grid:
-  temperature: [0.3, 0.7, 1.0]
-  max_new_tokens: [256, 512]
+  temperature: [0.3, 0.7]
+  max_new_tokens: [512]
 
 # The named frozen configuration every later model has to beat (model-development section 2: for a
 # stage that does not train, the baseline is a pinned configuration, not "the model's own score").
