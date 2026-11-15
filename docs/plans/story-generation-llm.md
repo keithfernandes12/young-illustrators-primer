@@ -413,7 +413,9 @@ S2 runs these steps in this order. The order matters: dedupe before the split, g
     likeliest to fit there. A registered run must come from Vertex anyway (ADR clause 4).
 - **Blockers outside this plan:**
   - GPU quota in Diya's compute project (a new project starts at zero).
-  - The shared MLflow server (`model-development` §1.4 and §10).
+  - ~~The shared MLflow server (`model-development` §1.4 and §10).~~ It exists as of 2026-11-15
+    (KAN-107, `docs/runbooks/mlflow-server.md`). Still open: a cloud job has no path to it once
+    it is IAP-only, so the Vertex run must log some other way until that is decided.
   - **Read access for the training job** (review F7a). The Vertex job runs as
     `yip-trainer@$YIP_COMPUTE_PROJECT` (`.claude/skills/train-vertex/job_template.yaml:25`), and that
     account needs `roles/storage.objectViewer` on `gs://young-illustrators-primer-data` to read

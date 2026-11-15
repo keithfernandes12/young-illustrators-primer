@@ -46,11 +46,14 @@ One server holds every run the team logs, local runs included
   internet. Today `mlflow` is the project's only VM. The bucket was also created without
   `--public-access-prevention` (it reports `inherited`); apply it with
   `gcloud storage buckets update gs://yip-mlflow-artifacts --public-access-prevention`. When both
-  are done, delete this bullet, the "untested" sentence under **Harden the live server**, and the
-  "until then" wording in the port comment of `infra/mlflow/docker-compose.yml`.
+  are done and the checks under **Harden the live server** pass, edit these: delete this bullet,
+  the "untested" sentence and the "has not been run either" line under **Harden the live server**,
+  the "Today a job in the same VPC…" sentence in the **Cloud jobs** bullet, the "until then"
+  wording in the port comment of `infra/mlflow/docker-compose.yml`, and the "once the runbook's
+  hardening is applied" parenthetical in `docs/engineering/model-development.md`.
 - **Cloud jobs.** The server's external IP admits no one on port 5000, and after hardening only
-  IAP can reach it, so a Vertex or Cloud Run job has no path in. Today a job in the same VPC reaches it only through
-  `default-allow-internal`, which hardening closes. How cloud runs log is an open decision (an
+  IAP can reach it, so a Vertex or Cloud Run job has no path in. Today a job in the same VPC
+  reaches it only through `default-allow-internal`, which hardening closes. How cloud runs log is an open decision (an
   internal-only rule for a tagged range, or a login proxy); until it is made, log from a machine
   with the tunnel open.
 
@@ -65,8 +68,8 @@ One server holds every run the team logs, local runs included
   which is global. A teammate's default project is usually their own, and the create and delete
   commands would act there.
 - **Person-only steps.** Every step that creates a resource, changes the network or grants a role
-  — **Build it from scratch**, **Harden the live server** and **Grant a teammate access** — is for
-  a person to run. Agents cannot make IAM grants (`.claude/settings.json`, `guard_cloud.py`) and must
+  — **Build it from scratch**, **Harden the live server**, **Grant a teammate access** and the
+  teardown — is for a person to run. Agents cannot make IAM grants (`.claude/settings.json`, `guard_cloud.py`) and must
   not create service-account keys.
 - **Windows shells.** On Windows, the `gcloud` lines below are written so they run unchanged in
   both PowerShell and Git Bash. Four PowerShell traps cost time on the first setup:
@@ -134,6 +137,18 @@ this command names the missing permission:
 gcloud compute ssh mlflow --zone=us-central1-a --project=young-illustrators-primer --tunnel-through-iap --troubleshoot
 ```
 
+**To revoke access** (someone leaves, or an account is wrong), remove both roles. The IAP role is
+granted on the whole project, so while it stands that person can tunnel to any VM and port the
+firewall admits, not only `mlflow`:
+
+```
+gcloud projects remove-iam-policy-binding young-illustrators-primer --member="user:<their-google-account>" --role=roles/iap.tunnelResourceAccessor
+gcloud projects remove-iam-policy-binding young-illustrators-primer --member="user:<their-google-account>" --role=roles/compute.viewer
+```
+
+Skip the second line if they hold `compute.viewer` for another reason. A tunnel they already
+opened keeps working until it is closed, so ask them to close it.
+
 ## Harden the live server (person-only)
 
 Do this once, before anyone adds another VM to the default network. It tags the VM, scopes the
@@ -154,8 +169,23 @@ Check it, then open the tunnel and `curl -s localhost:5000/health` to confirm IA
 gcloud compute firewall-rules list --project=young-illustrators-primer --format="table(name,priority,sourceRanges.list(),allowed[].map().firewall_rule().list(),denied[].map().firewall_rule().list(),targetTags.list())"
 ```
 
-`allow-iap-mlflow` and `deny-non-iap-mlflow` must both show target tag `mlflow`. This procedure has
-not been run yet, so it is untested.
+`allow-iap-mlflow` and `deny-non-iap-mlflow` must both show target tag `mlflow`. That table and a
+working tunnel only show that IAP still gets in. Also check that nobody else does, from a machine
+that is **not** using the tunnel. The external IP changes if the VM is stopped and started, so read
+it first:
+
+```
+gcloud compute instances describe mlflow --zone=us-central1-a --project=young-illustrators-primer --format="value(networkInterfaces[0].accessConfigs[0].natIP)"
+curl -m 5 -sS http://<that-ip>:5000/health
+curl -m 5 -sS telnet://<that-ip>:22
+```
+
+Both `curl` lines must time out (a banner or `OK` means the port is open). On a laptop this proves
+that port 22 is closed to the internet; port 5000 never had an internet-facing allow rule. The
+exposure hardening exists for is another VM in the network, so also create a throwaway VM in the
+default network, run the same two `curl` lines against `mlflow`'s **internal** IP, and delete the
+throwaway VM. This procedure has not been run yet, so it is untested; drop that statement only
+after these checks pass.
 
 **If the tunnel or SSH stops working afterwards**, undo it. Deleting the deny rule restores access
 at once; the other two lines return the allow rule and the VM to how they were first built:
@@ -239,7 +269,7 @@ The `--clear-target-tags` flag has not been run either.
 - **Tear it all down (person-only).** This deletes every run and every artifact. Export what you
   need first; step 3 removes the bucket and everything in it. Teammates' project-level
   `roles/iap.tunnelResourceAccessor` and `roles/compute.viewer` grants stay in place; remove them
-  separately if they should go. In this order:
+  with the revoke lines under **Grant a teammate access** if they should go. In this order:
   1. `gcloud compute instances delete mlflow --zone=us-central1-a --project=young-illustrators-primer`
   2. `gcloud compute firewall-rules delete allow-iap-mlflow deny-non-iap-mlflow --project=young-illustrators-primer`
      (on a server that was never hardened, only `allow-iap-mlflow` exists; delete just that)
