@@ -114,7 +114,7 @@ One server holds every run the team logs, local runs included
 4. **Name things as the conventions say.**
    - Experiment: `MLFLOW_EXPERIMENT_NAME=yip-<component>`.
    - Tags: the ones `model-development.md` lists.
-   - Slice metrics: `slice/<key>/<value>/<metric>`. MLflow rejects `=` and `:` in metric names,
+   - Slice metrics: `slice/<key>/<value>/<metric>`. MLflow rejects `=` in metric names everywhere and `:` on Windows clients,
      so the earlier form `slice/<key>=<value>/<metric>` cannot be logged.
 
 ## Grant a teammate access (person-only)
@@ -180,15 +180,20 @@ curl -m 5 -sS http://<that-ip>:5000/health
 curl -m 5 -sS telnet://<that-ip>:22
 ```
 
-Both `curl` lines must time out (a banner or `OK` means the port is open). On a laptop this proves
+Run these in Git Bash, or as `curl.exe` in PowerShell (there `curl` is an `Invoke-WebRequest` alias
+and `-m` fails). Run the port-22 line once **before** hardening as well: it should print an SSH
+banner, which shows the check can see through your network. A timeout is only meaningful after
+that. Afterwards both `curl` lines must time out (a banner or `OK` means the port is open). On a laptop this proves
 that port 22 is closed to the internet; port 5000 never had an internet-facing allow rule. The
 exposure hardening exists for is another VM in the network, so also create a throwaway VM in the
 default network, run the same two `curl` lines against `mlflow`'s **internal** IP, and delete the
-throwaway VM. This procedure has not been run yet, so it is untested; drop that statement only
-after these checks pass.
+throwaway VM. The same step closes the bucket gap listed under **Not yet true of the live server**:
+run `gcloud storage buckets update gs://yip-mlflow-artifacts --public-access-prevention` too. This
+procedure has not been run yet, so it is untested; drop that statement only after these checks pass.
 
-**If the tunnel or SSH stops working afterwards**, undo it. Deleting the deny rule restores access
-at once; the other two lines return the allow rule and the VM to how they were first built:
+**If the tunnel or SSH stops working afterwards**, undo it. Run all three lines: the deny rule is
+not always the cause (for example, if the tag did not land on the VM), and together they return the
+rules and the VM to how they were first built:
 
 ```
 gcloud compute firewall-rules delete deny-non-iap-mlflow --project=young-illustrators-primer

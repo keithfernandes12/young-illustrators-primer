@@ -141,7 +141,7 @@ runs from six machines cannot be compared:
 
 Params are the whole config file. Metrics are everything in `overall`, plus each slice as
 `slice/<key>/<value>/<metric>`. This was `slice/<key>=<value>/<metric>` until 2026-11-15, when
-the first real run found that MLflow rejects `=` and `:` in metric names. Artifacts are
+the first real run found that MLflow rejects `=` in metric names everywhere and `:` on Windows clients. Artifacts are
 `metrics.json`, the bias report, the comparison plots the guidelines ask for (bar plot across
 candidates, confusion matrix where the task has classes) and `CARD.md`. The server and how to reach
 it are in `docs/runbooks/mlflow-server.md`.

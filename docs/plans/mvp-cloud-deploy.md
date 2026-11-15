@@ -1181,7 +1181,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   own no-image-library acceptance. The shipped `greyscale: false` and `binarise: false` keep what
   S6a did and **decide neither question** — colour versus greyscale is the KAN-38 owner's, on
   S6c2's numbers. None of these figures is in MLflow: they measure preprocessing rather than
-  compare models, and there is no host yet (KAN-107). S6b2 inherits the remaining half of the
+  compare models, and there was no host yet (KAN-107; one exists as of 2026-11-15). S6b2 inherits the remaining half of the
   single-path guard — asserting the training loader imports `augment_canvas` from here.
 - **2026-11-15 — S6b1: the first independent review found the single-path guard half-blind.**
   *Hypothesis:* the guard catches a second preprocessing path in the drawing path. *Result:* not

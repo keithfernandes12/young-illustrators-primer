@@ -55,7 +55,7 @@ fetched on 2026-11-14. Also not read: the bucket itself (no row counts), the `tr
   re-checks them when it pins revisions.
 - `bitsandbytes` 4-bit QLoRA needs an NVIDIA GPU, so it will not run on a MacBook Air.
 - The shared MLflow server and GPU quota are still outstanding, as `model-development` §1.4 said on
-  2026-11-14.
+  2026-11-14. (The MLflow server exists as of 2026-11-15; see the blockers below.)
 
 ## Contract
 
@@ -704,7 +704,7 @@ Results and mitigations go in `CARD.md`. SHAP is stated as inapplicable (`model-
 
 - **Acceptance**
   - One MLflow run per ablation and sweep point, with per-slice metrics logged as
-    `slice/<key>/<value>/<metric>` (MLflow rejects `=` and `:` in metric names).
+    `slice/<key>/<value>/<metric>` (MLflow rejects `=` everywhere and `:` on Windows clients).
   - Any slice of at least 100 rows whose `target_word_inclusion` is more than 5 points below overall
     is named in `CARD.md`, with a mitigation proposed or ruled out.
 - **Testing**
