@@ -701,7 +701,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6b2 | merged | [#32](https://github.com/keithfernandes12/young-illustrators-primer/pull/32) | `data.py`: hashed 80/10/10 split of v1.1 (506k/63k/63k), rendered on demand through `render_strokes` → `augment_canvas` (train only) → `prepare_drawing`. Unblocks S6c |
 | S6c | in review | [#37](https://github.com/keithfernandes12/young-illustrators-primer/pull/37) | baseline `drawing_top5_acc` **0.4956** over all 63,310 rendered test drawings (GPU, bf16): gate FAIL against 0.85, chance 0.0145. MLflow run `c2b68187` in `yip-drawing`. The gate's number, not the product's. KAN-38 |
 | S6c2 | merged | [#33](https://github.com/keithfernandes12/young-illustrators-primer/pull/33) | 1,000 frozen drawings (unstratified), four variants: top-1 moves 25% / 50% / 41% between adjacent variants; over half the drawings come out `squiggle`. Reproduces exactly. KAN-109 |
-| S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); still waits on S6b2 (#32) and S6c. Reads S6c2's stability figures |
+| S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); still waits on S6c (#37). Reads S6c2's stability figures |
 | S6e | merged | [#35](https://github.com/keithfernandes12/young-illustrators-primer/pull/35) | `sheet.py`: Florence-2 + SAM 2.1 + ViTPose beside SigLIP 2; every field filled on 82/82 real sheets; two figures found as two on 12/20. Unblocks KAN-42 |
 | S7a | in progress | branch `feat/KAN-42-controlnet-baseline` | pretrained SD 1.5 + ControlNet-Scribble, one page, local output; synthetic inputs only until KAN-94 |
 | S7b | not started | | needs S1, GPU quota in region, a working `consistency()`, and KAN-94 |
@@ -1492,7 +1492,11 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
     (`val` chooses the model; it stays diagnostic). The ratio is written unrounded, because 53,811
     of 63,310 is 0.8499605 and rounds to a passing 0.85. An empty `--version` and a
     `prompt_template` without `{label}` are refused before any bucket or weights are read. The
-    0.4956 above is unchanged: it was the four-place display of the same hits.
+    0.4956 above is unchanged: it was the four-place display of the same hits. The previous run's
+    `--out` file is removed first, before any other refusal, so a run that dies cannot leave an old
+    result for `check_gate` to read; only a file with `"stage": "drawing"` is removed, anything else
+    is refused. The file also records `gate_eligible`, `data_uri`, and the package's own commit and
+    whether its tree was dirty.
   - **The golden ceiling, re-counted.** `configs/golden/scenarios.jsonl` holds 80 book scenarios
     over 16 distinct `drawing_label`s. All 16 are in the 345, case-insensitively and exactly, so a
     flawless recogniser reaches 1.0. That is a property of the golden set, not of this number,

@@ -344,7 +344,7 @@ def accuracy_by_slice(hits: Sequence[bool], groups: Mapping[str, Sequence[str]])
     """``drawing_top5_acc`` per value of each slice key. ``groups[key][i]`` is drawing *i*'s value.
 
     Each slice carries ``judged``: False below ``SMALL_SLICE`` drawings, so it is reported, not
-    judged -- 194 countries over 63,310 drawings leaves most of them small.
+    judged -- 165 countries over 63,310 drawings leaves most of them small.
     """
     from primer.drawing.slices import SMALL_SLICE
 
@@ -405,16 +405,45 @@ def metrics_file(
     }
 
 
-def _git_sha() -> str:
+def _git_state() -> tuple[str, bool | None]:
+    """This package's commit and whether its tree has uncommitted changes (None: unknown).
+
+    Run from the package's own folder, not the caller's working directory, so a run started from
+    another repository does not record that repository's commit.
+    """
     import subprocess
 
+    here = Path(__file__).resolve().parent
+
+    def git(*args: str) -> str | None:
+        try:
+            result = subprocess.run(
+                ["git", *args], capture_output=True, text=True, check=False, timeout=10, cwd=here
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return result.stdout.strip() if result.returncode == 0 else None
+
+    sha = git("rev-parse", "--short", "HEAD")
+    status = git("status", "--porcelain")
+    return sha or "unknown", (None if status is None else bool(status))
+
+
+def _clear_previous_output(parser: argparse.ArgumentParser, out: Path) -> None:
+    """Remove the last run's file so a run that dies cannot leave it for ``check_gate`` to read.
+
+    Only a previous drawing metrics file is removed: a slip such as ``--out <the model yaml>``
+    is refused rather than deleted.
+    """
+    if not out.exists():
+        return
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=False, timeout=10
-        )
-    except (OSError, subprocess.SubprocessError):
-        return "unknown"
-    return result.stdout.strip() or "unknown"
+        previous = json.loads(out.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        previous = None
+    if not isinstance(previous, dict) or previous.get("stage") != STAGE:
+        parser.error(f"--out {out} exists and is not a previous drawing metrics file; not overwriting it")
+    out.unlink()
 
 
 def accuracy_parser() -> argparse.ArgumentParser:
@@ -463,6 +492,9 @@ def _evaluate_accuracy(argv: list[str]) -> int:
         parser.error(
             f"--out's folder does not exist: {args.out.parent}; the run takes minutes, so say so now"
         )
+    # First, before any other refusal or load: a run that exits early for any reason must not
+    # leave the previous file at --out for the gate to certify.
+    _clear_previous_output(parser, args.out)
     if args.limit is not None and args.limit < 1:
         parser.error("--limit must be at least 1")
 
@@ -484,8 +516,6 @@ def _evaluate_accuracy(argv: list[str]) -> int:
         )
     index = label_index(labels)
 
-    # A crashed rerun must not leave the previous run's file at --out for `check_gate` to read.
-    args.out.unlink(missing_ok=True)
     store = Store()
     frame = catalog.read_dataset("drawings", store=store, sources=["quickdraw"], version=args.version)
     if frame.empty:
@@ -515,6 +545,8 @@ def _evaluate_accuracy(argv: list[str]) -> int:
                 f"{done}/{len(part)} scored, {time.perf_counter() - start:.0f}s", file=sys.stderr, flush=True
             )
 
+    # Read before the run: it takes minutes, and an edit meanwhile should not be recorded as the code.
+    git_sha, git_dirty = _git_state()
     start = time.perf_counter()
     encoder = SiglipEncoder(config, device=args.device)
     hits = top5_hits(drawings(), encoder, prompts, progress)
@@ -528,12 +560,15 @@ def _evaluate_accuracy(argv: list[str]) -> int:
         encoder=config.encoder,
         encoder_revision=config.encoder_revision,
         data_version=args.version,
+        # `Store()` honours PRIMER_DATA_URI, so a version tag alone does not say which data was read.
+        data_uri=store.uri,
         split=args.split,
         limit=args.limit,
         over="rendered Quick, Draw! (recognized=True only), not children's uploads",
         license=sorted(set(part["license"])),
         attribution=sorted(set(part["attribution"])),
-        git_sha=_git_sha(),
+        git_sha=git_sha,
+        git_dirty=git_dirty,
         seconds=round(time.perf_counter() - start, 1),
         **_scored_under(config, str(encoder.device), encoder.dtype_name or "unknown"),
         preprocessing=asdict(encoder.prepare or default_prepare_config()),

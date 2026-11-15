@@ -250,6 +250,10 @@ def _stub_world(monkeypatch, frame: pd.DataFrame, winner: str) -> list[object]:
             assert image.startswith(b"\x89PNG"), "the encoder gets PNG bytes, as an upload"
             scores = [0.1] * len(prompts)
             scores[labels.index(winner)] = 0.9
+            # The winner's neighbour is ranked last. Without this, a label index off by one lands
+            # in the top five anyway, because ties fall back to vocabulary order and the winner is
+            # index 0: the mapping from label to index would go untested.
+            scores[labels.index(winner) + 1] = 0.0
             return SimpleNamespace(confidences=scores)
 
     monkeypatch.setattr(catalog, "read_dataset", lambda *args, **kwargs: frame)
@@ -295,7 +299,8 @@ def test_the_cli_scores_the_test_split_end_to_end(monkeypatch, tmp_path):
     assert result["device"] == "cuda" and result["dtype"] == "bfloat16"
     assert result["split"] == "test" and result["data_version"] == "v1.1" and result["limit"] is None
     assert result["license"] == ["CC-BY-4.0"] and result["attribution"] == ["Quick, Draw!"]
-    assert result["gate_eligible"] is True
+    assert result["gate_eligible"] is True and result["data_uri"] == "gs://bucket"
+    assert isinstance(result["git_dirty"], bool) and result["git_sha"] != "unknown"
     assert result["preprocessing"] == asdict(evaluate.default_prepare_config())
 
 
@@ -358,13 +363,54 @@ def test_a_drawing_that_cannot_be_rendered_is_named_and_aborts_the_run(monkeypat
 def test_a_failed_rerun_does_not_leave_the_previous_file_to_be_gated(monkeypatch, tmp_path):
     _stub_world(monkeypatch, _rows("test", "The Eiffel Tower", 2, "t").iloc[0:0], winner="The Eiffel Tower")
     out = tmp_path / "m.json"
-    out.write_text('{"drawing_top5_acc": 0.99}', encoding="utf-8")
+    out.write_text('{"stage": "drawing", "drawing_top5_acc": 0.99}', encoding="utf-8")
     model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
 
     with pytest.raises(ValueError, match="holds no Quick, Draw"):
         evaluate.main(["--model", str(model_yaml), "--version", "v1.1", "--out", str(out)])
 
     assert not out.exists()
+
+
+@pytest.mark.parametrize(
+    "bad_args",
+    [["--limit", "0"], ["--version", ""], ["--model", "no_such_config.yaml"]],
+    ids=["limit", "version", "model"],
+)
+def test_a_refused_rerun_does_not_leave_the_previous_file_to_be_gated(tmp_path, bad_args):
+    out = tmp_path / "m.json"
+    out.write_text('{"stage": "drawing", "drawing_top5_acc": 0.99}', encoding="utf-8")
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+    args = {"--model": str(model_yaml), "--version": "v1.1", "--out": str(out)}
+    args.update(dict(zip(bad_args[::2], bad_args[1::2], strict=True)))
+
+    with pytest.raises((SystemExit, FileNotFoundError)):
+        evaluate.main([item for pair in args.items() for item in pair])
+
+    assert not out.exists()
+
+
+def test_an_out_path_that_is_not_a_previous_metrics_file_is_refused_and_kept(tmp_path):
+    other = tmp_path / "config.yaml"
+    other.write_text("name: not a metrics file\n", encoding="utf-8")
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    with pytest.raises(SystemExit):
+        evaluate.main(["--model", str(model_yaml), "--version", "v1.1", "--out", str(other)])
+
+    assert other.read_text(encoding="utf-8") == "name: not a metrics file\n"
+
+
+def test_the_recorded_commit_is_the_packages_not_the_callers(monkeypatch, tmp_path):
+    expected = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True, cwd=ROOT
+    ).stdout.strip()
+    monkeypatch.chdir(tmp_path)
+
+    sha, dirty = evaluate._git_state()
+
+    assert sha == expected
+    assert isinstance(dirty, bool)
 
 
 def test_an_out_folder_that_does_not_exist_is_refused_up_front(tmp_path):
