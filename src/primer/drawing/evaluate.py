@@ -391,13 +391,17 @@ def metrics_file(
     """
     overall = {"drawing_top5_acc": _accuracy(hits), "drawings": len(hits)}
     top_level = {"drawing_top5_acc": overall["drawing_top5_acc"]} if gated else {}
+    # Provenance first, so a caller's keyword can never overwrite a computed value below it.
     return {
+        **provenance,
         "stage": STAGE,
         **top_level,
+        # The one place eligibility is stated outright; the missing top-level key is how the gate
+        # sees it, but a script reading `overall` would otherwise take a probe for a result.
+        "gate_eligible": gated,
         "overall": overall,
         "baseline": chance_baseline(vocabulary_size),
         "slices": accuracy_by_slice(hits, groups),
-        **provenance,
     }
 
 
@@ -480,6 +484,8 @@ def _evaluate_accuracy(argv: list[str]) -> int:
         )
     index = label_index(labels)
 
+    # A crashed rerun must not leave the previous run's file at --out for `check_gate` to read.
+    args.out.unlink(missing_ok=True)
     store = Store()
     frame = catalog.read_dataset("drawings", store=store, sources=["quickdraw"], version=args.version)
     if frame.empty:
@@ -496,7 +502,12 @@ def _evaluate_accuracy(argv: list[str]) -> int:
         # from the bytes onwards. At the shipped settings `prepare_drawing` returns a rendered
         # canvas unchanged, so this is also the image `read_dataset` would hand to training.
         for row in part.itertuples():
-            yield render_strokes_png(json.loads(row.strokes)), index[row.label.casefold()]
+            try:
+                png = render_strokes_png(json.loads(row.strokes))
+            except Exception as error:
+                # Abort rather than skip: a dropped drawing would quietly change the denominator.
+                raise ValueError(f"record {row.record_id} could not be rendered: {error}") from error
+            yield png, index[row.label.casefold()]
 
     def progress(done: int) -> None:
         if done % 5000 == 0 or done == len(part):

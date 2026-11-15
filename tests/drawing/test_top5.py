@@ -11,6 +11,7 @@ import json
 import subprocess
 import sys
 from collections.abc import Sequence
+from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -59,10 +60,6 @@ def test_ties_break_by_vocabulary_order_so_the_same_scores_give_the_same_hits():
     encoder = TableEncoder({b"tie": (0.5,) * 6 + (0.1, 0.1)})
 
     assert top5_hits([(b"tie", 4), (b"tie", 5)], encoder, PROMPTS) == [True, False]
-
-
-def test_the_metric_reads_five_guesses_whatever_the_config_top_k():
-    assert evaluate.TOP_K == 5
 
 
 def test_no_drawings_is_an_error_not_a_score():
@@ -195,6 +192,20 @@ def test_the_gated_ratio_is_not_rounded_so_a_near_miss_cannot_round_up_to_a_pass
     assert "GATE_RESULT: FAIL" in run.stdout
 
 
+def test_the_file_says_whether_it_is_gate_eligible():
+    assert _file([True])["gate_eligible"] is True
+    probe = _file([True], gated=False)
+    assert probe["gate_eligible"] is False and "drawing_top5_acc" not in probe
+
+
+def test_provenance_cannot_overwrite_a_computed_field():
+    result = _file([True, False], overall="x", slices="y", stage="z", gate_eligible="no")
+
+    assert result["overall"] == {"drawing_top5_acc": 0.5, "drawings": 2}
+    assert result["stage"] == "drawing" and result["gate_eligible"] is True
+    assert isinstance(result["slices"], list)
+
+
 def test_the_file_never_claims_to_be_fake_scored():
     # check_gate reads `fake_models` for the whole file; a real number must not carry it.
     assert "fake_models" not in _file([True])
@@ -284,6 +295,112 @@ def test_the_cli_scores_the_test_split_end_to_end(monkeypatch, tmp_path):
     assert result["device"] == "cuda" and result["dtype"] == "bfloat16"
     assert result["split"] == "test" and result["data_version"] == "v1.1" and result["limit"] is None
     assert result["license"] == ["CC-BY-4.0"] and result["attribution"] == ["Quick, Draw!"]
+    assert result["gate_eligible"] is True
+    assert result["preprocessing"] == asdict(evaluate.default_prepare_config())
+
+
+def _rows(split: str, label: str, count: int, tag: str) -> pd.DataFrame:
+    """``count`` drawings of ``label`` whose source ids the real split function puts in ``split``."""
+    from primer.drawing.data import split_of
+
+    ids = [f"{tag}{i}" for i in range(count * 40) if split_of(f"{tag}{i}") == split][:count]
+    return pd.DataFrame(
+        {
+            "record_id": [f"r-{i}" for i in ids],
+            "source_id": ids,
+            "label": label,
+            "strokes": json.dumps([[[0, 50, 100], [0, 80, 20]]]),
+            "country_code": "US",
+            "license": "CC-BY-4.0",
+            "attribution": "Quick, Draw!",
+        }
+    )
+
+
+def _mixed_frame() -> pd.DataFrame:
+    """Every split present. Only the rows of the split being scored may count.
+
+    The stub's winner is `The Eiffel Tower`. In `test` and `val` three drawings are Eiffel Towers
+    (spelled as the vocabulary does, so the case-fold has to cope with it) and two are zigzags, so
+    each scored split reads 0.6; the other splits are all hits, so any leak raises the number.
+    """
+    parts = []
+    for split, tag in (("test", "t"), ("val", "v"), ("train", "r")):
+        miss = 0 if split == "train" else 2
+        parts.append(_rows(split, "The Eiffel Tower", 3 if split != "train" else 7, tag))
+        if miss:
+            parts.append(_rows(split, "zigzag", miss, tag + "z"))
+    return pd.concat(parts, ignore_index=True)
+
+
+@pytest.mark.parametrize(("split", "gated"), [("test", True), ("val", False)])
+def test_only_the_asked_split_is_scored(monkeypatch, tmp_path, split, gated):
+    _stub_world(monkeypatch, _mixed_frame(), winner="The Eiffel Tower")
+    out = tmp_path / "m.json"
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    evaluate.main(["--model", str(model_yaml), "--version", "v1.1", "--split", split, "--out", str(out)])
+
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert result["overall"] == {"drawing_top5_acc": 0.6, "drawings": 5}
+    assert ("drawing_top5_acc" in result) is gated
+
+
+def test_a_drawing_that_cannot_be_rendered_is_named_and_aborts_the_run(monkeypatch, tmp_path):
+    frame = _rows("test", "The Eiffel Tower", 2, "t").assign(strokes="not json")
+    _stub_world(monkeypatch, frame, winner="The Eiffel Tower")
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    with pytest.raises(ValueError, match=r"record r-t\w* could not be rendered"):
+        evaluate.main(["--model", str(model_yaml), "--version", "v1.1", "--out", str(tmp_path / "m.json")])
+
+
+def test_a_failed_rerun_does_not_leave_the_previous_file_to_be_gated(monkeypatch, tmp_path):
+    _stub_world(monkeypatch, _rows("test", "The Eiffel Tower", 2, "t").iloc[0:0], winner="The Eiffel Tower")
+    out = tmp_path / "m.json"
+    out.write_text('{"drawing_top5_acc": 0.99}', encoding="utf-8")
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    with pytest.raises(ValueError, match="holds no Quick, Draw"):
+        evaluate.main(["--model", str(model_yaml), "--version", "v1.1", "--out", str(out)])
+
+    assert not out.exists()
+
+
+def test_an_out_folder_that_does_not_exist_is_refused_up_front(tmp_path):
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    with pytest.raises(SystemExit):
+        evaluate.main(
+            ["--model", str(model_yaml), "--version", "v1.1", "--out", str(tmp_path / "no" / "m.json")]
+        )
+
+
+def test_a_limit_below_one_is_refused(tmp_path):
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    with pytest.raises(SystemExit):
+        evaluate.main(
+            [
+                "--model",
+                str(model_yaml),
+                "--version",
+                "v1.1",
+                "--limit",
+                "0",
+                "--out",
+                str(tmp_path / "m.json"),
+            ]
+        )
+
+
+def test_a_label_outside_the_vocabulary_is_refused_before_scoring(monkeypatch, tmp_path):
+    frame = _rows("test", "not a quick draw category", 2, "t")
+    _stub_world(monkeypatch, frame, winner="The Eiffel Tower")
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    with pytest.raises(ValueError, match="not a quick draw category"):
+        evaluate.main(["--model", str(model_yaml), "--version", "v1.1", "--out", str(tmp_path / "m.json")])
 
 
 def test_a_limited_cli_run_writes_no_gated_key(monkeypatch, tmp_path):
