@@ -2,7 +2,7 @@
 
 Why this exists: `configs/sources.yaml` takes the *first* ``max_per_category`` drawings of each
 Quick, Draw! category, which is harmless there because the corpus is already partitioned by
-category. Amateur Drawings is one undifferentiated pile of ~178,000 uploads, so "first N" inherits
+category. Amateur Drawings is one undifferentiated pile of 174,981 processed rows, so "first N" inherits
 Meta's upload order and whatever that correlates with. Both consumers of this corpus need a better
 answer: a training draw that covers the corpus's modes, and an evaluation draw that matches its
 real shape.
@@ -28,18 +28,21 @@ from collections.abc import Iterable, Mapping
 
 import pandas as pd
 
-from primer.data.bias import SMALL_SLICE, stratify_key
+from primer.data.bias import stratify_key
 
 log = logging.getLogger(__name__)
 
-#: Quantile bins per input. Four keeps the key readable (256 cells at four inputs) while leaving
-#: enough resolution to separate a phone photograph from a thumbnail.
+#: Quantile bins per input. Four at four inputs allows 256 cells; the real corpus yields 126,
+#: because `aspect` supports only two bins. Enough resolution to separate a phone photograph
+#: from a thumbnail without the key becoming unreadable.
 BIN_COUNT = 4
 
-#: Strata smaller than this are pooled into a neighbour. Taken from ``bias.SMALL_SLICE``
-#: rather than restated, so the two cannot drift: below it a stratum cannot be split or
-#: sampled from without the draw being mostly luck.
-MIN_STRATUM = SMALL_SLICE
+#: Strata smaller than this are pooled into a neighbour: below it a stratum cannot be split
+#: or sampled from without the draw being mostly luck. It equals ``bias.SMALL_SLICE`` today
+#: but is **not** imported from it -- that one is a reporting threshold ("too small to
+#: judge"), and tying a sampler's behaviour to a reporting constant means a change there
+#: silently moves every draw here. A test pins this value.
+MIN_STRATUM = 100
 
 #: The label a pooled-away stratum collapses to when nothing is big enough to pool into.
 EVERYTHING = "all"
@@ -66,13 +69,33 @@ class DegenerateStratum(ValueError):
     """
 
 
+def require_unique_index(frame: pd.DataFrame | pd.Series) -> None:
+    """Refuse a non-unique index, because every selection here is label-based.
+
+    ``.loc`` with duplicate labels returns *every* match, so a draw from an inflated pool
+    comes back the right length and the wrong rows -- silently. Partitioned parquet makes
+    this reachable: ``pd.concat`` of two batches without ``ignore_index=True`` does it.
+    Checked at both layers, because the samplers reach :func:`_draw` without ever calling
+    :func:`stratum_inputs`.
+    """
+    if frame.index.is_unique:
+        return
+    dupes = frame.index[frame.index.duplicated()].unique()[:3].tolist()
+    raise ValueError(
+        f"index is not unique (e.g. {dupes}); label-based selection would draw the wrong"
+        " rows. Concatenate batches with ignore_index=True."
+    )
+
+
 def stratum_inputs(drawings: pd.DataFrame) -> pd.DataFrame:
     """The four quantities the strata are built from, derived from ``drawings``.
 
     * ``long_edge`` -- the longer side **before** Meta's 512 px resize, which is the only column
       that still carries the original capture size.
-    * ``aspect`` -- original width over height. Orientation is kept rather than folded away: a
-      portrait phone photograph and a landscape scan are different populations.
+    * ``aspect`` -- original width over height, orientation kept rather than folded away.
+      Note what the *stratum* does with it: the bin edge is a quantile, and on the real
+      corpus that lands at 0.75 rather than 1.0, so the resulting bin separates "exactly 3:4
+      or narrower" from everything else -- a mode indicator, not an orientation one.
     * ``framing`` -- the annotated box as a fraction of the image, i.e. how much of the frame the
       figure fills. Derived; there is no ``bbox_area`` column.
     * ``area`` -- the segmentation area, which stands in for figure complexity.
@@ -80,12 +103,7 @@ def stratum_inputs(drawings: pd.DataFrame) -> pd.DataFrame:
     missing = [c for c in REQUIRED_COLUMNS if c not in drawings.columns]
     if missing:
         raise KeyError(f"drawings is missing {', '.join(missing)}; needed to build strata")
-    if not drawings.index.is_unique:
-        dupes = drawings.index[drawings.index.duplicated()].unique()[:3].tolist()
-        raise ValueError(
-            f"drawings has a non-unique index (e.g. {dupes}); label-based selection would"
-            " draw the wrong rows. Concatenate batches with ignore_index=True."
-        )
+    require_unique_index(drawings)
 
     long_edge = drawings[["original_width", "original_height"]].max(axis=1)
     aspect = drawings["original_width"] / drawings["original_height"].replace(0, pd.NA)
@@ -102,12 +120,20 @@ def stratum_inputs(drawings: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def bin_column(values: pd.Series, bins: int = BIN_COUNT) -> tuple[pd.Series, list[float]]:
+def bin_column(
+    values: pd.Series,
+    bins: int = BIN_COUNT,
+    edges: list[float] | None = None,
+) -> tuple[pd.Series, list[float]]:
     """``values`` cut into quantile bins, with the realised edges returned alongside.
 
     The edges come back because they are what makes a later draw reproducible: quantiles are a
     property of the corpus, so re-deriving them from a different data version silently re-bins
     every row. Store them with the strata and pass them back rather than recomputing.
+
+    Pass ``edges`` from an earlier call to re-use that binning instead of deriving new
+    quantiles -- which is the point of returning them, and what makes a draw reproducible
+    against a corpus that has since gained or lost rows.
 
     A concentrated column can have fewer distinct quantile edges than ``bins`` -- ``pd.qcut`` would
     raise on the duplicates -- so duplicate edges are dropped and the column simply gets fewer bins.
@@ -123,7 +149,15 @@ def bin_column(values: pd.Series, bins: int = BIN_COUNT) -> tuple[pd.Series, lis
         raise DegenerateStratum(
             f"{values.name!r} has {clean.nunique()} distinct value(s); it cannot stratify anything"
         )
-    binned, edges = pd.qcut(clean, bins, duplicates="drop", retbins=True, labels=False)
+    if edges is None:
+        binned, edges = pd.qcut(clean, bins, duplicates="drop", retbins=True, labels=False)
+    else:
+        binned = pd.cut(clean, edges, labels=False, include_lowest=True)
+        if binned.isna().any():
+            raise ValueError(
+                f"{values.name!r} has values outside the supplied edges {edges};"
+                " re-deriving would re-bin every row, so this is refused rather than clipped"
+            )
     if len(edges) - 1 < bins:
         log.info("%r supported %d bins rather than %d after dropping duplicate edges",
                  values.name, len(edges) - 1, bins)
@@ -136,7 +170,9 @@ def _pool(keys: pd.Series, min_size: int) -> pd.Series:
     """Strata under ``min_size`` folded into the nearest stratum that is already big enough.
 
     "Nearest" is how many bin labels two keys share, which is the natural distance over a key built
-    by concatenation. Ties go to the larger target, then by a stable ordering of the key
+    by concatenation. Ties go to the larger target -- which value_counts ordering already
+    gives, so that tier is defensive rather than load-bearing and no test can reach it -- then
+    by a stable ordering of the key
     itself, so the result never depends on dict ordering. (That last tier compares
     character by character, so a longer key beats a prefix of itself -- irrelevant here,
     where every key has the same shape, but it is not plain lexicographic order.) If no stratum reaches ``min_size`` the whole frame
@@ -165,6 +201,7 @@ def build_strata(
     drawings: pd.DataFrame,
     bins: int = BIN_COUNT,
     min_size: int = MIN_STRATUM,
+    edges: dict[str, list[float]] | None = None,
 ) -> tuple[pd.Series, dict[str, list[float]]]:
     """One stratum label per row, plus the realised bin edges per input.
 
@@ -174,11 +211,13 @@ def build_strata(
     """
     inputs = stratum_inputs(drawings)
     labelled: dict[str, pd.Series] = {}
-    edges: dict[str, list[float]] = {}
+    out_edges: dict[str, list[float]] = {}
     for name in inputs.columns:
-        labelled[name], edges[name] = bin_column(inputs[name], bins)
+        labelled[name], out_edges[name] = bin_column(
+            inputs[name], bins, None if edges is None else edges[name]
+        )
     keys = stratify_key(pd.DataFrame(labelled, index=drawings.index), list(labelled))
-    return _pool(keys, min_size), edges
+    return _pool(keys, min_size), out_edges
 
 
 def occupancy(strata: pd.Series) -> pd.DataFrame:
@@ -187,9 +226,23 @@ def occupancy(strata: pd.Series) -> pd.DataFrame:
     This is the slice's only reported output, and it is evidence rather than a claim: it says how
     the corpus distributes over size signatures, not that those signatures correspond to how a
     drawing was captured.
+
+    Strata labelled NaN are counted, so the shares always sum to 1. :func:`build_strata` never
+    emits one, but a caller-supplied series can.
     """
-    counts = strata.value_counts()
+    counts = strata.value_counts(dropna=False)
     return pd.DataFrame({"rows": counts, "share": counts / len(strata)})
+
+
+def _sizes(strata: pd.Series) -> dict[str, int]:
+    """Rows per stratum, largest first, **observed strata only**.
+
+    A categorical series reports every declared category, including ones no row uses, and a
+    zero-count key would then be asked of a ``groupby`` that never produced it. Any boolean
+    filter of a categorical keeps all its categories, so this is reachable without anyone
+    being clever."""
+    counts = strata.value_counts()
+    return counts[counts > 0].to_dict()
 
 
 def _draw(
@@ -199,7 +252,8 @@ def _draw(
     seed: int,
 ) -> pd.DataFrame:
     """``wanted[stratum]`` rows from each stratum, seeded, returned in index order."""
-    groups = strata.groupby(strata).groups
+    require_unique_index(drawings)
+    groups = strata.groupby(strata, observed=True).groups
     picked = []
     for key, n in wanted.items():
         rows = drawings.loc[groups[key]]
@@ -225,7 +279,7 @@ def sample_uniform(
     A stratum smaller than its share is taken whole and the shortfall is spread over the rest, so
     the result is ``n`` rows whenever the corpus has that many.
     """
-    return _draw(drawings, strata, _even_split(n, strata.value_counts().to_dict()), seed)
+    return _draw(drawings, strata, _even_split(n, _sizes(strata)), seed)
 
 
 def sample_proportional(
@@ -240,7 +294,7 @@ def sample_proportional(
     what happens in production, and a draw that over-represents rare modes reports a number the
     product never sees. Use :func:`sample_uniform` for training instead.
     """
-    sizes = strata.value_counts().to_dict()
+    sizes = _sizes(strata)
     total = sum(sizes.values())
     wanted = {k: round(n * size / total) for k, size in sizes.items()}
     short = n - sum(wanted.values())

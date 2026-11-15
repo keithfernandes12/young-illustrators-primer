@@ -285,7 +285,7 @@ S6b2's consumer and S6c2's want a sampler, and neither wants to wait on the rend
   how many drawings fall in each bin — as a dated Verified fact, and makes no claim about capture
   mode. That occupancy table is the only evidence anyone has for the assumption, which is why it is
   in the acceptance rather than left as prose. S6b4 is what would validate the assumption itself.
-- **Acceptance** — five things, each of which can be shown false:
+- **Acceptance** — six things, each of which can be shown false:
   1. The strata exist, with their realised bin edges recorded alongside.
   2. Building strata from a column with one distinct value raises, naming the column.
   3. Both samplers exist, take a seed, and the same seed returns the same rows twice.

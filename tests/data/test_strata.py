@@ -14,6 +14,7 @@ import pytest
 from primer.data.strata import (
     BIN_COUNT,
     EVERYTHING,
+    MIN_STRATUM,
     DegenerateStratum,
     _pool,
     bin_column,
@@ -380,11 +381,11 @@ def test_bin_column_labels_a_missing_value_unknown_itself():
 # --- a non-unique index silently draws the wrong rows ------------------------------------------
 
 
-def test_a_non_unique_index_raises_rather_than_corrupting_the_draw():
+def test_a_non_unique_index_raises_when_building_strata():
     """`.loc` with duplicate labels returns every match, so a draw would silently mix strata."""
     frame = pd.concat([spread(40), spread(40)])
 
-    with pytest.raises(ValueError, match="non-unique index"):
+    with pytest.raises(ValueError, match="index is not unique"):
         stratum_inputs(frame)
 
 
@@ -420,3 +421,167 @@ def test_the_missing_column_guard_names_every_missing_column_and_why():
 def test_provenance_check_fails_when_a_column_is_absent_entirely():
     """Dropping the column is the likeliest way a derived set loses provenance."""
     assert not carries_provenance(spread(40).drop(columns=["attribution"]))
+
+
+# --- round 2: occupancy ordering, which the "largest first" assertion did not hold -------------
+
+
+def test_occupancy_orders_by_size_not_by_label():
+    """The `skewed()` fixture cannot show this: "big" is both the larger stratum and the
+    alphabetically earlier label, so a label-sorted implementation produces the same table."""
+    frame = drawings([(3024, 4032)] * 300)
+    strata = pd.Series(["alpha"] * 100 + ["zebra"] * 200, index=frame.index)
+
+    table = occupancy(strata)
+
+    assert table.index.tolist() == ["zebra", "alpha"]
+    assert table["rows"].tolist() == [200, 100]
+
+
+# --- round 2: edges can be passed back, which is what returning them was for -------------------
+
+
+def test_edges_from_one_frame_can_be_re_used_on_another():
+    """Acceptance clause 1's actual purpose: a later draw bins rows the same way even though the
+    corpus has changed underneath it. Re-deriving quantiles would silently re-bin every row."""
+    first = spread(400)
+    _, edges = build_strata(first, min_size=1)
+
+    grown = pd.concat([first, spread(120)], ignore_index=True)
+    reused, same_edges = build_strata(grown, min_size=1, edges=edges)
+    rederived, new_edges = build_strata(grown, min_size=1)
+
+    assert same_edges == edges, "supplied edges must come back unchanged"
+    assert new_edges != edges or reused.equals(rederived), "fixture must actually shift the bins"
+    assert reused.iloc[: len(first)].tolist() == build_strata(first, min_size=1)[0].tolist()
+
+
+def test_values_outside_the_supplied_edges_raise_rather_than_being_clipped():
+    frame = spread(400)
+    _, edges = build_strata(frame, min_size=1)
+    bigger = frame.copy()
+    bigger.loc[0, "original_width"] = 99_999
+
+    with pytest.raises(ValueError, match="outside the supplied edges"):
+        build_strata(bigger, min_size=1, edges=edges)
+
+
+# --- round 2: a categorical strata reports categories no row uses ------------------------------
+
+
+@pytest.mark.parametrize("sampler", [sample_uniform, sample_proportional])
+def test_an_unused_category_does_not_break_the_draw(sampler):
+    """`value_counts` on a categorical lists every declared category; `groupby` yields only the
+    observed ones. Any boolean filter of a categorical keeps all its categories."""
+    frame = drawings([(3024, 4032)] * 10)
+    strata = pd.Series(
+        pd.Categorical(["a"] * 5 + ["b"] * 5, categories=["a", "b", "c"]), index=frame.index
+    )
+
+    assert len(sampler(frame, strata, 4, seed=0)) == 4
+
+
+# --- round 2: the index guard has to cover the layer where the .loc happens ---------------------
+
+
+@pytest.mark.parametrize("sampler", [sample_uniform, sample_proportional])
+def test_a_non_unique_index_raises_in_the_samplers_too(sampler):
+    """The samplers reach `_draw` without ever calling `stratum_inputs`, so a guard only there
+    leaves the corrupting path open: duplicate labels returned each drawing twice."""
+    frame = pd.concat([spread(5), spread(5)])
+    strata = pd.Series(["x"] * 5 + ["y"] * 5, index=frame.index)
+
+    with pytest.raises(ValueError, match="index is not unique"):
+        sampler(frame, strata, 4, seed=0)
+
+
+# --- round 2: remainders, with fixtures that can see which strata absorb them -------------------
+
+
+def test_the_proportional_remainder_is_taken_from_the_largest_stratum():
+    """Sizes 261/189/70/57 at n=8 round to 4+3+1+1 = 9, so one has to come back off.
+
+    An earlier fixture here rounded to exactly n, so the whole correction was dead code in CI.
+    This one also distinguishes *which* stratum pays: taking it from the smallest instead still
+    returns 8 rows, so a length assertion alone would not notice.
+    """
+    sizes = {"a": 261, "b": 189, "c": 70, "d": 57}
+    frame = drawings([(3024, 4032)] * sum(sizes.values()))
+    strata = pd.Series(
+        [k for k, v in sizes.items() for _ in range(v)], index=frame.index
+    )
+
+    drawn = sample_proportional(frame, strata, 8, seed=0)
+    counts = strata.loc[drawn.index].value_counts()
+
+    assert len(drawn) == 8
+    assert counts["a"] == 3, "the largest stratum gives the row back"
+    assert counts["d"] == 1, "the smallest keeps its share"
+
+
+def test_uniform_spreads_a_shortfall_over_several_passes():
+    """Two tiny strata and one large one: the first pass caps both tiny ones and the remainder
+    has to go round again. The mutant that skips the second pass returns 10 for a request of 11."""
+    frame = drawings([(3024, 4032)] * 46)
+    strata = pd.Series(["a"] * 3 + ["b"] * 3 + ["c"] * 40, index=frame.index)
+
+    for n in (11, 12, 13):
+        assert len(sample_uniform(frame, strata, n, seed=0)) == n
+
+
+def test_asking_for_more_than_the_corpus_returns_the_corpus():
+    frame = spread(40)
+    strata, _ = build_strata(frame, min_size=1)
+    assert len(sample_uniform(frame, strata, 10_000, seed=0)) == len(frame)
+
+
+# --- round 2: the remaining unheld contracts ----------------------------------------------------
+
+
+def test_strata_follow_the_frame_index_rather_than_position():
+    """Index alignment is the module's whole contract — `_draw` selects by label."""
+    frame = spread(400)
+    frame.index = range(1000, 1000 + len(frame))
+
+    strata, _ = build_strata(frame, min_size=1)
+    drawn = sample_uniform(frame, strata, 40, seed=0)
+
+    assert strata.index.tolist() == frame.index.tolist()
+    assert len(drawn) == 40
+    assert drawn["record_id"].nunique() == 40
+
+
+def test_a_stratum_key_names_its_columns():
+    """The key is `_pool`'s distance metric. Bare bin numbers would make `long_edge=0` and
+    `area=0` the same token, silently conflating two columns."""
+    strata, _ = build_strata(spread(400), min_size=1)
+
+    key = strata.iloc[0]
+
+    assert key.count(" / ") == 3
+    for name in ("long_edge", "aspect", "framing", "area"):
+        assert f"{name}=" in key
+
+
+def test_provenance_check_fails_on_a_null_licence():
+    """`astype(str)` turns None into "None", which is not blank — the null check is separate."""
+    frame = spread(40)
+    frame.loc[0, "license"] = None
+    assert not carries_provenance(frame)
+
+
+def test_pooling_prefers_the_larger_stratum_when_labels_would_say_otherwise():
+    """Separates the size tie-break from the label one: here the larger target is also the
+    alphabetically later, so a label-ordered rule sends the small rows the other way."""
+    keys = ["a=0 / c=0"] * 150 + ["z=1 / c=1"] * 200 + ["a=0 / c=1"] * 4
+    strata = pd.Series(keys)
+
+    pooled = _pool(strata, min_size=150)
+
+    assert (pooled[strata == "a=0 / c=1"] == "z=1 / c=1").all()
+
+
+def test_the_default_min_stratum_is_pinned():
+    """It equals `bias.SMALL_SLICE` today but is a separate decision; nothing should move it
+    without this failing."""
+    assert MIN_STRATUM == 100
