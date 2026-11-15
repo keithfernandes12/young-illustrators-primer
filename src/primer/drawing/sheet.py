@@ -26,7 +26,7 @@ joints within 10% of the figure's size. Every one of them was trained on photogr
 ``ArtifactStore`` refs are content hashes, never names or ids, and nothing here logs a field.
 
 The pure functions below (box filtering, body type, keypoints, cut-outs, orchestration) run in CI
-with fakes; ``HuggingFaceSheetModels`` needs the ``drawing`` extra, ``torchvision`` and cached
+with fakes; ``HuggingFaceSheetModels`` needs the ``sheet`` extra (torchvision included) and cached
 weights, and loads lazily on the first drawing.
 """
 
@@ -371,7 +371,8 @@ class CharacterSheetRecognizer:
 class HuggingFaceSheetModels:
     """Florence-2, SAM 2.1 and ViTPose through ``transformers``, loaded on the first drawing.
 
-    Needs the ``drawing`` extra plus ``torchvision`` (SAM 2's image processor), and the three
+    Needs the ``sheet`` extra (``drawing``'s packages plus ``torchvision``, which SAM 2's image
+    processor imports; AGENTS.md -> Commands has the CUDA pair), and the three
     pinned checkpoints. bf16 on CUDA for Florence-2, fp32 elsewhere and for the two small models.
     Measured together on the RTX 4060: 1.29 GiB peak VRAM.
     """
