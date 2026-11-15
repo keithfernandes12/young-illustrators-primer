@@ -1,0 +1,44 @@
+# The rest of the character sheet (KAN-38, plan slice S6e). `sheet.py` reads this.
+#
+# Three models beside the recogniser, each pinned by revision so a rerun measures the same weights,
+# each Apache-2.0 or MIT. All three were measured on real Amateur Drawings before being chosen
+# (plan, Verified facts, 2026-11-15).
+name: drawing-sheet
+
+# Florence-2 base, in transformers' native format: the description and the character boxes.
+# `florence-community/` rather than `microsoft/`: the Microsoft repo needs `trust_remote_code`,
+# which runs Python files from the repo; this one is the same model converted, weights and JSON
+# only, and loads with transformers' own `Florence2ForConditionalGeneration`.
+florence: florence-community/Florence-2-base
+florence_revision: 00921df66db728a9ceb750f5eca43e5c203a2051
+florence_license: mit
+caption_task: <CAPTION>
+detect_task: <OD>
+
+# SAM 2.1 small: one mask per character, prompted with its box. Needs torchvision.
+sam: facebook/sam2.1-hiera-small
+sam_revision: ee5bba1d82bb8749febdf90f45e84b687142ba03
+sam_license: apache-2.0
+
+# ViTPose base: 17 COCO joints for humanoid characters, in `interface.KEYPOINT_NAMES` order.
+vitpose: usyd-community/vitpose-base-simple
+vitpose_revision: a93ac0c67e0b7e2c55287d21d4c460c8f3c54d45
+vitpose_license: apache-2.0
+# A joint whose heatmap score is below this is kept with `visible: false`, never dropped, so the
+# list stays positional. 0.3 is ViTPose's own customary cut, not tuned here.
+keypoint_threshold: 0.3
+
+# Which boxes are characters. Florence-2's detector also boxes parts of a figure: on 40 real
+# drawings it returned `human face` 28 times and `footwear` 19 times beside `person` 33. A box
+# lying at least `containment` inside a larger one is a part of it, not a second character.
+containment: 0.8
+# Boxes smaller than this share of the drawing are dropped as specks.
+min_area: 0.01
+max_characters: 6
+
+# How a detected label becomes a `body_type`. Matching is on whole words, case-insensitive.
+# These are the detector's own words, not the recogniser's vocabulary: no `person` label is added
+# to the 345 categories here -- that is KAN-111's decision. A label in neither list is an object;
+# a drawing with no box at all is one character of unknown body type.
+humanoid_words: [person, man, woman, boy, girl, child, human, people, doll, fancy dress]
+creature_words: [animal, dog, cat, bird, horse, fish, bear, dinosaur, dragon, monster, insect, butterfly, rabbit, cow, sheep, elephant, lion, tiger, mammal, reptile]

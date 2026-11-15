@@ -203,9 +203,13 @@ class Encoding:
 
 
 class Encoder(Protocol):
-    """Scores a drawing against text prompts. The real one wraps SigLIP 2; tests pass a fake."""
+    """Scores a drawing against text prompts. The real one wraps SigLIP 2; tests pass a fake.
 
-    def encode(self, image: bytes, prompts: Sequence[str]) -> Encoding: ...
+    ``box`` -- ``(x, y, width, height)`` -- restricts scoring to one character of the drawing
+    (S6e). ``None`` scores the whole drawing.
+    """
+
+    def encode(self, image: bytes, prompts: Sequence[str], *, box: object = None) -> Encoding: ...
 
 
 class SiglipEncoder:
@@ -468,10 +472,19 @@ class DrawingRecognizerModel:
         from different models. An empty string is honest here, while a label echoed into a sentence
         would read like a caption the story writer could use.
         """
+        return DrawingAnalysis(characters=(self.character(image),))
+
+    def character(self, image: bytes, box: Sequence[float] | None = None) -> Character:
+        """Score one character -- the whole drawing, or the part inside ``box`` -- and rank it.
+
+        ``box`` is ``(x, y, width, height)`` in the decoded drawing's pixels. It goes to
+        ``prepare_drawing`` through the encoder, so a character cut from a drawing reaches the
+        tower through the one preprocessing path (S6e's per-character sheets, KAN-31's rule).
+        """
         if not image:
             raise ValueError("analyse needs the drawing's bytes; got none")
 
-        encoding = self.encoder.encode(image, self._prompts)
+        encoding = self.encoder.encode(image, self._prompts, box=box)
         if len(encoding.confidences) != len(self._labels):
             raise ValueError(
                 f"the encoder scored {len(encoding.confidences)} prompts for "
@@ -511,4 +524,4 @@ class DrawingRecognizerModel:
             embedding=tuple(round(value, EMBEDDING_DECIMALS) for value in encoding.embedding),
             candidates=candidates,
         )
-        return DrawingAnalysis(characters=(character,))
+        return character

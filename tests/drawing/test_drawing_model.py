@@ -192,8 +192,8 @@ def test_the_embedding_is_rounded_so_float_noise_cannot_change_the_identity(conf
     noise = 10 ** -(EMBEDDING_DECIMALS + 3)
 
     class Jittered(RecordingEncoder):
-        def encode(self, image, prompts):
-            clean = super().encode(image, prompts)
+        def encode(self, image, prompts, *, box=None):
+            clean = super().encode(image, prompts, box=box)
             return Encoding(
                 confidences=clean.confidences,
                 embedding=tuple(value + noise for value in clean.embedding),

@@ -571,7 +571,10 @@ the licence constraint on each.
   conditioning, so it is worth keeping independent of the gate work in S6c and S6d.
 - **Acceptance** — a multi-character drawing returns one sheet per character with every field
   populated, and `test_every_character_sheet_field_reaches_the_illustrator` passes against the
-  real recogniser rather than the Fake.
+  real recogniser rather than the Fake. (The real-recogniser version is
+  `test_every_character_sheet_field_reaches_the_illustrator_from_the_real_recogniser` in
+  `tests/drawing/test_sheet.py`; the unsuffixed name is the Fake's, in
+  `tests/models/test_area_interfaces.py`.)
 - **Not in this slice** — `reference_image_ref` and `approved`, which the stylise-and-approve step
   sets; who owns that step is still open between KAN-38 and KAN-42.
 - **Depends on** — S6a. **Jira** — KAN-38.
@@ -698,7 +701,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6c | not started | | the gate's number, over rendered Quick, Draw! — not the product's. Ceiling back to 1.0 since KAN-116 merged |
 | S6c2 | in review | [#33](https://github.com/keithfernandes12/young-illustrators-primer/pull/33) | 1,000 frozen drawings (unstratified), four variants: top-1 moves 25% / 50% / 41% between adjacent variants; over half the drawings come out `squiggle`. Reproduces exactly. KAN-109 |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); still waits on S6b2 (#32) and S6c. Reads S6c2's stability figures |
-| S6e | not started | | unblocks KAN-42's reposing and IP-Adapter branches |
+| S6e | in review | [#35](https://github.com/keithfernandes12/young-illustrators-primer/pull/35) | `sheet.py`: Florence-2 + SAM 2.1 + ViTPose beside SigLIP 2; every field filled on 82/82 real sheets; two figures found as two on 12/20. Stacked on #33. Unblocks KAN-42 |
 | S7a | in progress | branch `feat/KAN-42-controlnet-baseline` | pretrained SD 1.5 + ControlNet-Scribble, one page, local output; synthetic inputs only until KAN-94 |
 | S7b | not started | | needs S1, GPU quota in region, a working `consistency()`, and KAN-94 |
 | S8 | not started | | |
@@ -1247,6 +1250,50 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   make. What these numbers add to that decision: the gate's number is taken on drawings a
   classifier already recognised (S6b2), while on children's drawings the same model's answer
   moves 25–50% under preprocessing alone.
+- **2026-11-15 — S6e: three models chosen, downloaded with approval, and measured before use.**
+  From the brief, on licence and the 8 GB rule: **Florence-2 base** (MIT) for the description and
+  character boxes, **SAM 2.1 small** (Apache-2.0) for masks, **ViTPose base** (Apache-2.0) for
+  keypoints; `body_type` takes no model of its own. Each pinned by full revision in
+  `configs/drawing_sheet.yaml`. Florence-2 comes from `florence-community/Florence-2-base`, not
+  `microsoft/`: the Microsoft repo needs `trust_remote_code` and runs three Python files from it,
+  while transformers 5.23 loads the converted repo natively — same model, MIT, weights and JSON
+  only (chosen by the user). On disk: 0.47 / 0.18 / 0.34 GB. SAM 2's image processor needs
+  **`torchvision`**, installed with approval as `0.29.1+cu130` to match the CUDA torch (6.6 MB,
+  `--no-deps`, `pip check` clean). *Hypothesis:* photo-trained models would mostly work on
+  children's drawings. *Result, on the first 40 drawings of S6c2's frozen sample against the
+  dataset's own annotations, GPU:* Florence-2 `<OD>` finds the figure at IoU ≥ 0.5 on **37/40**
+  (median 0.89), but also boxes `human face` 28 times and `footwear` 19 times beside `person` 33
+  — so a box ≥ 80% inside a larger one is folded into it rather than made a character. SAM's mask
+  matches the annotated segmentation at IoU ≥ 0.5 on **26/40** (median 0.68), slightly under the
+  figure (31% of the box against the annotation's 40%). ViTPose places **61%** of annotated
+  joints within 10% of the figure's size (PCK@0.1). SAM loads with a transformers warning that
+  the checkpoint is `sam2_video` read into `Sam2Model`; the masks above are its output anyway.
+- **2026-11-15 — S6e: the acceptance, measured — every field always filled, two characters found
+  as two in 12 of 20.** `CharacterSheetRecognizer` on real drawings, GPU, warm, all four models
+  resident (**2.00 GiB peak VRAM**). 40 single-figure drawings: one sheet on 37, two or three on
+  3; every one of the 45 sheets carries candidates, embedding, crop, mask, a known body type and,
+  for humanoids, 17 joints; a description on 40/40; **0.82 s** a drawing mean, p95 1.32 s. Body
+  type: 33 humanoid, 5 creature, 7 object, against 40 annotated human figures — so about one in
+  six children's figures is not read as a person, and KAN-42 would place rather than repose it.
+  20 composites of two real figures side by side (in memory, never written): **exactly two
+  sheets on 12/20**, one on 6, three or four on 2; all 37 sheets complete; 1.07 s a drawing.
+  The plan's acceptance — "one sheet per character" — therefore holds on 60% of two-figure
+  drawings, not on all of them; the misses are the detector boxing two figures as one. In CI the
+  acceptance runs on fake weights through `build_book`, with a stand-in for the approve step
+  (KAN-64). Not in MLflow (KAN-107). Unstratified sample, as S6c2's.
+- **2026-11-15 — S6e: what review changed, and what it did not.** Sheets now come back **most
+  confident first**, which is what `DrawingAnalysis.characters` and `.main` promise and what
+  `build_book` takes as the story's subject; they had been in box-area order, so a large doubtful
+  object could have become the subject ahead of a smaller, sure one. Joints are normalised
+  against the pixel bounds the crop is actually saved at (floor of the top-left, ceil of the
+  bottom-right) rather than the raw float box, so a fractional detection no longer shifts the
+  skeleton by up to a pixel on the saved crop. A mask with no pixels falls back to the unmasked
+  box instead of whitening the child's lines; a box wholly outside the drawing is dropped; a
+  joint that is NaN or infinite is kept as not visible; and a failing model call now says which
+  step, and which character, failed. None of these changes a count above (sheets per drawing,
+  body types), but the figures were **not** re-measured with the real models afterwards.
+  `HuggingFaceSheetModels` itself — the pose box conversion, the detection pairing — runs only
+  against the real weights and is not exercised in CI; the measured figures above are its test.
 - **2026-11-15 — S6c2: what the figures above were taken under, and what review changed.** The
   figures are from the **CPU, fp32** run (S6a's baseline, as stated), before the summary recorded
   its own execution. It now records the resolved `device` and `dtype`, the prompt template,
@@ -1486,13 +1533,46 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   now; the team lead decides.
 - Does the course's GCP credit cover Claude models on Vertex AI? Recommended: check the billing account's
   credit scope before routing Claude Code through Vertex. Rishi checks.
+- **S6e needs `torchvision`: decided 2026-11-15 by the KAN-38 owner.** SAM 2's image processor
+  imports it, and like the CUDA torch it must match the torch build (`0.29.1+cu130` for
+  `2.14.1+cu130`). Decision: a separate **`sheet` extra** (`torch>=2.4`, `transformers`,
+  `torchvision>=0.19`) so the recogniser alone does not need it, and the CUDA pair documented
+  in `AGENTS.md` → Commands rather than pinned in `pyproject.toml`. `pip install -e
+  ".[sheet]"` now runs `CharacterSheetRecognizer` on CPU; the GPU needs the documented
+  reinstall of torch and torchvision together. Not done, by that decision: pinning a build in
+  the extra or `requirements.txt`.
+- **Two figures read as one in 6 of 20 two-figure drawings.** Florence-2's detector sometimes
+  boxes neighbouring figures together, and the containment rule then folds them. *Recommended:*
+  measure on real multi-character uploads before tuning — composites of two single-figure
+  drawings are a stand-in — and try Florence-2's phrase grounding or SAM's automatic masks if the
+  rate holds. KAN-42 should treat a sheet count as a lower bound until then.
 - **A fresh clone installs the CPU torch again.** The `drawing` extra says `torch>=2.4` and names no
   index, so `pip install -e ".[drawing]"` on Windows takes PyPI's CPU wheel, and the GPU fact above
-  silently stops being true for the next person or agent. *Recommended:* document the step in
-  `AGENTS.md` → Commands (or `docs/engineering/onboarding.md`):
-  `.venv/Scripts/python.exe -m pip install --force-reinstall --no-deps "torch==2.14.1" --index-url https://download.pytorch.org/whl/cu130`
-  followed by `pip install accelerate`. Whether to pin torch in the extra, and to which build, is
-  the KAN-38 owner's decision; this plan does not change `pyproject.toml` or the requirements.
+  silently stops being true for the next person or agent. *Decided 2026-11-15 (KAN-38 owner):*
+  document the step, do not pin. `AGENTS.md` → Commands now carries the torch and torchvision
+  reinstall from the cu130 index in one command, and `pip check`. `accelerate`, which Hugging
+  Face training wants (S6d), is still a separate `pip install accelerate`.
+- **Should a part-label box that escapes its figure be a character, and should containment look at
+  labels?** Found in review of #35, and left as it is because either answer moves the measured
+  counts above. Containment ignores labels, so a person drawn inside a house box (80% or more
+  within it) is folded into the house, and the house becomes the subject. And a part label whose
+  box is less than 80% inside its figure — a face half outside the person — becomes a character
+  of its own; `human face` contains `human`, so it is read as humanoid and ViTPose runs on a face
+  box. The same happens to a lone face when the person box is missed (the figure is found at
+  IoU ≥ 0.5 on 37 of the 40 drawings).
+  *Recommended:* a list of part words (face, head, hand, shoe, ...) dropped before grouping, never
+  scored or posed, and a label-aware fold, measured on the 40 drawings and 20 composites before it
+  ships, since both can only lower the sheet counts. *Decides:* the KAN-38 owner.
+- **When is a SAM mask too small to use?** Only an empty mask falls back to the unmasked box now.
+  A mask covering a sliver of its box still whitens the rest, and SAM covers 31% of the box
+  against the annotation's 40%, so a threshold needs the distribution of mask share over the 82
+  sheets, which has not been taken. *Recommended:* measure it, then add `min_mask_share` to
+  `drawing_sheet.yaml`.
+- **The default artifact store is a process-lifetime dictionary.** `MemoryArtifactStore` never
+  evicts a child's crops and masks, a `mem://` ref cannot be read by another process (KAN-42's
+  worker), and a content-hash name means two children's identical crops would share one object
+  once the GCS store exists, which complicates deleting one child's data. *Recommended:* serving
+  passes a store explicitly and the GCS one decides its naming against the deletion path (KAN-64).
 
 ## Out of scope
 
