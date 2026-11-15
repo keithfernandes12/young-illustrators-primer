@@ -88,7 +88,7 @@ primer-data --data-uri .local-data sources              # list sources
 primer-data --data-uri .local-data run clear_corpus     # ingest + validate + preprocess one source
 ```
 
-Dependencies are declared in [`pyproject.toml`](pyproject.toml) (extras: `dev`, `dvc`, `dashboard`). [`requirements.txt`](requirements.txt) pins every package (those dependencies plus the `dev` and `dvc` extras) to exact versions for Python 3.11+ on Linux, macOS and Windows, so another machine gets the same environment. A test fails if it falls out of step with `pyproject.toml`, and its header gives the command to regenerate it. The Airflow image pins `apache-airflow==3.3.2` in [`infra/airflow/Dockerfile`](infra/airflow/Dockerfile).
+Dependencies are declared in [`pyproject.toml`](pyproject.toml) (extras: `dev`, `dvc`, `dashboard`, and `illustration` for the diffusion stack that `src/primer/illustration/model.py` loads, which CI does not install). [`requirements.txt`](requirements.txt) pins every package (those dependencies plus the `dev` and `dvc` extras) to exact versions for Python 3.11+ on Linux, macOS and Windows, so another machine gets the same environment. A test fails if it falls out of step with `pyproject.toml`, and its header gives the command to regenerate it. The Airflow image pins `apache-airflow==3.3.2` in [`infra/airflow/Dockerfile`](infra/airflow/Dockerfile).
 
 ## 3. Data sources
 
