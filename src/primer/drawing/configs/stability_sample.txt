@@ -1,6 +1,7 @@
 # Frozen S6c2 stability sample (KAN-109): 1,000 Amateur Drawings record_ids, one per line.
 # Drawn once on 2026-11-15 from data version v1.1 (character_drawings, 174,981 rows) as
 #   numpy.random.default_rng(20261115).choice(sorted(record_id), size=1000, replace=False)
+# and the ids are written below in sorted order, not in draw order (the set is what is frozen).
 # UNSTRATIFIED: a uniform random draw, not S6b3's proportional sampler (in #29, not on main).
 # Frozen by id so S6d re-measures the same drawings; never redraw it, add a new file instead.
 002b7fbc721a2073

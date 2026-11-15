@@ -23,6 +23,7 @@ the same tail. The gated metric reads top-5 membership, so the overlap is in the
 from __future__ import annotations
 
 import argparse
+import hashlib
 import itertools
 import json
 import statistics
@@ -30,7 +31,7 @@ import sys
 import time
 from collections import Counter
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -76,6 +77,8 @@ def scored(confidences: Sequence[float]) -> Scored:
     """Rank ``confidences``. Ties keep vocabulary order, so a ranking is deterministic."""
     if len(confidences) < 2:
         raise ValueError("ranking needs at least two labels")
+    if not all(0.0 <= value <= 1.0 for value in confidences):  # False for NaN too
+        raise ValueError("confidences are sigmoid scores in 0-1; got NaN or a value outside it")
     ranking = tuple(sorted(range(len(confidences)), key=lambda i: (-confidences[i], i)))
     first, second = confidences[ranking[0]], confidences[ranking[1]]
     return Scored(ranking=ranking, top1_confidence=float(first), margin=float(first - second))
@@ -86,17 +89,31 @@ def pair_stats(before: Sequence[Scored], after: Sequence[Scored]) -> dict[str, f
 
     ``top1_change_rate_confident`` restricts the change rate to drawings whose margin under
     ``before`` is at least its median: the half where the model had a preference to perturb.
-    If that rate is as high as the overall one, the flips are tie-breaking noise, not effect.
+    Flips that were only near-ties broken the other way would pile up among the *low*-margin
+    drawings, so this rate would then sit well below the overall one. A rate close to the overall
+    one says the flips are not concentrated there: confident answers moved too, so the movement
+    is not only tie-breaking.
+
+    ``confident_drawings`` is the size of that subset. It is half the drawings unless the median
+    margin is 0 -- a saturated or collapsed model, most scores exactly 1.0 -- when ``>= median``
+    admits every drawing and the confident rate is the overall rate by construction, so read the
+    rate with the count beside it.
     """
     if len(before) != len(after) or not before:
         raise ValueError("pair_stats needs the same, non-empty set of drawings under both variants")
     changed = [a.ranking[0] != b.ranking[0] for a, b in zip(before, after, strict=True)]
-    overlap = [len(set(a.ranking[:5]) & set(b.ranking[:5])) / 5 for a, b in zip(before, after, strict=True)]
+    # By the entries a ranking has, not by five: with fewer than five labels an unchanged ranking
+    # shares all of its top-k and must score 1.0, not 3/5.
+    top = min(5, len(before[0].ranking))
+    overlap = [
+        len(set(a.ranking[:top]) & set(b.ranking[:top])) / top for a, b in zip(before, after, strict=True)
+    ]
     median_margin = statistics.median(s.margin for s in before)
     confident = [flip for flip, s in zip(changed, before, strict=True) if s.margin >= median_margin]
     return {
         "top1_change_rate": sum(changed) / len(changed),
         "top1_change_rate_confident": sum(confident) / len(confident),
+        "confident_drawings": float(len(confident)),
         "top5_overlap": statistics.fmean(overlap),
     }
 
@@ -156,21 +173,63 @@ def load_sample(path: Path = SAMPLE_PATH) -> list[str]:
     return ids
 
 
+def describe_run(config: Any, device: str, dtype: str, base: PrepareConfig | None = None) -> dict[str, Any]:
+    """What a stability number was taken under, so two runs can be told apart or reproduced.
+
+    A margin is a difference of two confidences, and confidences move about 20% between fp32 on a
+    CPU and bf16 on a GPU (see `model.CONFIDENCE_DECIMALS`), so the device and dtype are part of
+    the result. So are the prompts -- the template, how many, and a hash of the text itself -- and
+    every preprocessing setting each variant used. ``config_dir`` is left out: it is a path on one
+    person's machine and says nothing about the score.
+    """
+    prompts = config.prompts()
+    scoring = {key: value for key, value in asdict(config).items() if key != "config_dir"}
+    return {
+        "device": device,
+        "dtype": dtype,
+        "scoring": scoring,
+        "prompt_count": len(prompts),
+        "prompts_sha256": hashlib.sha256("\n".join(prompts).encode()).hexdigest(),
+        "preprocessing": {
+            name: {**asdict(prepare), "crops_to_box": crops}
+            for name, (prepare, crops) in variant_settings(base).items()
+        },
+    }
+
+
+def stability_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="evaluate stability")
+    parser.add_argument("--version", required=True)
+    parser.add_argument("--out", required=True)
+    parser.add_argument(
+        "--device",
+        choices=("cpu", "cuda"),
+        default=None,
+        help="default: cuda if available, else cpu. Pass cpu to reproduce the recorded CPU baseline "
+        "(fp32) on a machine with a GPU, whose bf16 moves the thin margins",
+    )
+    return parser
+
+
 def _stability(argv: list[str]) -> int:
     """The CLI: read the sample's drawings from a frozen version and write the summary."""
     from primer.data import catalog
     from primer.data.storage import Store
     from primer.drawing.model import DrawingConfig, SiglipEncoder
 
-    parser = argparse.ArgumentParser(prog="evaluate stability")
-    parser.add_argument("--version", required=True)
-    parser.add_argument("--out", required=True)
+    parser = stability_parser()
     args = parser.parse_args(argv)
+    out = Path(args.out)
+    if not out.resolve().parent.is_dir():
+        parser.error(f"--out's folder does not exist: {out.parent}; the run takes minutes, so say so now")
 
     store = Store()
     frame = catalog.read_dataset("character_drawings", store, ["amateur_drawings"], version=args.version)
     ids = load_sample()
     rows = frame.set_index("record_id").loc[ids]
+    if len(rows) != len(ids):
+        # `.loc` returns every row of a repeated record_id, which would score a drawing twice.
+        raise ValueError(f"the sample's {len(ids)} ids matched {len(rows)} rows in {args.version}")
     prefix = f"{store.uri}/"
 
     def drawings() -> Iterable[tuple[bytes, Sequence[float]]]:
@@ -178,11 +237,15 @@ def _stability(argv: list[str]) -> int:
             if not row.image_uri.startswith(prefix):
                 raise ValueError(f"{row.image_uri} is not in {store.uri}; point PRIMER_DATA_URI at it")
             relative = row.image_uri.removeprefix(prefix)
-            yield store.read_bytes(relative), (row.bbox_x, row.bbox_y, row.bbox_width, row.bbox_height)
+            data = store.read_bytes(relative)
+            if hashlib.sha256(data).hexdigest() != row.image_sha256:
+                raise ValueError(f"{row.Index}: the image bytes do not match the recorded image_sha256")
+            yield data, (row.bbox_x, row.bbox_y, row.bbox_width, row.bbox_height)
 
     config = DrawingConfig.from_yaml()
     start = time.perf_counter()
-    summary = measure_stability(drawings(), SiglipEncoder(config), config.prompts())
+    encoder = SiglipEncoder(config, device=args.device)
+    summary = measure_stability(drawings(), encoder, config.prompts())
     labels = config.labels()
     for stats in summary["variants"].values():
         # The name beside the index: "53% of drawings got label 207" says nothing to a reader.
@@ -197,9 +260,10 @@ def _stability(argv: list[str]) -> int:
             "encoder": config.encoder,
             "encoder_revision": config.encoder_revision,
             "seconds": round(time.perf_counter() - start, 1),
+            **describe_run(config, str(encoder.device), encoder.dtype_name or "unknown"),
         }
     )
-    Path(args.out).write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    out.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(json.dumps(summary, indent=2))
     return 0
 
