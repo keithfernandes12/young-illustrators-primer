@@ -122,7 +122,8 @@ then check, and regenerate on failure, for target-word inclusion, readability (S
 
 - **Acceptance** — golden `target_word_inclusion` and `story_quality_mean` reported; gate group `story`
   passes or the gap is recorded under Verified facts.
-- **Depends on** — S3, S4. **Jira** — KAN-39.
+- **Depends on** — S3, S4, as **non-blocking**. The detailed plan uses the Flesch-Kincaid formula
+  and the safety fake until they land. **Jira** — KAN-39.
 
 ### S5b · Story LoRA fine-tune
 

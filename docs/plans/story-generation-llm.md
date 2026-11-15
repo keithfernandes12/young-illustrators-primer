@@ -114,7 +114,7 @@ What the data can actually supply on `v1.1`:
 | `age_group` | derived from `level` (see the level options) | derived |
 | `level` | **nowhere**: `storybook_pages.reading_level` is null, and `stories_text` has no column | Flesch-Kincaid grade computed at pair-build time, with `level_source` (chosen default, below) |
 | `target_words` | sampled from the story's own content words, preferring words in `word_lists` for the age group, 2–3 per story to match the golden set | derived, so inclusion is satisfiable by construction |
-| `pages` | picture books: `storybook_pages` grouped by `book_id`. TinyStories: sentences chunked to the age mode's sentences-per-page | derived |
+| `pages` | picture books: `storybook_pages` grouped by `(source, book_id)` — their `stories_text` rows are **not** read, so no book is counted twice. TinyStories: the `stories_text` row (`source == "tinystories"` only), sentences chunked to the age mode's sentences-per-page | derived; one pair per book |
 | `characters` | not in any schema. v1 uses a capitalised-name heuristic, nullable | derived, weak |
 | `setting` | not in any schema | **null in v1**. The prompt treats it as optional |
 
@@ -122,8 +122,9 @@ What the data can actually supply on `v1.1`:
 
 - Kept fields: `prompt`, `age`, `target_words`, `subject`, `drawing_ref` and `description`.
 - Added, all optional: `character_name` (KAN-92), `age_mode` (`learn_to_read` or `grow_vocabulary`,
-  KAN-92), and `reading_level: float | None`, a Flesch-Kincaid grade. That is the scale the golden
-  set's `target_reading_level` and `ReadabilityScorer.grade` both use.
+  KAN-92), and `reading_level: float | None`, a Flesch-Kincaid grade. The golden set's
+  `target_reading_level` and `ReadabilityScorer.grade` are both *named* as FK grades. The golden
+  targets, though, are generated from age, not measured on text (see "The FK function" below).
 
 **Output.** The model is constrained to this JSON Schema, kept in `story/configs/story_output.schema.json`:
 
@@ -163,16 +164,19 @@ use a Flesch-Kincaid grade (0.0–4.3 in the golden book scenarios).
 
 | Option | How | For | Against |
 |---|---|---|---|
-| **A. Wait for the readability back-fill** (brief B4) | member 3's scorer writes `storybook_pages.reading_level`; pairs are built after | the label comes from the same model that judges `reading_level_within1`; matches the brief's recommendation | blocks S2 on S3 (scorer) and B4, which need a bucket write by a person and a new data version; TinyStories is still unlabelled unless B4 also covers `stories_text`; nothing to train on before the MVP date |
-| **B. Compute the Flesch-Kincaid grade at pair-build time** | `story/data.py` scores each story's text with the formula and records `level_source: "fk_formula"` | available today; deterministic; no bucket write; same scale as the golden set; every row gets a level, TinyStories included | FK is noisy on very short texts and can go negative; it is the baseline the scorer must beat, so the LoRA learns the weaker notion of level; slight circularity if the gate's proxy is also FK |
+| **A. Wait for the readability back-fill** (brief B4) | member 3's scorer writes `storybook_pages.reading_level`; pairs are built after | the label comes from the same model that judges `reading_level_within1`; matches the brief's recommendation | blocks S2 on S3 (the scorer) and on B4, which is more than a one-off write (review F7): **(b)** B4 has to be a pipeline stage in `src/primer/data`, because any new snapshot batch re-runs preprocess, which resets `reading_level` to NA (`storybooks.py:297`); labelling TinyStories as well needs a new `STORIES_TEXT` column and a `configs/schemas` change. **(c)** It also needs a new data version, which is a team decision (`model-development` §1.3), not this plan's. There is also no mapping yet from the scorer's CLEAR `BT_easiness` target to the FK grade `ReadabilityScorer.grade` returns (question 3). Nothing to train on before the MVP date |
+| **B. Compute the Flesch-Kincaid grade at pair-build time** | `story/data.py` scores each whole story with the one shared FK function (below) and records `level_source: "fk_formula@1"` | available today; deterministic; no bucket write; the same named scale as the golden set (whose targets are generated, not measured; see below); every row gets a level, TinyStories included | FK is noisy on very short texts and can go negative; it is the baseline the scorer must beat, so the LoRA learns the weaker notion of level; slight circularity if the gate's proxy is also FK |
 | **C. Proxy by source or age band** | e.g. TinyStories → 3–5, picture books → 5–8 | trivial | too coarse to support "within ±1"; bakes a source bias into level conditioning |
 | **D. Drop `level` from the pair** | control level only with the prompt and regeneration | no labels needed | the model never learns level conditioning: §8's "LLM ignores level" failure, by design |
 | **E. LLM-labelled levels** | ask a large model to grade each story | richer than FK | costs money; unvalidated scale; a new model to evaluate |
 
 **Chosen default: B now, A as the drop-in upgrade.**
 
-- Build pairs with the FK grade, rounded to 0.5, and a `level_source` column.
-- When B4 lands, rebuild the pairs from the scorer's levels under a new data version and retrain.
+- Build pairs with the FK grade from the one shared function (below), rounded to 0.5, and a
+  `level_source` column that names the implementation version.
+- When B4 lands as a pipeline stage, and the team has decided on a new data version (review F7), rebuild
+  the pairs from the scorer's levels and retrain. The split does not move, because level is never
+  part of the split key.
   The pair builder changes in one place: it reads `storybook_pages.reading_level`, which the schema
   stores as a **string** (`schemas.py:46`), parses it to a float grade, and sets
   `level_source: "readability_scorer"`. Nothing downstream of the pairs changes.
@@ -183,6 +187,34 @@ use a Flesch-Kincaid grade (0.0–4.3 in the golden book scenarios).
 
 *If review changes this, only S2's label column and the `age_group` cut move. Nothing else in the
 plan depends on which option is used.*
+
+### The FK function (review F5)
+
+Nothing in `src/` computes Flesch-Kincaid today, and the repo has no `textstat` dependency. So the
+plan pins **one function**, `primer.story.levels.fk_grade(text) -> float`, used by all three places
+that need a level:
+
+- the pair builder (S2);
+- `check_story` (S3);
+- bake-off metric 3 (S6).
+
+How it works:
+
+- **Formula.** `0.39 × words/sentences + 11.8 × syllables/words − 15.59`, computed on the **whole
+  story**, never per page, because per-page FK on a 20-word page is mostly noise.
+- **Clamped at 0**, as the golden generator clamps its targets (`scripts/gen_golden_scenarios.py:93`).
+  Unclamped FK goes negative on very simple text.
+- **Tokenisation.** Words and sentences use the same tokenisation as `primer.data.text.word_count`
+  and `sentence_count`. Syllables use a vowel-group heuristic, written in the module, with no new
+  dependency.
+- **Versioning.** The implementation is versioned. `level_source` records `fk_formula@1`, and any
+  change bumps it, so pairs built with different formulas cannot be mixed silently.
+
+**"Same scale as the golden set" is true in name only.** The golden targets are not the FK of any
+text. They are `max(0, age − 4 ± 0.3)` (`gen_golden_scenarios.py:93`), and 23 of the 80 book targets
+are exactly 0.0. Whether FK-of-text and those targets line up is therefore an **assumption** until it
+is measured. S2's manifest shows pair counts per 0.5-level bin next to the golden target bins, so
+the overlap is visible before any training.
 
 ## Choosing the base model
 
@@ -202,7 +234,7 @@ would make the gate measure our tuning.
 1. JSON-valid rate *without* constrained decoding. This shows whether the model needs the constraint.
 2. Target-word inclusion, with `contains_target_word` from `golden.py`, so the number means the same
    as the gate's.
-3. Level within ±1, FK formula until the scorer exists.
+3. Level within ±1, using the shared `fk_grade` until the scorer exists.
 4. Page-count and sentence-length compliance against the age-mode preset.
 5. Regeneration rate.
 6. Judge quality (1–5) on a fixed 40-request subset.
@@ -255,26 +287,77 @@ the run ids.
     story after `write` and refuses a flagged book. Checking again in the writer would duplicate
     member 3's area inside this one.
 - **Vocabulary-aware prompts.** An offline build step reads `word_lists` at `v1.1` and writes one file
-  per age mode into `story/configs/`:
+  per age mode into `story/configs/`.
+  - **Each word keeps its `list_name`**, and each file carries the `license` and `attribution` of
+    every list it draws from (Dolch, Fry, Kuperman), from the `word_lists` rows. This is the standing
+    rule that every record carries both (review F9).
   - Learn to Read (3–5): Dolch pre-primer to grade 1, plus Fry first 300.
-  - Grow Vocabulary (5–8): Kuperman words with age of acquisition ≤ age + 1.
+  - Grow Vocabulary (5–8): the Learn to Read words plus the rest of Fry's list. **Kuperman words
+    (age of acquisition ≤ age + 1) are added only once they pass the safety area's check.**
+    Kuperman is a general adult word list, so its words up to an age of acquisition of 9 have not
+    been screened for a child's prompt (Keith's question 2). No safety blocklist exists yet:
+    `src/primer/safety/` has only the `SafetyClassifier` protocol and its fake. Until it does, the
+    Kuperman words stay out, and the build step runs every word it keeps through
+    `SafetyClassifier.check` once a real one exists. The cost is a smaller Grow Vocabulary list for
+    v0.
   - The prompt says "use mostly these words", without listing the whole file. Prompt length is measured
     in S3. The checker reports the out-of-list content-word rate as a `CARD.md` metric, not a gate.
   - Sentence length and page count come from the age-mode preset (KAN-92).
 
-## Splits
+## Building the pairs and the splits
 
-- **By book, 80/10/10.** The split key is `book_key = f"{source}-{source_id}"` for `stories_text`, which
-  is exactly `storybook_pages.book_id` for the picture books (Verified facts). One book therefore lands
-  in the same split in both datasets. TinyStories stories are each their own book.
-- Assignment is by a stable hash of `book_key` within strata of (level band × language × source), as
-  §3.3 asks. It is deterministic, so a rebuild on the same data version gives the same split. The
-  hash, not a seeded shuffle, is what makes a book's split independent of which other books exist.
-- **Dedupe before splitting.** The pipeline drops exact duplicates only (`text_hash`). S2b adds the
-  near-duplicate (MinHash) pass that §3.2 promises, so a near-copy cannot sit in train and test.
-- **Source mix.** TinyStories will dwarf the picture books. The training sampler caps TinyStories to
-  a configured ratio (start 3:1), which is a sensitivity axis in S8b. The bias report's capped country
-  weights apply when the picture books are sampled (KAN-80).
+S2 runs these steps in this order. The order matters: dedupe before the split, gender-swap after it.
+
+1. **One pair per book** (review F3). A picture book's `stories_text` row is the same text as its
+   pages joined with `"\n\n"` (`storybooks.py:287`). Reading both datasets would count every picture
+   book twice. So:
+   - picture books come **only from `storybook_pages`**, grouped by `(source, book_id)`, with pages in
+     `page_number` order;
+   - from `stories_text`, **only `source == "tinystories"`** rows are read.
+2. **TinyStories pool, sampled by hash.** `stories_text` holds about 1.8M TinyStories rows (Keith's
+   count from the 2026-11-11 bias report: 1,799,236 of 1,799,990). The pool keeps the TinyStories
+   whose `book_key` hash fraction is below `pool_fraction`. The default is sized for the largest
+   TinyStories ratio S8b sweeps (30:1 against about 758 picture books, so about 23k stories). The
+   sample is a pure function of the key, so the pool is stable and cheap. Everything after this step
+   runs on about 24k stories, not 1.8M. See question 1 under Open questions.
+3. **Cross-source exact dedupe** (review F4). The pipeline dedupes less than this plan first said:
+   - `storybooks.py:298` drops duplicate `text_hash` only within one source's batch;
+   - `storybook_pages` is never deduped;
+   - TinyStories dedupes only against its own earlier batches (`tinystories.py:117-121`);
+   - nothing dedupes across sources.
+
+   S2 therefore computes `text_hash` (from `primer.data.text`, the pipeline's own function) over each
+   pair's full story, and keeps the first row per hash in a fixed source order. That order is
+   `african_storybook`, `storyweaver`, `tinystories`, so a duplicate keeps its picture-book
+   attribution. The dropped count goes in the manifest. **Near**-duplicates (MinHash) stay in S2b.
+4. **Split: a pure hash of the book key, 80/10/10** (review F1).
+   - `book_key = f"{source}/{book_id}"`, with `book_id = source_id` for TinyStories. That is the
+     format `split_of()` already uses (`illustration/consistency/experiment.py:83`), so a picture book
+     lands in the same split for the illustration area and the story area.
+   - The fraction is `int.from_bytes(sha256(book_key)[:8], "big") / 2**64`, `split_of`'s exact hash.
+     It maps to train below 0.8, val below 0.9, and test otherwise.
+   - **There are no strata, and level is never part of the split key.** A book's split depends only
+     on its key: not on which other books exist, and not on its level. Swapping the FK level for the
+     scorer's level (option B → A) therefore never moves a book between splits.
+   - §3.3's "stratified by reading level and language" is met by reporting, not by assignment. The
+     manifest shows the count per split for each (source × 0.5-level bin), so an imbalance is
+     visible. Language adds nothing today: it is `en`-only in both `configs/schemas/stories_text.json`
+     and `storybook_pages.json`.
+   - `split_of` cannot be imported as it stands. It is private to another model area, and it returns
+     only `val`/`test`. S2 inlines the same hash, and switches to the shared helper in
+     `src/primer/data/` when **KAN-120** lands (Keith).
+5. **Gender-swap balancing, after the split, within each split** (review F2). `bias.balance_by_swap`
+   (`src/primer/data/bias.py:246`, by `source`) is the mitigation the bias report prescribes for
+   stories (KAN-80). It runs separately on train, val and test, because a swapped copy shares its
+   original's `book_key` and must stay in the original's split. Copies are marked `augmented=True`,
+   and the manifest counts them.
+   - **Correction:** an earlier draft said "the bias report's capped country weights apply when the
+     picture books are sampled". That was wrong. `capped_weights` applies only to Quick, Draw!'s
+     `country_code` (`bias.py:340`), picture books have no country column, and the report's §4 says
+     origin needs no re-weighting.
+6. **Source mix in training.** The training sampler draws TinyStories at a configured ratio to
+   picture books (start 3:1), from the train split of the pool. The ratio is a sensitivity axis in
+   S8b.
 
 ## Evaluation
 
@@ -307,8 +390,16 @@ the run ids.
     data bucket.
   - A teammate's RTX 4060 (8 GB) is the free option for exploration, and Llama 3.2 3B is the
     likeliest to fit there. A registered run must come from Vertex anyway (ADR clause 4).
-- **Blockers outside this plan:** GPU quota in Diya's compute project (a new project starts at zero),
-  and the shared MLflow server (`model-development` §1.4 and §10). Both are person-only. Until the
+- **Blockers outside this plan:**
+  - GPU quota in Diya's compute project (a new project starts at zero).
+  - The shared MLflow server (`model-development` §1.4 and §10).
+  - **Read access for the training job** (review F7a). The Vertex job runs as
+    `yip-trainer@$YIP_COMPUTE_PROJECT` (`.claude/skills/train-vertex/job_template.yaml:25`), and that
+    account needs `roles/storage.objectViewer` on `gs://young-illustrators-primer-data` to read
+    `v1.1`. `model-development` §6 grants read access only to the six people's accounts. Keith, as
+    bucket owner, grants it.
+
+  All three are person-only. Until the
   shared server exists, runs log to a local, git-ignored store with
   `MLFLOW_TRACKING_URI=file:./.local-data/mlruns` (`.local-data/` is already in `.gitignore`). Every
   run still carries the full tag set, so it can be **re-logged** to the shared server when that
@@ -368,33 +459,68 @@ sentence); `story_output.schema.json` plus `parse_story()`; `TemplateStoryWriter
 
 *size: medium*
 
-`story/data.py`: `read_dataset(version, split)` returns pairs built from `stories_text` and
-`storybook_pages` at a pinned version. It does the book-key split, page grouping and chunking, target-
-word sampling, the level column (FK grade with `level_source`, per Decisions), and writes a manifest.
+`story/data.py`: `read_dataset(version, split)` returns pairs built from `storybook_pages` (picture
+books) and the TinyStories rows of `stories_text`, at a pinned version. It follows the six steps in
+"Building the pairs and the splits":
+
+- one pair per book;
+- the hash-sampled TinyStories pool;
+- cross-source exact dedupe;
+- the pure-hash split;
+- per-split gender-swap balancing;
+- the level from `levels.fk_grade`, with page chunking and target-word sampling.
+
+It writes a manifest.
 
 - **Why separate** — pure data work, testable without a model, and every later slice consumes it.
-- **Touches** — `story/data.py`, `story/pairs.py`, `story/configs/pairs.yaml`, `tests/story/`.
+- **Touches** — `story/data.py`, `story/pairs.py`, `story/levels.py` (the shared FK function),
+  `story/configs/pairs.yaml`, `tests/story/`.
 - **Acceptance**
-  - No `book_key` appears in two splits.
-  - A picture book's `stories_text` row and its `storybook_pages` rows land in the same split.
+  - **One pair per book.** A picture book present in both `storybook_pages` and `stories_text`
+    yields exactly one pair. No `stories_text` row with a source other than `tinystories` is read.
+  - **Pure-hash split.** A book's split is a function of `book_key = f"{source}/{book_id}"` alone.
+    Adding or removing other books, or changing any book's level, never changes it. No `book_key`
+    appears in two splits.
   - Split ratios are within ±2 points of 80/10/10 on a 1,000-book synthetic frame.
+  - **Cross-source dedupe.** Two pairs from different sources with the same `text_hash` collapse to
+    one, which keeps the picture-book source. The manifest counts the drop.
+  - **Gender-swap copies stay in their original's split,** marked `augmented=True`.
+  - `fk_grade` is ≥ 0 on every input, and pairs record `level_source = "fk_formula@1"`.
+  - The manifest shows pair counts per split for each (source × 0.5-level bin), next to the golden
+    target bins.
   - Every pair's target words occur in its story.
   - Every row carries `license`, `attribution` and `level_source`.
-- **Testing** — each acceptance line has a test on in-memory frames built through `conform()`, and
-  each fails if the corresponding code is removed (for example, splitting by `record_id` instead of
-  `book_key` breaks the cross-dataset test).
+- **Testing** — each acceptance line has a test on in-memory frames built through `conform()`. Each
+  test fails if its behaviour is reverted:
+  - reading picture books from `stories_text` too breaks the one-pair test;
+  - stratifying or ranking within a group breaks the "adding books doesn't move a book" test;
+  - deduping per source breaks the cross-source test;
+  - balancing before the split breaks the copy-stays test;
+  - removing the clamp breaks the `fk_grade ≥ 0` test on a one-syllable-word text.
+
+  `fk_grade` also gets a table of hand-computed cases.
 - **Depends on** — S1 (types). **Jira** — KAN-39.
 
 ### S2b · Near-duplicate and safety filtering of training text
 
 *size: small*
 
-MinHash near-dedupe across sources before splitting. Passes every story through the safety area's
-`SafetyClassifier` (the fake in tests, the real one when member 3 lands it) and drops flagged stories,
-with counts in the manifest.
+MinHash near-dedupe across sources before splitting. Every story passes through the safety area's
+`SafetyClassifier` (the fake in tests, the real one when member 3 lands it), and flagged stories are
+dropped, with counts in the manifest.
 
-- **Acceptance** — two stories differing by one word collapse to one. A story the fake classifier flags
-  is absent from all splits.
+**Scope** (review F6): this runs on the hash-sampled pool from step 2 (about 24k stories), **not**
+on all ~1.8M TinyStories. That is what keeps it small.
+
+- **Acceptance**
+  - Two stories differing by one word collapse to one.
+  - A story the fake classifier flags is absent from all splits.
+  - Both steps run on the pool, never on the full `stories_text`.
+- **Testing**
+  - A near-duplicate pair on a synthetic frame (fails if MinHash is skipped).
+  - A story containing the fake's marker is dropped (fails if the filter is skipped).
+  - A spy classifier counts calls and asserts one per pooled story, so the test fails if the filter
+    is moved before pooling.
 - **Depends on** — S2. **Jira** — KAN-39.
 
 ### S3 · Prompt builder, vocabulary files, constraint checker
@@ -405,10 +531,20 @@ Per-age-mode prompt templates, kept in config. An offline `build_vocabulary` ste
 writes vocabulary files into `story/configs/`. `check_story(story, request)` returns target-word misses,
 page and sentence violations, out-of-list rate, and FK grade.
 
-- **Acceptance** — a prompt never exceeds a configured token budget for the 3-word golden case. The
-  checker's word matching agrees with `golden.contains_target_word` on a shared table of cases.
-- **Testing** — table tests (fail if matching becomes substring); the token budget is tested with a
-  whitespace tokenizer stand-in.
+- **Acceptance**
+  - A prompt never exceeds a configured token budget for the 3-word golden case.
+  - The checker's word matching agrees with `golden.contains_target_word` on a shared table of cases.
+  - The checker's level comes from `levels.fk_grade`, the same function as S2.
+  - Every vocabulary file carries `list_name` per word, plus the `license` and `attribution` of
+    each list it draws from.
+  - No Kuperman word is in any file until a real `SafetyClassifier` has checked it.
+- **Testing**
+  - Table tests, which fail if matching becomes substring matching.
+  - The token budget is tested with a whitespace tokenizer stand-in.
+  - The vocabulary build is tested on a synthetic `word_lists` frame:
+    - missing attribution fails;
+    - a Kuperman row is excluded when only the fake classifier is available;
+    - a word the fake flags is dropped.
 - **Depends on** — S1. **Jira** — KAN-39.
 
 ### S4 · `StoryWriterModel`: constrained decoding and regenerate loop
@@ -446,6 +582,13 @@ rubric. An adapter lets `golden.py` drive a real `StoryWriter`; member 5 reviews
     and `baseline` is present. (`contract.missing_keys` checks all eleven keys with no stage filter,
     so a story-only file can never pass it.)
   - The golden runner with `--fake-models` produces numbers identical to before the adapter.
+- **Testing**
+  - A test reads the written file and checks the story keys and `baseline` (fails if `evaluate.py`
+    drops either).
+  - A golden-runner regression test pins the fake-model metrics from `main` and compares (fails if
+    the adapter changes any number).
+  - `slices.py` is tested on a synthetic frame with known per-slice values.
+  - The judge rubric is tested with a fake judge that returns fixed scores, so the mean is exact.
 - **Depends on** — S4. **Jira** — KAN-39.
 
 ### S6 · Candidate bake-off and model choice (*person-only for the GPU run*)
@@ -507,6 +650,16 @@ runs on S6's zero-shot winner:
 
 Results and mitigations go in `CARD.md`. SHAP is stated as inapplicable (`model-development` §3).
 
+- **Acceptance**
+  - One MLflow run per ablation and sweep point, with per-slice metrics logged as
+    `slice/<key>=<value>/<metric>`.
+  - Any slice of at least 100 rows whose `target_word_inclusion` is more than 5 points below overall
+    is named in `CARD.md`, with a mitigation proposed or ruled out.
+- **Testing**
+  - The ablation driver is tested with a fake backend: dropping a constraint removes exactly that
+    instruction from the prompt (fails if the ablation is a no-op).
+  - The per-slice logger is tested with fixed numbers, including a 99-row slice that must not be
+    judged (the 100-row floor from `primer.data.bias`).
 - **Depends on** — S6. **Jira** — KAN-39.
 
 ### S8b · Training-dependent sensitivity
@@ -514,8 +667,15 @@ Results and mitigations go in `CARD.md`. SHAP is stated as inapplicable (`model-
 *size: small*
 
 Re-runs S8a's slices on the fine-tuned adapter, and adds the axes that only exist with training: the
-TinyStories ratio and the LoRA rank.
+TinyStories ratio (3:1, 10:1, 30:1, all drawn from the step-2 pool) and the LoRA rank.
 
+- **Acceptance**
+  - One MLflow run per ratio and per rank.
+  - `CARD.md` compares each slice before and after fine-tuning.
+  - The chosen ratio is recorded in Decisions, with its run ids.
+- **Testing**
+  - The sampler is tested on a synthetic pool: each ratio yields the configured number of TinyStories
+    per picture book, and all of them are drawn from the train split (fails if it reads val or test).
 - **Depends on** — S7. **Jira** — KAN-39.
 
 ### S9 · Register, container, model card
@@ -525,6 +685,15 @@ TinyStories ratio and the LoRA rank.
 `register.py` (MLflow registry plus Artifact Registry push); `CARD.md` complete. Only a
 `GATE_RESULT: PASS` run takes `candidate`.
 
+- **Acceptance**
+  - `register.py --run-id <id>` refuses a run whose recorded gate result is not `PASS`, or which is
+    missing any of the `model-development` §2 tags.
+  - A passing run gets the `candidate` alias, and its image is tagged `<git-sha>`.
+  - `CARD.md` has no `_not chosen_` / `_not pinned_` placeholders left.
+- **Testing**
+  - Fake MLflow and registry clients: a FAIL run is refused, a missing `data_version` tag is refused,
+    and a PASS run is registered (each fails if its check is removed).
+  - The real push is person-run and recorded in Verified facts.
 - **Depends on** — S7 and S8b. Deploy is `mvp-cloud-deploy` S10. **Jira** — KAN-39.
 
 ## Status
@@ -533,8 +702,8 @@ TinyStories ratio and the LoRA rank.
 |---|---|---|---|
 | S0 | in review | [#28](https://github.com/keithfernandes12/young-illustrators-primer/pull/28) | this plan; five chosen defaults in Decisions, revisable in review |
 | S1 | not started | | KAN-92's scope, built by Diya on KAN-39 |
-| S2 | not started | | level = FK grade with `level_source` (chosen default) |
-| S2b | not started | | |
+| S2 | not started | | pure-hash split, one pair per book, cross-source dedupe, shared `fk_grade` (review F1–F5); helper moves to `src/primer/data` with KAN-120 |
+| S2b | not started | | runs on the hash-sampled pool, not 1.8M rows |
 | S3 | not started | | |
 | S4 | not started | | |
 | S5 | not started | | touches member 5's area |
@@ -575,7 +744,27 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
   and on age-mode format violations. It does not regenerate on level, which is prompt-steered and
   measured, or on safety, which serving already checks after `write`. Chosen to avoid a noisy FK
   check burning attempts, and to avoid duplicating the safety area. Revisit when the readability
-  scorer is real. (From review finding F3.)
+  scorer is real. (From self-review finding F3.)
+- **2026-11-14** — *Split rule (Keith's review F1, corrects the original split text).* The split is a
+  pure hash of `book_key = f"{source}/{book_id}"`, using `split_of`'s exact hash, at 80/10/10.
+  - There are no strata, and level is never part of the key, so the option B → A swap can never move
+    a book between splits.
+  - Stratification is reported in the manifest, not used for assignment.
+  - Chosen over hash-ranking within strata, which makes a book's split depend on the other books.
+  - The helper moves to `src/primer/data/` under KAN-120.
+- **2026-11-14** — *Pair sources and dedupe (Keith's review F3/F4).*
+  - One pair per book: picture books only from `storybook_pages`, and only `tinystories` rows from
+    `stories_text`.
+  - Cross-source exact `text_hash` dedupe in S2, before the split.
+  - Gender-swap balancing (`balance_by_swap`) after the split, within each split (F2).
+- **2026-11-14** — *One FK function (Keith's review F5).* `primer.story.levels.fk_grade`: whole
+  story, clamped at 0, versioned as `fk_formula@1`, and shared by S2, S3 and S6.
+  - **This corrects the Level entry above:** "uses the same scale as the golden set" holds in name
+    only, because the golden targets are generated from age (`max(0, age − 4 ± 0.3)`), not measured
+    as FK on text.
+  - S2's manifest shows level bins next to the golden target bins.
+- **2026-11-14** — *Kuperman words wait for safety (Keith's question 2).* The vocabulary files hold
+  only Dolch and Fry words until a real `SafetyClassifier` can screen Kuperman words.
 
 ## Verified facts
 
@@ -588,7 +777,23 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
   `schemas.py` and `storybooks.py`.
 - **2026-11-14** — A picture book's `storybook_pages.book_id` is `f"{source}-{story_id}"`
   (`storybooks.py:264`), and its `stories_text` row has `source_id = story_id` (`storybooks.py:290`).
-  So `f"{source}-{source_id}"` joins the two.
+  So `f"{source}-{source_id}"` joins the two. *(Since review F1/F3, S2 no longer needs that join: it
+  reads picture books only from `storybook_pages`, and splits on `f"{source}/{book_id}"`.)*
+- **2026-11-14** — Checked while answering Keith's review of PR #28, by reading the cited lines on
+  `main`:
+  - `split_of()` (`illustration/consistency/experiment.py:83`) hashes the first 8 bytes of SHA-256
+    and returns only `val` or `test`, keyed on `f"{source}/{book_id}"`.
+  - `capped_weights` is applied only to `drawings.country_code` (`bias.py:340`).
+  - `balance_by_swap` exists (`bias.py:246`).
+  - `language` is `en`-only in both schema files.
+  - `stories_text` picture-book text is `"\n\n".join(pages)` (`storybooks.py:287`), deduped only
+    within a batch (`storybooks.py:298`).
+  - TinyStories dedupes only against its own batches (`tinystories.py:117-121`).
+  - The golden targets are `max(0, age − 4 ± 0.3)` (`gen_golden_scenarios.py:93`).
+  - Nothing in `src/` computes FK, and there is no `textstat` dependency.
+  - `src/primer/safety/` has no blocklist yet.
+  - Nothing maps the CLEAR `BT_easiness` target to an FK grade. The only link is the FK → BT
+    straight-line fit in `bias.py:188`, used for analysis.
 - **2026-11-14** — The golden set has 100 scenarios: 80 `book`, 20 `safety`. Book scenarios are
   spread over ages 3–8 (13–14 each), have 2 or 3 target words (40 each), and a `target_reading_level`
   from 0.0 to 4.3, with 23 of the 80 at 0.0. Counted with a Python script over
@@ -616,14 +821,41 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
    picks the mode; the default is by age, with 5 → Learn to Read. *Decides:* Diya.
 5. **Where the GPU runs come from.** *Recommended:* Diya requests L4 quota in her compute project now,
    since a new project starts at zero. *Decides:* Diya.
-6. **Serving has to handle `StoryGenerationError`.** After S4 the writer can raise once its attempts
-   run out, and `serving/book.py:109` calls `writer.write` with no handling. *Recommended:* a Jira
-   issue for the serving owner (member 6, `mvp-cloud-deploy` S9), linked here. Not opened yet, because
-   opening issues waits on Diya. (Review finding F13.)
+6. ~~Serving has to handle `StoryGenerationError`.~~ **Tracked as KAN-121** (serving owner,
+   `mvp-cloud-deploy` S9). After S4 the writer can raise once its attempts run out, and
+   `serving/book.py:109` calls `writer.write` with no handling. (Review F11; earlier self-review F13.)
+7. **Is ~2.3k TinyStories out of ~1.8M intended?** (Keith's question 1.) *Answer: yes, as a starting
+   point, though the 3:1 ratio was a judgement, not a derived number.*
+   - At 3:1 against about 758 picture books, roughly 2.3k TinyStories are used across all splits
+     (about 1.8k in train). The target style is the picture books, and a few thousand pairs is an
+     ordinary QLoRA size for teaching a format.
+   - What is **not known** is whether more TinyStories would help constraint following or would
+     drown out the picture-book style. S8b answers that by sweeping 3:1, 10:1 and 30:1 from the
+     hash-sampled pool, which is sized for 30:1 so the sweep never re-runs S2b.
+   - *Decides:* Diya, from S8b's runs.
+8. **Where is the CLEAR `BT_easiness` → FK grade mapping defined?** (Keith's question 3.) *Answer:
+   nowhere yet.*
+   - `ReadabilityScorer.grade` is documented as returning an FK grade, but the scorer trains on CLEAR
+     `score` (`BT_easiness`, higher means easier). No code maps one to the other.
+   - The only link in the repo is the FK → BT straight-line fit in `bias.py:188`, which goes the
+     other way and is used for analysis.
+   - Option A cannot work until the readability owner defines that mapping: invert the fit, train the
+     scorer on FK directly, or change the interface.
+   - *Decides:* member 3 (readability). This plan's option B does not depend on it.
 
 ## Out of scope
 
 - Serving and the Cloud Run deploy of `yip-story`: `mvp-cloud-deploy` S9/S10.
-- Back-filling `reading_level` in the bucket: brief B4, member 3, person-run.
+- Back-filling `reading_level` in the bucket: brief B4. Per review F7, this is **not** a one-off
+  write:
+  - **(b)** It has to be a pipeline stage in `src/primer/data` (the data owner's area), because a new
+    snapshot batch re-runs preprocess and resets `reading_level` to NA (`storybooks.py:297`).
+    Labelling TinyStories would also need a new `STORIES_TEXT` column and a `configs/schemas` change.
+  - **(c)** The new data version it implies is a team decision (`model-development` §1.3).
+  - It depends on the readability owner defining the `BT_easiness` → FK mapping (open question 8).
+- The shared book-split helper in `src/primer/data/`: **KAN-120** (Keith). S2 inlines the same hash
+  until then.
+- Granting the Vertex service account read access to the data bucket: Keith, as bucket owner (review
+  F7a; listed under Blockers).
 - The image safety check and the safety classifier itself: member 3.
 - Learner adaptation and target-word *selection*: §5.3 "word-selection logic", a later stage.
