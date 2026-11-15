@@ -1222,6 +1222,14 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   an item is read. The split is unstratified by design — a hash, not S6b3's samplers, which are
   in #29 and not on `main` — and per-label coverage above is what shows that did not cost a class.
   Not in MLflow: these describe the data, not a model, and there is no host (KAN-107).
+- **2026-11-15 — S6b2: `v1.1` passes the stricter provenance check.** Review asked that blank and
+  non-text `license` / `attribution` be refused, not only null ones; the earlier "present on every
+  row" was a null check alone, so it was re-measured. `read_dataset("v1.1", split)` for all three
+  splits (train 506,324, val 63,112, test 63,310 = **632,746**, 35 s including the bucket read):
+  **0** rows blank or not text in either column, each column holding one distinct value
+  (`CC-BY-4.0`; `Quick, Draw! Dataset, Google Creative Lab`). So the check refuses no row of the
+  version this slice trains on. On each split `record(-1)` and `record(-n)` were accepted and
+  `record(-n - 1)` raised `IndexError`.
 
 ## Open questions
 
