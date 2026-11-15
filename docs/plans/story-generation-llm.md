@@ -153,10 +153,11 @@ the page object in the JSON plus a parsed dataclass inside `story/`, not a chang
 That is the chosen default in Decisions (extend, don't replace). Each training target is the pair's story rendered in this exact JSON, so the
 fine-tune learns the format as well as the content.
 
-## The missing `level` field — chosen default, revisable in review
+## The missing `level` field — decided: option B, with conditions
 
-Option B below is the chosen default (Decisions, 2026-11-14). Keith had been asked to decide; work
-went ahead without waiting, and the choice stays open to change in review of this plan.
+Option B below was first a chosen default. **Keith decided it on 2026-11-14: option B, with
+conditions** (Decisions). The conditions are written into the FK function, the split and S2's
+acceptance below, and into Option A's row for the later swap.
 
 Neither the picture-book mirrors nor TinyStories carry a reading level
 (`storybooks.py:297` writes `reading_level=pd.NA`). The golden set and the readability interface both
@@ -164,7 +165,7 @@ use a Flesch-Kincaid grade (0.0–4.3 in the golden book scenarios).
 
 | Option | How | For | Against |
 |---|---|---|---|
-| **A. Wait for the readability back-fill** (brief B4) | member 3's scorer writes `storybook_pages.reading_level`; pairs are built after | the label comes from the same model that judges `reading_level_within1`; matches the brief's recommendation | blocks S2 on S3 (the scorer) and on B4, which is more than a one-off write (review F7): **(b)** B4 has to be a pipeline stage in `src/primer/data`, because any new snapshot batch re-runs preprocess, which resets `reading_level` to NA (`storybooks.py:297`); labelling TinyStories as well needs a new `STORIES_TEXT` column and a `configs/schemas` change. **(c)** It also needs a new data version, which is a team decision (`model-development` §1.3), not this plan's. **(a)** Like every option, the Vertex job's service account needs read access to the data bucket (Blockers). There is also no mapping yet from the scorer's CLEAR `BT_easiness` target to the FK grade `ReadabilityScorer.grade` returns (question 3). Nothing to train on before the MVP date |
+| **A. Wait for the readability back-fill** (brief B4) | member 3's scorer writes `storybook_pages.reading_level`; pairs are built after | the label comes from the same model that judges `reading_level_within1`; matches the brief's recommendation | blocks S2 on S3 (the scorer) and on B4, which is more than a one-off write (review F7): **(b)** B4 has to be a pipeline stage in `src/primer/data`, because any new snapshot batch re-runs preprocess, which resets `reading_level` to NA (`storybooks.py:297`). Per Keith's decision, that stage writes a float grade **plus a scorer-version column**, kept across re-runs. **(d)** The scorer is trained on CLEAR, which is aimed at older readers, so its labels on texts for ages 3–5 must be checked before they replace FK; labelling TinyStories as well needs a new `STORIES_TEXT` column and a `configs/schemas` change. **(c)** It also needs a new data version, which is a team decision (`model-development` §1.3), not this plan's. **(a)** Like every option, the Vertex job's service account needs read access to the data bucket (Blockers). There is also no mapping yet from the scorer's CLEAR `BT_easiness` target to the FK grade `ReadabilityScorer.grade` returns (question 3). Nothing to train on before the MVP date |
 | **B. Compute the Flesch-Kincaid grade at pair-build time** | `story/data.py` scores each whole story with the one shared FK function (below) and records `level_source: "fk_formula@1"` | available today; deterministic; no bucket write; the same named scale as the golden set (whose targets are generated, not measured; see below); every row gets a level, TinyStories included | FK is noisy on very short texts and can go negative; it is the baseline the scorer must beat, so the LoRA learns the weaker notion of level; slight circularity if the gate's proxy is also FK |
 | **C. Proxy by source or age band** | e.g. TinyStories → 3–5, picture books → 5–8 | trivial | too coarse to support "within ±1"; bakes a source bias into level conditioning |
 | **D. Drop `level` from the pair** | control level only with the prompt and regeneration | no labels needed | the model never learns level conditioning: §8's "LLM ignores level" failure, by design |
@@ -172,8 +173,8 @@ use a Flesch-Kincaid grade (0.0–4.3 in the golden book scenarios).
 
 **Chosen default: B now, A as the drop-in upgrade.**
 
-- Build pairs with the FK grade from the one shared function (below), rounded to 0.5, and a
-  `level_source` column that names the implementation version.
+- Build pairs with the FK grade from the one shared function (below), which itself rounds to 0.5,
+  and a `level_source` column that names the implementation version.
 - When B4 lands as a pipeline stage, and the team has decided on a new data version (review F7), rebuild
   the pairs from the scorer's levels and retrain. The split does not move, because level is never
   part of the split key.
@@ -204,6 +205,12 @@ How it works:
   story**, never per page, because per-page FK on a 20-word page is mostly noise.
 - **Clamped at 0**, as the golden generator clamps its targets (`scripts/gen_golden_scenarios.py:93`).
   Unclamped FK goes negative on very simple text.
+- **Rounded to 0.5, inside the function** (Keith's decision, condition 1). The pair builder,
+  `check_story` and bake-off metric 3 all see the same rounded value, so a level never differs
+  between where it is labelled and where it is checked. The golden targets themselves are rounded to
+  0.1 (`round(..., 1)` at `gen_golden_scenarios.py:93`), so "within ±1" compares a 0.5-step grade
+  against a 0.1-step target. That is deliberate and harmless: the ±1 tolerance is twice the 0.5
+  step.
 - **Tokenisation.** Words and sentences use the same tokenisation as `primer.data.text.word_count`
   and `sentence_count`. Syllables use a vowel-group heuristic, written in the module, with no new
   dependency.
@@ -215,6 +222,12 @@ text. They are `max(0, age − 4 ± 0.3)` (`gen_golden_scenarios.py:93`), and 23
 are exactly 0.0. Whether FK-of-text and those targets line up is therefore an **assumption** until it
 is measured. S2's manifest shows pair counts per 0.5-level bin next to the golden target bins, so
 the overlap is visible before any training.
+
+**The low end needs its own check** (Keith's condition 3). FK on one- to three-sentence texts is
+noisy and pulls young stories toward 0. The 0–1 range is also where the golden set is heaviest:
+38 of its 80 book targets are ≤ 1.0, all from ages 3–5 (counted over `configs/golden/scenarios.jsonl`).
+If the corpus is thin there, the model never learns the youngest level. S2 therefore checks the
+**count** at 0–1, not just the shape of the distribution (see S2's acceptance).
 
 ## Choosing the base model
 
@@ -495,9 +508,18 @@ It writes a manifest.
   - **Cross-source dedupe.** Two pairs from different sources with the same `text_hash` collapse to
     one, which keeps the picture-book source. The manifest counts the drop.
   - **Gender-swap copies stay in their original's split,** marked `augmented=True`.
-  - `fk_grade` is ≥ 0 on every input, and pairs record `level_source = "fk_formula@1"`.
+  - `fk_grade` is ≥ 0 and a multiple of 0.5 on every input, and pairs record
+    `level_source = "fk_formula@1"`.
   - The manifest shows pair counts per split for each (source × 0.5-level bin), next to the golden
     target bins.
+  - **Enough pairs at the youngest levels** (Keith's condition 3). In the train split, at least 20%
+    of pairs, and at least 300 pairs, have a level in 0–1.0 (the 0, 0.5 and 1.0 bins). The golden
+    set has 47.5% of its book targets there. Both numbers are **provisional**, revisable in review
+    once the real distribution is in the manifest.
+    - If either check fails, the manifest marks it `level_floor: FAIL`.
+    - The S2 PR then records the shortfall and a mitigation in Decisions before S6 starts: for
+      example, drawing the TinyStories pool toward shorter stories, or raising the TinyStories ratio.
+    - It does not proceed silently.
   - Every pair's target words occur in its story.
   - Every row carries `license`, `attribution` and `level_source`.
 - **Testing** — each acceptance line has a test on in-memory frames built through `conform()`. Each
@@ -507,6 +529,9 @@ It writes a manifest.
   - deduping per source breaks the cross-source test;
   - balancing before the split breaks the copy-stays test;
   - removing the clamp breaks the `fk_grade ≥ 0` test on a one-syllable-word text;
+  - removing the rounding breaks a test asserting every `fk_grade` output is a multiple of 0.5;
+  - a synthetic frame with too few 0–1 pairs must produce `level_floor: FAIL`, so the test fails if
+    the floor check is removed;
   - dropping the pool salt breaks the "pooled TinyStories reach val and test" ratio test. That test
     pins `pool_fraction = 0.05`, well below the 0.8 train cut. Without the salt, every pooled story
     falls in train, so the test fails. (At `pool_fraction = 1.0` an unsalted pool would still split
@@ -725,7 +750,7 @@ TinyStories ratio (3:1, 10:1, 30:1, all drawn from the step-2 pool) and the LoRA
 
 | Slice | State | PR | Notes |
 |---|---|---|---|
-| S0 | in review | [#28](https://github.com/keithfernandes12/young-illustrators-primer/pull/28) | this plan; five chosen defaults (revisable in review) plus Keith's review fixes, all in Decisions |
+| S0 | in review | [#28](https://github.com/keithfernandes12/young-illustrators-primer/pull/28) | this plan; level decided by Keith (option B, with conditions); other four defaults revisable in review; Keith's review fixes; all in Decisions |
 | S1 | not started | | KAN-92's scope, built by Diya on KAN-39 |
 | S2 | not started | | pure-hash split, one pair per book, cross-source dedupe, shared `fk_grade` (review F1–F5); helper moves to `src/primer/data` with KAN-120 |
 | S2b | not started | | runs on the hash-sampled pool, not 1.8M rows |
@@ -790,6 +815,45 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
   - S2's manifest shows level bins next to the golden target bins.
 - **2026-11-14** — *Kuperman words wait for safety (Keith's question 2).* The vocabulary files hold
   only Dolch and Fry words until a real `SafetyClassifier` can screen Kuperman words.
+- **2026-11-14** — **Reading level: option B, with conditions. Decided by Keith** (data pipeline
+  owner), in a
+  [PR #28 comment](https://github.com/keithfernandes12/young-illustrators-primer/pull/28#issuecomment-6889009318).
+  This replaces the "chosen default, revisable in review" status of the Level entry above. In his
+  words:
+
+  > Flesch-Kincaid is computed when the instruction pairs are built, with a `level_source` column.
+  > It needs no schema change, no write to the bucket and no new data version, and it can be
+  > reproduced from `data-v1.1` plus the git SHA, as long as the FK code is pinned.
+  >
+  > 1. **One shared FK function**, used by the pair builder, `check_story` and bake-off metric 3. It
+  >    is computed on the whole story (not per page), clamped at 0 and rounded to 0.5, matching the
+  >    golden generator. `level_source` records the implementation and its version.
+  > 2. **Level never enters the split key** (review F1). The split stays a pure hash of `book_key`,
+  >    so later swapping FK for the scorer can't move books between train and test.
+  > 3. **The S2 manifest shows the level distribution** in 0.5 bins next to the golden target bins.
+  >    FK on 1–3-sentence texts is noisy and pulls young stories toward 0, so check there are enough
+  >    pairs at the 0–1 targets.
+  >
+  > Option A (the readability scorer's back-fill, B4) can replace this later, but not as a one-off
+  > write. Preprocess resets `reading_level` to NA on every snapshot re-run, so B4 has to be a
+  > pipeline stage in `src/primer/data`: a float grade plus a scorer-version column, kept across
+  > re-runs. It also needs a team decision on a new data version. The scorer is trained on CLEAR,
+  > which is aimed at older readers, so its labels for texts for 3–5-year-olds would need checking
+  > first.
+
+  Where the plan meets each condition:
+  - **(1)** "The FK function": `primer.story.levels.fk_grade`, whole story, clamped at 0, rounded to
+    0.5 inside the function, `level_source = "fk_formula@1"`. It is used by S2, `check_story` (S3)
+    and bake-off metric 3 (S6). S2's tests fail if the clamp or the rounding is removed. Note: the
+    golden *targets* are rounded to 0.1, not 0.5 (`gen_golden_scenarios.py:93`); the clamp is what
+    matches the generator.
+  - **(2)** "Building the pairs and the splits", step 4, and the Split rule entry above.
+  - **(3)** S2's acceptance: the manifest's 0.5 bins next to the golden bins, plus a new floor of at
+    least 20% and at least 300 train pairs at levels 0–1.0. The floor numbers are provisional, and
+    a shortfall is recorded in Decisions before S6 rather than passed over.
+  - **Option A later:** Option A's row and Out of scope now carry the pipeline stage, the float grade
+    plus scorer-version column kept across re-runs, the team data-version decision, and the check of
+    CLEAR-trained labels on texts for ages 3–5.
 
 ## Verified facts
 
@@ -835,10 +899,10 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
 
 1. ~~KAN-92's types vs the merged interface.~~ Chosen default 2026-11-14: extend, don't replace
    (Decisions).
-2. ~~The `level` field.~~ Chosen default 2026-11-14: FK grade now, back-fill later (Decisions).
-   Still open to Keith in review. Note that the brief (`model-stages-and-data-coverage`) recommends
-   option A and names the **Language lead** as decider. If that is not Keith, the Language lead
-   should see this choice in review too.
+2. ~~The `level` field.~~ **Decided by Keith on 2026-11-14: option B, with conditions**
+   (Decisions; [PR #28 comment](https://github.com/keithfernandes12/young-illustrators-primer/pull/28#issuecomment-6889009318)).
+   The brief (`model-stages-and-data-coverage`) recommends option A and names the **Language lead** as
+   decider. If that is not Keith, the Language lead should still see this decision.
 3. **Which model judges `story_quality_mean`?** It must not be one of the candidates. A hosted API
    model costs money but is stronger; a larger open model costs GPU time. Either way it is calibrated
    against 30 human ratings. *Recommended:* a hosted model on a capped sample, rubric and prompt pinned
@@ -877,9 +941,12 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
 - Back-filling `reading_level` in the bucket: brief B4. Per review F7, this is **not** a one-off
   write:
   - **(b)** It has to be a pipeline stage in `src/primer/data` (the data owner's area), because a new
-    snapshot batch re-runs preprocess and resets `reading_level` to NA (`storybooks.py:297`).
+    snapshot batch re-runs preprocess and resets `reading_level` to NA (`storybooks.py:297`). Per
+    Keith's decision, it writes a float grade plus a scorer-version column, kept across re-runs.
     Labelling TinyStories would also need a new `STORIES_TEXT` column and a `configs/schemas` change.
   - **(c)** The new data version it implies is a team decision (`model-development` §1.3).
+  - **(d)** The CLEAR-trained scorer's labels on texts for ages 3–5 are checked before they replace
+    FK, because CLEAR is aimed at older readers.
   - It depends on the readability owner defining the `BT_easiness` → FK mapping (open question 8).
 - The shared book-split helper in `src/primer/data/`: **KAN-120** (Keith). S2 inlines the same hash
   until then.
