@@ -285,24 +285,58 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     config = load_config(args.config)
-    requests = limit_requests(read_requests(args.requests or Path(config.raw["requests"])),
-                              config.raw.get("max_requests"))
+    requests_path = args.requests or Path(config.raw["requests"])
+    requests = limit_requests(read_requests(requests_path), config.raw.get("max_requests"))
     print(f"{len(requests)} requests x {len(config.points())} configurations")
     logger = MlflowLogger(str(config.raw["mlflow_tracking_uri"]), str(config.raw["experiment"]),
                           config.raw.get("mlflow_artifact_location"))
     sha = git_sha()
-    tags = dvc_tags(str(config.raw["data_version"]))
+    tags = {**dvc_tags(str(config.raw["data_version"])), **requests_tags(requests_path, len(requests))}
     report = run_grid(config, requests, HFChatBackend, logger, owner=args.owner, sha=sha, extra_tags=tags)
-    return finish(report, logger, Path(config.raw["out"]), args.owner, sha, tags)
+    return finish(report, logger, Path(config.raw["out"]), args.owner, sha, tags,
+                  inputs=request_inputs(requests_path))
+
+
+def manifest_path_for(requests_path: Path) -> Path:
+    """Where `primer.story.data.main` writes the manifest for a requests file."""
+    return requests_path.with_suffix(".manifest.json")
+
+
+def requests_tags(requests_path: Path, used: int) -> dict[str, str]:
+    """Tags naming exactly what was scored (PR #36 review F5).
+
+    - `requests_sha256`: the first 16 hex characters of the whole requests file's SHA-256.
+    - `requests_used`: how many requests, from the start of the file.
+    - `tinystories_files` / `tinystories_generations`: the TinyStories subset the requests were built
+      from, read from the manifest. `data_version` alone would overstate the input, since only part
+      of TinyStories was read. "unknown" if there is no manifest.
+    """
+    tags = {"requests_sha256": hashlib.sha256(requests_path.read_bytes()).hexdigest()[:16],
+            "requests_used": str(used)}
+    manifest = manifest_path_for(requests_path)
+    if manifest.exists():
+        files = json.loads(manifest.read_text(encoding="utf-8")).get("tinystories_files", [])
+        tags["tinystories_files"] = str(len(files))
+        tags["tinystories_generations"] = ",".join(str(f.get("generation")) for f in files) or "none"
+    else:
+        tags["tinystories_files"] = tags["tinystories_generations"] = "unknown"
+    return tags
+
+
+def request_inputs(requests_path: Path) -> list[Path]:
+    """The requests file and, if present, its manifest: logged on the summary run (review F5)."""
+    manifest = manifest_path_for(requests_path)
+    return [requests_path, *([manifest] if manifest.exists() else [])]
 
 
 def finish(report: dict[str, Any], logger: RunLogger, out: Path, owner: str, sha: str,
-           extra_tags: dict[str, str]) -> int:
-    """Write the outputs, log them as one `grid-summary` run (review F3), print the outcome.
+           extra_tags: dict[str, str], inputs: Sequence[Path] = ()) -> int:
+    """Write the outputs, log them and `inputs` as one `grid-summary` run (review F3, PR #36 review F5),
+    print the outcome.
 
     Exits 2 when no configuration passed the selection rule, so a script cannot mistake that for success.
     """
-    paths = write_outputs(report, out)
+    paths = [*write_outputs(report, out), *inputs]
     # The section 2 tags too (review F16): this is the run that holds metrics.json.
     summary_tags = {"stage": "story", "owner": owner, "git_sha": sha, "gate_group": "story", "where": "local",
                     "data_version": str(report["metrics"]["data_version"]),

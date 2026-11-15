@@ -591,7 +591,7 @@ It writes a manifest.
     80/10/10 and the test could not catch it.)
 
   `fk_grade` also gets a table of hand-computed cases.
-- **Depends on** — S1 (types). **Jira** — KAN-39.
+- **Depends on** — S1 (types). **Jira** — KAN-127 (S2; under KAN-39). PR #36 review F8.
 
 ### S2b · Near-duplicate and safety filtering of training text
 
@@ -803,10 +803,10 @@ TinyStories ratio (3:1, 10:1, 30:1, all drawn from the step-2 pool) and the LoRA
 
 | Slice | State | PR | Notes |
 |---|---|---|---|
-| S0 | in review | [#28](https://github.com/keithfernandes12/young-illustrators-primer/pull/28) | this plan; level decided by Keith (option B, with conditions); other four defaults revisable in review; Keith's review fixes; all in Decisions |
-| M1 | in progress | | small pretrained models on the Mac, ages 3–5; built and measured. Reduced grid (4 configurations × 20 requests) ran 2026-11-15: **nothing selected**, best inclusion 0.36 against 0.95 (Verified facts). PR not opened yet |
+| S0 | merged | [#28](https://github.com/keithfernandes12/young-illustrators-primer/pull/28) | this plan; level decided by Keith (option B, with conditions); other four defaults revisable in review; Keith's review fixes; all in Decisions |
+| M1 | in review | [#36](https://github.com/keithfernandes12/young-illustrators-primer/pull/36) | small pretrained models on the Mac, ages 3–5; built and measured. Reduced grid (4 configurations × 20 requests) ran 2026-11-15: **nothing selected**, best inclusion 0.36 against 0.95 (Verified facts) |
 | S1 | not started | | KAN-92's scope, built by Diya on KAN-39; M1 delivers the types and the 3–5 preset |
-| S2 | not started | | pure-hash split, one pair per book, cross-source dedupe, shared `fk_grade` (review F1–F5); helper moves to `src/primer/data` with KAN-120 |
+| S2 | not started | | KAN-127. Expect the 0–1 level floor to fail (3.8% of val books, Verified facts). pure-hash split, one pair per book, cross-source dedupe, shared `fk_grade` (review F1–F5); helper moves to `src/primer/data` with KAN-120 |
 | S2b | not started | | runs on the hash-sampled pool, not 1.8M rows |
 | S3 | not started | | |
 | S4 | not started | | |
@@ -987,6 +987,15 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
   - Not measured in this submission: temperature 1.0, max_new_tokens 256 (so no token-limit
     sensitivity), and requests 21–30. The full grid runs where there is a GPU.
   - Recorded in `CARD.md` ("Grid (hardware constraint)").
+- **2026-11-15** — *S2 gets its own issue, KAN-127 (Diya; PR #36 review F8).* This replaces the
+  "Jira: no sub-tasks" default above for S2 only. S2 is a separate piece of work (the training
+  pairs), and its 0–1 level floor is expected to fail on the measured 3.8%. Other slices stay on
+  KAN-39.
+- **2026-11-15** — *The request vocabulary is the Learn to Read set, as this plan always said (PR #36
+  review F2).* Before the fix it was every sight-word row (Dolch to grade 3, Fry 1–1000). It is now
+  Dolch pre-primer, primer and grade 1, plus Fry 1–300: 321 words. Each request records which list
+  each target word came from, or `book`, and the manifest carries each list's licence and
+  attribution.
 
 ## Verified facts
 

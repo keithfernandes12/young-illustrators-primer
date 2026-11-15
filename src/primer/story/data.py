@@ -22,6 +22,7 @@ import hashlib
 import json
 import re
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -132,6 +133,9 @@ class ValidationRequest:
     level_source: str
     license: str | None
     attribution: str | None
+    #: Where each target word came from, in the same order: a word list's `list_name` ("dolch",
+    #: "fry"), or "book" when the book had too few list words and the word is from its own text.
+    target_word_lists: tuple[str, ...] = ()
 
     def to_request(self) -> StoryRequest:
         return StoryRequest(
@@ -157,11 +161,37 @@ def setting_of(text: str) -> str | None:
     return None
 
 
-def target_words_of(text: str, key: str, n: int, vocabulary: frozenset[str] | None = None) -> tuple[str, ...]:
+#: The Learn to Read word lists (plan, "Vocabulary-aware prompts"): Dolch pre-primer to grade 1, plus
+#: Fry's first 300. These are the `level` values `primer.data.sources.word_lists` writes.
+LEARN_TO_READ_LEVELS = frozenset({"pre-primer", "primer", "grade1", "fry_100", "fry_200", "fry_300"})
+
+
+def learn_to_read_vocabulary(lists: pd.DataFrame) -> tuple[dict[str, str], list[dict[str, Any]]]:
+    """The 3-5 vocabulary from the `word_lists` sight-word rows (review F2).
+
+    Returns `{word: list_name}` for the Learn to Read levels only, and one credit row per list used
+    (`list_name`, `license`, `attribution`, the levels taken, and the word count), for the manifest.
+    """
+    if lists.empty:
+        return {}, []
+    chosen = lists[lists["level"].isin(LEARN_TO_READ_LEVELS)]
+    vocabulary: dict[str, str] = {}
+    for word, list_name in zip(chosen["word"], chosen["list_name"]):
+        vocabulary.setdefault(str(word).lower(), str(list_name))
+    credits = []
+    for list_name, group in chosen.groupby("list_name", sort=True):
+        credits.append({"list_name": str(list_name), "license": group["license"].iloc[0],
+                        "attribution": group["attribution"].iloc[0],
+                        "levels": sorted(str(v) for v in group["level"].unique()), "words": len(group)})
+    return vocabulary, credits
+
+
+def target_words_of(text: str, key: str, n: int, vocabulary: Mapping[str, str] | None = None) -> tuple[str, ...]:
     """`n` content words the story uses, chosen by a hash of the book key (deterministic).
 
-    Prefers words in `vocabulary` (e.g. Dolch and Fry for ages 3-5) when given. Because the words come
-    from the book's own text, a story that uses them exists: inclusion is satisfiable by construction.
+    Prefers words in `vocabulary` (the Learn to Read lists) when the book has at least `n` of them;
+    otherwise falls back to the book's own content words. Because the words come from the book's own
+    text, a story that uses them exists: inclusion is satisfiable by construction.
     """
     seen: dict[str, None] = {}
     for token in words(text):
@@ -193,7 +223,7 @@ def target_level_for_age(age: int) -> float:
 
 
 def build_validation_requests(
-    books: pd.DataFrame, n: int = 30, vocabulary: frozenset[str] | None = None,
+    books: pd.DataFrame, n: int = 30, vocabulary: Mapping[str, str] | None = None,
     max_book_level: float = MAX_SOURCE_BOOK_LEVEL,
 ) -> list[ValidationRequest]:
     """`n` requests for ages 3-5 from the **val** split, balanced across sources, deterministic.
@@ -238,6 +268,7 @@ def build_validation_requests(
             character_name=character_of(book.text), setting=setting_of(book.text),
             reading_level=target_level_for_age(age), book_level=float(book.level), level_source=FK_VERSION,
             license=book.license, attribution=book.attribution,
+            target_word_lists=tuple((vocabulary or {}).get(word, "book") for word in target),
         ))
     return requests
 
@@ -255,6 +286,7 @@ def read_requests(path: Path) -> list[ValidationRequest]:
         if line.strip():
             raw = json.loads(line)
             raw["target_words"] = tuple(raw["target_words"])
+            raw["target_word_lists"] = tuple(raw.get("target_word_lists", ()))
             out.append(ValidationRequest(**raw))
     return out
 
@@ -271,12 +303,29 @@ def smallest_files(version_record: dict[str, Any], dataset: str, source: str, n:
     return ordered if n <= 0 else ordered[:n]
 
 
-def read_dataset(version: str, split: str = "val", store: Any = None) -> pd.DataFrame:
-    """The books of one split at a frozen data version. Reads the bucket: person-run, never in tests."""
-    from primer.data.catalog import read_dataset as read
+def load_books(store: Any, version: str, tinystories_files: int = 1) -> tuple[pd.DataFrame, list[dict[str, Any]], int]:
+    """Books at a frozen data version: every picture book, plus the `tinystories_files` smallest
+    TinyStories files (0 = all, ~931 MB), each read at its pinned GCS generation.
 
-    books = books_from_frames(read("storybook_pages", store, version=version),
-                              read("stories_text", store, sources=["tinystories"], version=version))
+    Returns the books, the TinyStories files read, and their row count. `store` is required: there is
+    no default, so nothing here can fall back to `PRIMER_DATA_URI` or the bucket (review F4).
+    """
+    from primer.data.catalog import read_dataset as read
+    from primer.data.catalog import read_version
+
+    record = read_version(version, store)
+    tiny_files = smallest_files(record, "stories_text", "tinystories", tinystories_files)
+    tiny_frames = [store.read_parquet(f["path"], generation=f.get("generation")) for f in tiny_files]
+    tiny = pd.concat(tiny_frames, ignore_index=True) if tiny_frames else pd.DataFrame()
+    return books_from_frames(read("storybook_pages", store, version=version), tiny), tiny_files, len(tiny)
+
+
+def read_dataset(version: str, split: str, store: Any, tinystories_files: int = 1) -> pd.DataFrame:
+    """The books of one split at a frozen data version (the model-development section 2 entry point).
+
+    `store` is required (review F4), and TinyStories is the same pinned subset `main` reads.
+    """
+    books, _, _ = load_books(store, version, tinystories_files)
     return books[books["split"] == split].reset_index(drop=True)
 
 
@@ -285,7 +334,6 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
 
     from primer.data.catalog import read_dataset as read
-    from primer.data.catalog import read_version
     from primer.data.storage import Store
 
     parser = argparse.ArgumentParser(description=main.__doc__)
@@ -298,14 +346,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     store = Store(args.data_uri)
-    record = read_version(args.version, store)
-    tiny_files = smallest_files(record, "stories_text", "tinystories", args.tinystories_files)
-    tiny_frames = [store.read_parquet(f["path"], generation=f.get("generation")) for f in tiny_files]
-    tiny = pd.concat(tiny_frames, ignore_index=True) if tiny_frames else pd.DataFrame()
-    books = books_from_frames(read("storybook_pages", store, version=args.version), tiny)
+    books, tiny_files, tiny_rows = load_books(store, args.version, args.tinystories_files)
     lists = read("word_lists", store, sources=["sight_words"], version=args.version)
-    vocabulary = frozenset(str(w).lower() for w in lists["word"]) if not lists.empty else None
-    requests = build_validation_requests(books, n=args.n, vocabulary=vocabulary)
+    vocabulary, list_credits = learn_to_read_vocabulary(lists)
+    requests = build_validation_requests(books, n=args.n, vocabulary=vocabulary or None)
     write_requests(requests, args.out)
 
     val = books[books["split"] == "val"]
@@ -313,7 +357,9 @@ def main(argv: list[str] | None = None) -> int:
         "data_version": args.version,
         "level_source": FK_VERSION,
         "tinystories_files": [{k: f.get(k) for k in ("path", "generation", "size")} for f in tiny_files],
-        "tinystories_rows_read": len(tiny),
+        "tinystories_rows_read": tiny_rows,
+        "vocabulary": {"levels": sorted(LEARN_TO_READ_LEVELS), "words": len(vocabulary), "lists": list_credits},
+        "target_words_by_list": dict(sorted(Counter(src for r in requests for src in r.target_word_lists).items())),
         "books": len(books),
         "books_by_source": {str(k): int(v) for k, v in books["source"].value_counts().sort_index().items()},
         "dropped_cross_source_duplicates": int(books.attrs["dropped_cross_source"]),

@@ -54,6 +54,9 @@ def test_a_picture_book_is_one_pair_even_though_it_is_in_both_datasets():
     books = books_from_frames(pages, stories)
     assert sorted(books["book_key"]) == ["storyweaver/storyweaver-1", "tinystories/7"]
     assert books.loc[books["source"] == "storyweaver", "pages"].iloc[0] == tuple(SIMPLE)
+    # PR #36 review F7: the picture book's stories_text row must never be read, not read and then
+    # removed as a duplicate. Without this, the test passed only through the dedupe's tie-break.
+    assert books.attrs["dropped_duplicates"] == 0
 
 
 def test_an_exact_duplicate_across_sources_keeps_the_picture_book():
@@ -92,6 +95,28 @@ def test_a_books_split_never_depends_on_other_books():
     )
     key = "storyweaver/storyweaver-1"
     assert small.set_index("book_key").loc[key, "split"] == many.set_index("book_key").loc[key, "split"]
+
+
+def test_every_books_split_is_the_unsalted_hash_of_its_key():
+    """PR #36 review F1: pins the split to `book_key` alone, row by row. Fails if the level, the text
+    or a salt enters the split hash inside books_from_frames."""
+    books = _corpus()
+    assert (books["split"] == books["book_key"].map(split_of_book)).all()
+
+
+@pytest.mark.parametrize(
+    "text,level_changes",
+    [("Pip naps.", False),  # different text, same level (0.0)
+     ("Extraordinarily sophisticated vocabulary demonstrates complexity.", True)],  # level 0.0 -> 43.0
+    ids=["text-only", "text-and-level"],
+)
+def test_changing_a_books_text_or_level_never_moves_it(text, level_changes):
+    """The plan's S2 acceptance: the same key with different text, or a different level, keeps its split."""
+    key = "storyweaver/storyweaver-1"
+    base = books_from_frames(pages_frame({("storyweaver", "storyweaver-1"): SIMPLE}), stories_frame([]))
+    changed = books_from_frames(pages_frame({("storyweaver", "storyweaver-1"): [text]}), stories_frame([]))
+    assert (fk_grade(text) != fk_grade("\n\n".join(SIMPLE))) is level_changes, "the fixture must do what its id says"
+    assert base.set_index("book_key").loc[key, "split"] == changed.set_index("book_key").loc[key, "split"]
 
 
 def test_split_ratios_are_close_to_80_10_10():

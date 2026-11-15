@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 import json
 import re
@@ -12,7 +13,7 @@ from pathlib import Path
 import pytest
 from story_fakes import WordEchoBackend
 
-from primer.story.data import ValidationRequest
+from primer.story.data import ValidationRequest, write_requests
 from primer.story.grid import (
     GridConfig,
     config_params,
@@ -20,6 +21,8 @@ from primer.story.grid import (
     finish,
     limit_requests,
     load_config,
+    request_inputs,
+    requests_tags,
     run_grid,
     select,
     write_outputs,
@@ -215,6 +218,34 @@ def test_metrics_and_charts_are_logged_as_one_summary_run(tmp_path):
     assert summary["tags"]["base_model"].startswith("hf://Qwen/")
     assert summary["tags"]["dvc/stories_text"] == "abc"
     assert tmp_path / "metrics.json" in summary["files"]
+
+
+def test_the_requests_scored_are_named_by_hash_and_logged(tmp_path):
+    """PR #36 review F5: every run names the requests file (hash, how many used, the TinyStories subset),
+    and the summary run carries the file and its manifest as artifacts."""
+    requests_path = tmp_path / "validation_requests.jsonl"
+    write_requests(REQUESTS, requests_path)
+    manifest = requests_path.with_suffix(".manifest.json")
+    manifest.write_text(json.dumps({"tinystories_files": [{"path": "p", "generation": "179"}]}))
+    tags = requests_tags(requests_path, used=3)
+    assert tags["requests_sha256"] == hashlib.sha256(requests_path.read_bytes()).hexdigest()[:16]
+    assert tags["requests_used"] == "3"
+    assert tags["tinystories_files"] == "1" and tags["tinystories_generations"] == "179"
+
+    logger = RecordingLogger()
+    report = run_grid(small_config(), REQUESTS, backend_for, logger, owner="t", sha="s", extra_tags=tags,
+                      clock=itertools.count().__next__)
+    finish(report, logger, tmp_path / "out", "t", "s", tags, inputs=request_inputs(requests_path))
+    assert all(run["tags"]["requests_sha256"] == tags["requests_sha256"] for run in logger.runs)
+    assert {requests_path, manifest} <= set(logger.runs[-1]["files"])
+
+
+def test_a_changed_requests_file_changes_its_hash(tmp_path):
+    first, second = tmp_path / "a.jsonl", tmp_path / "b.jsonl"
+    write_requests(REQUESTS, first)
+    write_requests(REQUESTS[:2], second)
+    assert requests_tags(first, 4)["requests_sha256"] != requests_tags(second, 2)["requests_sha256"]
+    assert requests_tags(first, 4)["tinystories_files"] == "unknown", "no manifest beside it"
 
 
 def test_every_run_logs_the_whole_config_and_the_extra_tags():
