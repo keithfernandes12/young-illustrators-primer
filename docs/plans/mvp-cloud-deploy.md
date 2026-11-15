@@ -699,7 +699,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6b3 | merged | [#29](https://github.com/keithfernandes12/young-illustrators-primer/pull/29) | strata and two samplers, measured over the real 174,981 rows. KAN-117 |
 | S6b4 | not started | | **spike, person-only**: waits on S6b3, S6a and KAN-24, plus DINOv2 and a captioner that no slice supplies. Can only add a stratum. KAN-117 |
 | S6b2 | merged | [#32](https://github.com/keithfernandes12/young-illustrators-primer/pull/32) | `data.py`: hashed 80/10/10 split of v1.1 (506k/63k/63k), rendered on demand through `render_strokes` → `augment_canvas` (train only) → `prepare_drawing`. Unblocks S6c |
-| S6c | in review | [#37](https://github.com/keithfernandes12/young-illustrators-primer/pull/37) | baseline `drawing_top5_acc` **0.4956** over all 63,310 rendered test drawings (GPU, bf16): gate FAIL against 0.85, chance 0.0145. The gate's number, not the product's. KAN-38 |
+| S6c | in review | [#37](https://github.com/keithfernandes12/young-illustrators-primer/pull/37) | baseline `drawing_top5_acc` **0.4956** over all 63,310 rendered test drawings (GPU, bf16): gate FAIL against 0.85, chance 0.0145. MLflow run `c2b68187` in `yip-drawing`. The gate's number, not the product's. KAN-38 |
 | S6c2 | merged | [#33](https://github.com/keithfernandes12/young-illustrators-primer/pull/33) | 1,000 frozen drawings (unstratified), four variants: top-1 moves 25% / 50% / 41% between adjacent variants; over half the drawings come out `squiggle`. Reproduces exactly. KAN-109 |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); still waits on S6b2 (#32) and S6c. Reads S6c2's stability figures |
 | S6e | merged | [#35](https://github.com/keithfernandes12/young-illustrators-primer/pull/35) | `sheet.py`: Florence-2 + SAM 2.1 + ViTPose beside SigLIP 2; every field filled on 82/82 real sheets; two figures found as two on 12/20. Unblocks KAN-42 |
@@ -1449,7 +1449,22 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   prompts sha256 `9b82e482…`. It ran in 757 s, 0.012 s per drawing including render and PNG
   round-trip. The run started from an uncommitted tree identical to commit `b5e7294`, which the file records as its `git_sha`. `check_gate.py --only drawing` on the file prints
   `FAIL drawing_top5_acc >= 0.85: actual=0.4956`, a verdict rather than `metric missing`. The chance
-  baseline is 0.0145. Not in MLflow: there is no host (KAN-107).
+  baseline is 0.0145.
+  - **In MLflow (backfilled the same day).** The shared server came up later on 2026-11-15:
+    MLflow 2.17.2 on VM `mlflow` in the shared project, reached through an IAP tunnel. The run is
+    `c2b6818759af457e972d868b77019225` in experiment `yip-drawing`, run name
+    `s6c-siglip2-zero-shot-baseline`. It was logged from the metrics file above, not re-scored.
+    It carries the model-development tags (`where=local`), 23 params, `drawing_top5_acc`, the chance
+    baseline as `baseline/drawing_top5_acc`, and per country `slice/country_code/<code>/drawing_top5_acc`
+    and `.../n`. Artifacts are `eval/<metrics file>` and `CARD.md`. `check_gate.py --mlflow-run-id`
+    then wrote `gate/drawing_top5_acc` and the tag `gate_passed=false`.
+  - **Two deviations.** First, slice metrics use `slice/<key>/<value>/<metric>`, not
+    model-development.md's `slice/<key>=<value>/<metric>`: MLflow rejects `=` and `:` in metric
+    names. Second, the client is `mlflow-skinny==3.18.0`, against a 2.17.2 server. Both
+    `mlflow==2.17.2` and `mlflow-skinny==2.17.2` were tried first. The full package pins
+    `pandas<3` and `pyarrow<18`, and pyarrow 17 has no Python 3.13 wheel. The skinny 2.17.2 would
+    downgrade `packaging` 26.3 → 24.2 and `protobuf` 7.36 → 5.29. The 3.18 client changed no
+    installed package.
   - **What the number is over.** Top-5 on **rendered** Quick, Draw!: the gate's number, not the
     product's. Every v1.1 drawing has `recognized=True`, meaning Quick, Draw!'s own model already
     named it, so this set is easier than raw sketches. On children's drawings, S6c2 measured this
