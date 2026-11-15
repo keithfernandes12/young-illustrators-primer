@@ -30,16 +30,31 @@ One server holds every run the team logs, local runs included
 - **Artifacts.** `gs://yip-mlflow-artifacts`. The service account holds
   `roles/storage.objectAdmin` on that bucket and nothing else. The server proxies every upload
   (`--serve-artifacts`), so no laptop needs bucket access.
-- **Network.** There is no public endpoint. Firewall rule `allow-iap-mlflow` admits only IAP's
-  range (`35.235.240.0/20`) on ports 22 and 5000. The VM has an ephemeral external IP so it can
-  pull images; that IP is billed.
+- **Network.** MLflow has no application login, so the firewall is its only boundary. The intended
+  design: the VM carries network tag `mlflow`; rule `allow-iap-mlflow` (priority 800) admits IAP's
+  range (`35.235.240.0/20`) on ports 22 and 5000 to that tag only; rule `deny-non-iap-mlflow`
+  (priority 900) denies everything else to those ports on that tag. The deny rule is needed
+  because the default network's own rules (`default-allow-internal` for `10.128.0.0/9`,
+  `default-allow-ssh` for `0.0.0.0/0`, both priority 65534) otherwise let any other VM reach port
+  5000 and the whole internet reach port 22. The VM has an ephemeral external IP so it can pull
+  images; that IP is billed.
+- **Not yet true of the live server.** A read-only `gcloud compute firewall-rules list` on
+  2026-11-15 showed `allow-iap-mlflow` with **no target tag** (so it applies to every VM in the
+  network), no deny rule, and the VM untagged. Until a person runs **Harden the live server**
+  below, any VM added to the default network can read and write every run, and SSH is open to the
+  internet. Today `mlflow` is the project's only VM. Delete this bullet once that step is done.
 
 ## Before you start
 
-- **Your own steps.** You need `gcloud` signed in as yourself, and
-  `roles/iap.tunnelResourceAccessor` on the shared project.
-- **Person-only steps.** Every step that creates a resource or grants a role — steps 1–3 and
-  **Grant a teammate access** — is for a person to run. Agents cannot make IAM grants
+- **Your own steps.** You need `gcloud` signed in as yourself, and on the shared project both
+  `roles/iap.tunnelResourceAccessor` and read access to Compute Engine. The tunnel command looks
+  the VM up first (`compute.instances.get`, `compute.instances.list`), which the IAP role does not
+  include. `roles/compute.viewer` is enough.
+- **Name the project every time.** Every `gcloud` line below passes
+  `--project=young-illustrators-primer`. A teammate's default project is usually their own, and
+  the create and delete commands would act there.
+- **Person-only steps.** Every step that creates a resource or grants a role — steps 1–3,
+  **Harden the live server** and **Grant a teammate access** — is for a person to run. Agents cannot make IAM grants
   (`.claude/settings.json`, `guard_cloud.py`) and must not create service-account keys.
 - **Windows shells.** On Windows, the `gcloud` lines below are written so they run unchanged in
   both PowerShell and Git Bash. Three PowerShell traps cost time on the first setup:
@@ -89,33 +104,64 @@ One server holds every run the team logs, local runs included
 
 ## Grant a teammate access (person-only)
 
-Run by someone who can change the shared project's IAM:
+Run by someone who can change the shared project's IAM. First check the teammate can already see
+Compute Engine in the project (any of Viewer, Editor or `roles/compute.viewer` does); if not, grant
+`roles/compute.viewer` too, because the tunnel command needs `compute.instances.get` and
+`compute.instances.list`.
 
 ```
 gcloud projects add-iam-policy-binding young-illustrators-primer --member="user:<their-google-account>" --role=roles/iap.tunnelResourceAccessor
+gcloud projects add-iam-policy-binding young-illustrators-primer --member="user:<their-google-account>" --role=roles/compute.viewer
 ```
 
-It takes a minute or two to apply. They then follow **Reach it from your machine**. If their SSH or
-tunnel still fails, `gcloud compute ssh mlflow --zone=us-central1-a --tunnel-through-iap
---troubleshoot` names the missing permission.
+The second line is needed only when they have no Compute read access yet. It takes a minute or two
+to apply. They then follow **Reach it from your machine**. If their SSH or tunnel still fails,
+`gcloud compute ssh mlflow --zone=us-central1-a --project=young-illustrators-primer
+--tunnel-through-iap --troubleshoot` names the missing permission.
+
+## Harden the live server (person-only)
+
+Do this once, before anyone adds another VM to the default network. It tags the VM, scopes the
+allow rule to that tag and lets it win over the default rules, then denies the rest. `allow` is
+priority 800 and `deny` is 900: the lower number wins, so IAP's range gets through and everyone else
+is refused. Tag first, so the VM is never left without the rules.
+
+```
+gcloud compute instances add-tags mlflow --tags=mlflow --zone=us-central1-a --project=young-illustrators-primer
+gcloud compute firewall-rules update allow-iap-mlflow --target-tags=mlflow --priority=800 --project=young-illustrators-primer
+gcloud compute firewall-rules create deny-non-iap-mlflow --direction=INGRESS --action=DENY --rules="tcp:22,tcp:5000" --source-ranges=0.0.0.0/0 --target-tags=mlflow --priority=900 --network=default --project=young-illustrators-primer
+```
+
+Check it, then open the tunnel and `curl -s localhost:5000/health` to confirm IAP still gets in:
+
+```
+gcloud compute firewall-rules list --project=young-illustrators-primer --format="table(name,priority,sourceRanges.list(),allowed[].map().firewall_rule().list(),denied[].map().firewall_rule().list(),targetTags.list())"
+```
+
+`allow-iap-mlflow` and `deny-non-iap-mlflow` must both show target tag `mlflow`. This procedure has
+not been run yet, so it is untested.
 
 ## Build it from scratch (person-only)
 
 1. **Bucket and service account:**
 
    ```
-   gcloud config set project young-illustrators-primer
-   gcloud storage buckets create gs://yip-mlflow-artifacts --location=us-central1 --uniform-bucket-level-access
-   gcloud iam service-accounts create mlflow-server
+   gcloud storage buckets create gs://yip-mlflow-artifacts --project=young-illustrators-primer --location=us-central1 --uniform-bucket-level-access
+   gcloud iam service-accounts create mlflow-server --project=young-illustrators-primer
    gcloud storage buckets add-iam-policy-binding gs://yip-mlflow-artifacts --member="serviceAccount:mlflow-server@young-illustrators-primer.iam.gserviceaccount.com" --role=roles/storage.objectAdmin
    ```
 
 2. **VM and firewall.** If `instances create` reports an API is off, first run
-   `gcloud services enable compute.googleapis.com iap.googleapis.com`.
+   `gcloud services enable compute.googleapis.com iap.googleapis.com --project=young-illustrators-primer`.
+
+   The VM is created with the `mlflow` tag, and both rules target that tag, so they touch no other
+   VM. Create the allow rule at priority 800 and the deny rule at 900 (see **Harden the live
+   server** for why).
 
    ```
-   gcloud compute instances create mlflow --zone=us-central1-a --machine-type=e2-micro --image-family=debian-12 --image-project=debian-cloud --boot-disk-size=30GB --boot-disk-type=pd-standard --service-account=mlflow-server@young-illustrators-primer.iam.gserviceaccount.com --scopes=cloud-platform
-   gcloud compute firewall-rules create allow-iap-mlflow --direction=INGRESS --source-ranges=35.235.240.0/20 --allow="tcp:22,tcp:5000"
+   gcloud compute instances create mlflow --project=young-illustrators-primer --zone=us-central1-a --machine-type=e2-micro --image-family=debian-12 --image-project=debian-cloud --boot-disk-size=30GB --boot-disk-type=pd-standard --tags=mlflow --service-account=mlflow-server@young-illustrators-primer.iam.gserviceaccount.com --scopes=cloud-platform
+   gcloud compute firewall-rules create allow-iap-mlflow --project=young-illustrators-primer --network=default --direction=INGRESS --source-ranges=35.235.240.0/20 --allow="tcp:22,tcp:5000" --target-tags=mlflow --priority=800
+   gcloud compute firewall-rules create deny-non-iap-mlflow --project=young-illustrators-primer --network=default --direction=INGRESS --action=DENY --rules="tcp:22,tcp:5000" --source-ranges=0.0.0.0/0 --target-tags=mlflow --priority=900
    ```
 
 3. **Copy the files up and connect.** The first `ssh` generates your key. If it fails with "Remote
@@ -123,8 +169,8 @@ tunnel still fails, `gcloud compute ssh mlflow --zone=us-central1-a --tunnel-thr
    VM's serial log shows `Created user <you>` once it has.
 
    ```
-   gcloud compute scp --recurse infra/mlflow mlflow:~ --zone=us-central1-a --tunnel-through-iap
-   gcloud compute ssh mlflow --zone=us-central1-a --tunnel-through-iap
+   gcloud compute scp --recurse infra/mlflow mlflow:~ --zone=us-central1-a --project=young-illustrators-primer --tunnel-through-iap
+   gcloud compute ssh mlflow --zone=us-central1-a --project=young-illustrators-primer --tunnel-through-iap
    ```
 
 4. **On the VM: swap, Docker, password, start.** The e2-micro has 1 GB of RAM, so do not skip
@@ -144,8 +190,9 @@ tunnel still fails, `gcloud compute ssh mlflow --zone=us-central1-a --tunnel-thr
 
 ## If something goes wrong
 
-- **The tunnel says permission denied.** Your account lacks
-  `roles/iap.tunnelResourceAccessor`; see **Grant a teammate access**.
+- **The tunnel says permission denied, or cannot find the instance.** Your account lacks
+  `roles/iap.tunnelResourceAccessor` or Compute read access
+  (`compute.instances.get`, `compute.instances.list`); see **Grant a teammate access**.
 - **The VM rebooted.** Both containers restart on their own. The swap file is in `/etc/fstab`.
 - **Rebuild the server only.** `sudo docker-compose up -d --build` in `~/mlflow` rebuilds it. Runs
   survive, because they live in the `pgdata` volume and the bucket.
@@ -154,7 +201,8 @@ tunnel still fails, `gcloud compute ssh mlflow --zone=us-central1-a --tunnel-thr
   survive. There is no backup of the database yet; that is an open question in
   `docs/engineering/model-development.md`.
 - **Tear it all down (person-only)**, in this order:
-  1. `gcloud compute instances delete mlflow --zone=us-central1-a`
-  2. `gcloud compute firewall-rules delete allow-iap-mlflow`
+  1. `gcloud compute instances delete mlflow --zone=us-central1-a --project=young-illustrators-primer`
+  2. `gcloud compute firewall-rules delete allow-iap-mlflow deny-non-iap-mlflow --project=young-illustrators-primer`
+     (on a server that was never hardened, only `allow-iap-mlflow` exists; delete just that)
   3. `gcloud storage rm -r gs://yip-mlflow-artifacts`
-  4. `gcloud iam service-accounts delete mlflow-server@young-illustrators-primer.iam.gserviceaccount.com`
+  4. `gcloud iam service-accounts delete mlflow-server@young-illustrators-primer.iam.gserviceaccount.com --project=young-illustrators-primer`
