@@ -21,6 +21,7 @@ from primer.story.data import (
     main,
     read_dataset,
     read_requests,
+    target_words_of,
 )
 
 #: Rows for the fake sight-word lists: two levels in the Learn to Read set, and two outside it.
@@ -50,6 +51,17 @@ def test_the_vocabulary_is_only_the_learn_to_read_levels():
     by_list = {c["list_name"]: c for c in credits}
     assert by_list["dolch"]["license"] == "dolch-license" and by_list["fry"]["attribution"] == "fry list"
     assert set(by_list["dolch"]["levels"]) | set(by_list["fry"]["levels"]) <= LEARN_TO_READ_LEVELS
+
+
+def test_target_words_are_a_hard_learn_to_read_filter():
+    """PR #36 review question: with a vocabulary, only list words qualify. A book with one list word
+    ("play") and many other content words yields only "play", so the request builder skips it."""
+    vocabulary, _ = learn_to_read_vocabulary(word_lists_frame())
+    text = "The dragon will play near the enormous mountain castle."
+    assert target_words_of(text, "storyweaver/x", 2, vocabulary) == ("play",)
+    assert set(target_words_of(text, "storyweaver/x", 2, None)) <= {"dragon", "play", "near", "enormous",
+                                                                   "mountain", "castle", "will"}
+    assert len(target_words_of(text, "storyweaver/x", 2, None)) == 2, "no vocabulary: any content word"
 
 
 def test_an_empty_word_list_gives_no_vocabulary():
@@ -119,7 +131,7 @@ def test_main_builds_requests_from_the_pinned_subset_and_writes_the_manifest(tmp
     assert sum(manifest["target_words_by_list"].values()) == sum(len(r.target_words) for r in requests)
     for request in requests:
         assert len(request.target_word_lists) == len(request.target_words)
-        assert set(request.target_word_lists) <= {"dolch", "fry", "book"}
+        assert set(request.target_word_lists) <= {"dolch", "fry"}, "hard filter: never a book word"
         assert not {"always", "because", "example", "machine"} & set(request.target_words)
         assert "/b" not in request.book_key, "nothing from the large TinyStories file"
 

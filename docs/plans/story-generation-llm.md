@@ -996,6 +996,13 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
   Dolch pre-primer, primer and grade 1, plus Fry 1–300: 321 words. Each request records which list
   each target word came from, or `book`, and the manifest carries each list's licence and
   attribution.
+- **2026-11-15** — **For ages 3–5, target words are a hard Learn to Read filter (Diya; Keith's
+  question on PR #36).** With the vocabulary given, only list words qualify, and a book with fewer
+  than two list words is skipped. There is no fallback to a harder word from a grade-3 source book.
+  - Cost on the real data: in the requests built after F2, 1 of the first 20 had used a fallback
+    word.
+  - Applies to Learn to Read only. Grow Vocabulary (5–8), when it is built, should deliberately go
+    beyond the sight words.
 
 ## Verified facts
 

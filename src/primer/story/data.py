@@ -187,22 +187,20 @@ def learn_to_read_vocabulary(lists: pd.DataFrame) -> tuple[dict[str, str], list[
 
 
 def target_words_of(text: str, key: str, n: int, vocabulary: Mapping[str, str] | None = None) -> tuple[str, ...]:
-    """`n` content words the story uses, chosen by a hash of the book key (deterministic).
+    """Up to `n` content words the story uses, chosen by a hash of the book key (deterministic).
 
-    Prefers words in `vocabulary` (the Learn to Read lists) when the book has at least `n` of them;
-    otherwise falls back to the book's own content words. Because the words come from the book's own
-    text, a story that uses them exists: inclusion is satisfiable by construction.
+    With a `vocabulary`, it is a **hard filter** (Diya, PR #36 review question): only words in the
+    vocabulary qualify. A book with fewer than `n` of them yields fewer than `n` words, and the caller
+    skips it, so a 3-5 request never falls back to a harder word from its source book. Without a
+    vocabulary, any content word qualifies. Because the words come from the book's own text, a story
+    that uses them exists: inclusion is satisfiable by construction.
     """
     seen: dict[str, None] = {}
     for token in words(text):
         lowered = token.lower()
         if len(lowered) >= 3 and lowered.isalpha() and lowered not in _STOPWORDS and token[0].islower():
             seen.setdefault(lowered, None)
-    candidates = list(seen)
-    if vocabulary:
-        preferred = [w for w in candidates if w in vocabulary]
-        if len(preferred) >= n:
-            candidates = preferred
+    candidates = [w for w in seen if w in vocabulary] if vocabulary else list(seen)
     candidates.sort(key=lambda word: hash_fraction(word, salt=key))
     return tuple(candidates[:n])
 
@@ -230,7 +228,9 @@ def build_validation_requests(
 
     - Source books qualify at whole-story FK grade <= `max_book_level`.
     - The target level comes from the child's age (`target_level_for_age`), not from the book.
-    - Target words prefer `vocabulary` (sight words) and always come from the book's own text.
+    - With a `vocabulary` (the Learn to Read lists), target words come **only** from it: a hard
+      filter, so a book with fewer than two list words is skipped. Words always come from the book's
+      own text.
     - Books are taken round-robin across sources in hash order, so one source cannot fill the set; a
       book that yields fewer than two target words is skipped and the next one is taken.
     - Ages cycle 3, 4, 5 within each source (starting at a different age per source), so age and
