@@ -65,12 +65,20 @@ class RunLogger(Protocol):
 
 
 class MlflowLogger:
-    """Logs to MLflow. Imported lazily: `mlflow` comes from the `story` extra."""
+    """Logs to MLflow. Imported lazily: `mlflow` comes from the `story` extra.
 
-    def __init__(self, tracking_uri: str, experiment: str) -> None:
+    MLflow 3 refuses the plain `file:` store (maintenance mode), so the local store is SQLite. With a
+    database backend the artifact root must be given when the experiment is created, or MLflow puts
+    artifacts in `./mlruns` under whatever directory the run started from.
+    """
+
+    def __init__(self, tracking_uri: str, experiment: str, artifact_location: str | None = None) -> None:
         import mlflow
 
         mlflow.set_tracking_uri(tracking_uri)
+        if mlflow.get_experiment_by_name(experiment) is None:
+            location = Path(artifact_location).resolve().as_uri() if artifact_location else None
+            mlflow.create_experiment(experiment, artifact_location=location)
         mlflow.set_experiment(experiment)
         self._mlflow = mlflow
 
@@ -211,7 +219,8 @@ def main(argv: list[str] | None = None) -> int:
 
     config = load_config(args.config)
     requests = read_requests(args.requests or Path(config.raw["requests"]))
-    logger = MlflowLogger(str(config.raw["mlflow_tracking_uri"]), str(config.raw["experiment"]))
+    logger = MlflowLogger(str(config.raw["mlflow_tracking_uri"]), str(config.raw["experiment"]),
+                          config.raw.get("mlflow_artifact_location"))
     report = run_grid(config, requests, HFChatBackend, logger, owner=args.owner, sha=git_sha())
     for path in write_outputs(report, Path(config.raw["out"])):
         print(path)

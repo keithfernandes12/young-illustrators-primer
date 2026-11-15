@@ -55,7 +55,9 @@ class HFChatBackend:
         # fp16 on MPS/CUDA halves memory (1.5B is ~3 GB in fp16); fp32 on CPU, where fp16 is slow.
         dtype = torch.float16 if device in ("mps", "cuda") else torch.float32
         tokenizer = AutoTokenizer.from_pretrained(self.spec.repo, revision=self.spec.revision)
-        model = AutoModelForCausalLM.from_pretrained(self.spec.repo, revision=self.spec.revision, dtype=dtype)
+        # Typed as Any like `self._model`: with transformers installed, its stubs mistype `.to(device)`,
+        # and CI (which does not install it) never sees them.
+        model: Any = AutoModelForCausalLM.from_pretrained(self.spec.repo, revision=self.spec.revision, dtype=dtype)
         model.to(device).eval()
         self.device, self._tokenizer, self._model = device, tokenizer, model
 

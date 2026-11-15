@@ -53,7 +53,11 @@ def test_the_shipped_config_is_well_formed():
     base = config.raw["baseline"]
     assert (base["model"], float(base["temperature"]), int(base["max_new_tokens"])) in {
         (m.name, t, n) for m, t, n in config.points()}, "the baseline must be one of the grid points"
-    assert config.raw["mlflow_tracking_uri"].startswith("file:./.local-data/"), "the store must be git-ignored"
+    uri = config.raw["mlflow_tracking_uri"]
+    assert uri.startswith("sqlite:///"), "MLflow 3 refuses the file store; the local store is SQLite"
+    for path in (uri.removeprefix("sqlite:///"), config.raw["mlflow_artifact_location"]):
+        ignored = subprocess.run(["git", "check-ignore", "-q", path], cwd=REPO_ROOT, check=False)
+        assert ignored.returncode == 0, f"{path} must be git-ignored: runs are local working notes"
 
 
 def test_every_grid_point_is_one_tagged_run():

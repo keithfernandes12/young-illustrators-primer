@@ -11,7 +11,11 @@ data_version: v1.1
 level_source: fk_formula@1
 requests: .local-data/story/validation_requests.jsonl
 out: .local-data/story/grid
-mlflow_tracking_uri: file:./.local-data/mlruns   # git-ignored; re-logged to the shared server later
+# Local and git-ignored (.local-data/); re-logged to the shared server when it exists. SQLite, not a
+# `file:` store: MLflow 3 refuses the file store (maintenance mode). Paths are relative to the repo root,
+# so run the grid from there.
+mlflow_tracking_uri: sqlite:///.local-data/mlflow.db
+mlflow_artifact_location: .local-data/mlartifacts
 experiment: yip-story
 seed: 1234
 max_attempts: 3

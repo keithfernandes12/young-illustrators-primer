@@ -425,8 +425,10 @@ S2 runs these steps in this order. The order matters: dedupe before the split, g
     bucket owner, grants it.
 
   All three are person-only. Until the
-  shared server exists, runs log to a local, git-ignored store with
-  `MLFLOW_TRACKING_URI=file:./.local-data/mlruns` (`.local-data/` is already in `.gitignore`). Every
+  shared server exists, runs log to a local, git-ignored store: SQLite at
+  `sqlite:///.local-data/mlflow.db`, with artifacts in `.local-data/mlartifacts` (`.local-data/` is
+  already in `.gitignore`). It was first `file:./.local-data/mlruns`, but MLflow 3 refuses the file
+  store (Decisions, 2026-11-15). Every
   run still carries the full tag set, so it can be **re-logged** to the shared server when that
   exists. A number only in a local store does not count for a decision or a registration.
 - **Every run** (bake-off, smoke, sweep, fine-tune) logs to experiment `yip-story` with these tags:
@@ -949,6 +951,11 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
   - Splits are unaffected, because each book's split is a pure hash of its own key.
   - The file used is recorded in the requests manifest (`--tinystories-files`, default 1).
   - Training pairs (S2) will read more.
+- **2026-11-15** — *The local MLflow store is SQLite (corrects the Local MLflow entry above).* MLflow
+  3.18 refuses the `file:` tracking store ("maintenance mode"); the only way past is an opt-out flag
+  for an unmaintained backend. So the local store is `sqlite:///.local-data/mlflow.db`, with
+  artifacts in `.local-data/mlartifacts`. Both are git-ignored, both are still local, and both still
+  get re-logged to the shared server. Found by a smoke run before the grid, not by a failed grid.
 
 ## Verified facts
 

@@ -68,7 +68,7 @@ disparity is claimed from them.
 | Code that checks bias and reports | **Partial** | `slices.py` reports every slice with its size and `judged`. Not Fairlearn `MetricFrame`: with all slices under the floor there is nothing to judge yet |
 | Bias mitigation | **Not applicable yet** | Nothing is trained, so there is no training data to re-weight; `balance_by_swap` applies to training pairs (plan S2) |
 | Hyperparameter tuning | **Done (grid)** | temperature × max_new_tokens per model, exhaustive. Optuna is unnecessary for 12 points; it arrives with QLoRA |
-| Experiment tracking | **Done** | One MLflow run per grid point, local git-ignored store (`.local-data/mlruns`), with the section 2 tags plus `level_source`; re-logged to the shared server when it exists |
+| Experiment tracking | **Done** | One MLflow run per grid point, local git-ignored SQLite store (`.local-data/mlflow.db`, artifacts in `.local-data/mlartifacts`), with the section 2 tags plus `level_source`; re-logged to the shared server when it exists |
 | Result visualisations | **Done** | `charts.py`: comparison bars and the temperature sweep (needs the `story` extra) |
 | Sensitivity analysis | **Partial** | Hyperparameter spreads (`sensitivity.py`). Prompt-constraint ablation is deferred (plan S8a). SHAP/LIME do not apply to a generative stage |
 | `story_quality_mean` (gated) | **Deferred** | Needs an LLM-as-judge (plan open question 3). Listed in `metrics.json` under `not_measured`, never faked |
