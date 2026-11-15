@@ -697,7 +697,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6b2 | not started | | S6b merged; waits on S6b1 |
 | S6c | not started | | the gate's number, over rendered Quick, Draw! — not the product's. Ceiling back to 1.0 since KAN-116 merged |
 | S6c2 | not started | | preprocessing stability over Amateur Drawings; no labels needed. Needs S6a and S6b1; S6b3's sampler softly, random draw is a stated fallback. KAN-109 |
-| S6d | not started | | first slice that trains; builds its own `--max-steps` cap. Reads S6c2's stability figures |
+| S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); still waits on S6b2 (#32) and S6c. Reads S6c2's stability figures |
 | S6e | not started | | unblocks KAN-42's reposing and IP-Adapter branches |
 | S7a | in progress | branch `feat/KAN-42-controlnet-baseline` | pretrained SD 1.5 + ControlNet-Scribble, one page, local output; synthetic inputs only until KAN-94 |
 | S7b | not started | | needs S1, GPU quota in region, a working `consistency()`, and KAN-94 |
@@ -1196,6 +1196,24 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   nor to explain a processor without a fixed square, and `import torchvision` followed by
   `torchvision.transforms.…` slipping past the guard — each now closed with a mutation-checked
   test.
+- **2026-11-15 — Local GPU work runs: `.venv`'s torch is now a CUDA build.** *Supersedes* the
+  2026-11-15 fact "The GPU is present; the installed `torch` cannot see it" and the CPU-only notes
+  in earlier facts, which stay as the record of what was true then. `torch` went from
+  `2.15.0+cpu` to **`2.14.1+cu130`** (CUDA 13.0) from `https://download.pytorch.org/whl/cu130` —
+  2.14.1 because no Windows Python 3.13 CUDA build of 2.15 exists; it meets the `drawing` extra's
+  `torch>=2.4`, and `pip check` is clean. `accelerate 1.15.0` was installed alongside, for
+  Hugging Face training (device placement, mixed precision). Checked in this session, not only
+  reported: `torch.cuda.is_available()` is True on an **RTX 4060 Laptop GPU, 8.0 GiB**, bf16
+  supported (driver 592.82). `python -m primer.drawing.smoke --device cuda` ran the pinned SigLIP
+  2 checkpoint in bf16 on the GPU **for the first time** — the CUDA path S6a's facts called
+  untested — with the same top 5 as CPU (`house`, `tooth`, `square`, `castle`, `barn`), **0.01 s**
+  warm against 0.12 s on CPU, and **1.23 GB peak VRAM**: the measured figure AGENTS.md asks for,
+  for inference. Run twice, in two sessions, identically. The drawing tests pass on the new torch.
+  **Caveat:** `house` scored **0.2451** in bf16 on the GPU against **0.3026** in fp32 on the CPU.
+  The ranking is identical, so `drawing_top5_acc` is unaffected, but confidences move ~20%
+  between devices — no confidence threshold or KAN-71 cache key is portable between them, as the
+  `CONFIDENCE_DECIMALS` comment in `model.py` already warned for the embedding. Fine-tuning VRAM
+  is still unmeasured; that is S6d's to record.
 - **2026-11-15 — S6b3's strata, measured over the real corpus.** `dvc pull` of
   `data/character_drawings` gives **174,981 rows** — the source docstring's "over 178,000" is the
   annotation count, not what survives preprocessing. Building the four strata over all of them:
@@ -1393,6 +1411,13 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   now; the team lead decides.
 - Does the course's GCP credit cover Claude models on Vertex AI? Recommended: check the billing account's
   credit scope before routing Claude Code through Vertex. Rishi checks.
+- **A fresh clone installs the CPU torch again.** The `drawing` extra says `torch>=2.4` and names no
+  index, so `pip install -e ".[drawing]"` on Windows takes PyPI's CPU wheel, and the GPU fact above
+  silently stops being true for the next person or agent. *Recommended:* document the step in
+  `AGENTS.md` → Commands (or `docs/engineering/onboarding.md`):
+  `.venv/Scripts/python.exe -m pip install --force-reinstall --no-deps "torch==2.14.1" --index-url https://download.pytorch.org/whl/cu130`
+  followed by `pip install accelerate`. Whether to pin torch in the extra, and to which build, is
+  the KAN-38 owner's decision; this plan does not change `pyproject.toml` or the requirements.
 
 ## Out of scope
 
