@@ -1,0 +1,20 @@
+# How the frozen Quick, Draw! drawings are split for the recogniser (KAN-38, plan slice S6b2).
+# `data.py` reads this.
+#
+# A drawing's split is a hash of its `source_id` (Quick, Draw!'s `key_id`) with `salt`, so it never
+# depends on row order, on which batch a drawing arrived in, or on which other drawings a version
+# holds: a drawing that is in `test` in one version is in `test` in every version that contains it.
+# That is what makes two `drawing_top5_acc` figures taken on different versions comparable, and
+# what keeps a drawing out of two splits even if a version carries it twice.
+#
+# "Split by book, never by page" (AGENTS.md) has no books to apply to here: each Quick, Draw!
+# drawing is one person's one sketch, so the drawing is the unit.
+name: drawing-data
+# The salt is part of the split's identity. Changing it reshuffles every drawing, so a model
+# trained on one salt and scored on another has seen its test set. Change it only with a new data
+# version and say so.
+salt: kan-38-s6b2
+# Shares of the drawings in each split. They must sum to 1.
+train: 0.8
+val: 0.1
+test: 0.1
