@@ -230,7 +230,8 @@ need it and neither can start without it.
 
 *size: small*
 
-`src/primer/data/strata.py`: strata over Amateur Drawings and **two** sampling functions over them,
+`src/primer/data/strata.py`: strata over Amateur Drawings, plus `sample_uniform` and
+`sample_proportional` over them,
 beside `bias.py`, whose `stratify_key` and `split_strata` are the patterns to follow. Nothing here
 embeds, clusters, captions or loads a model. It sits with the other `S6b*` slices because all of
 them are about what reaches a model rather than about a model; it is before S6b2 because both
@@ -241,16 +242,26 @@ S6b2's consumer and S6c2's want a sampler, and neither wants to wait on the rend
   Amateur Drawings is one undifferentiated pile of ~178,000 uploads, so "first N" inherits Meta's
   upload order and whatever it correlates with. Both consumers need an answer — KAN-111's
   `humanoid` class if it is accepted, and S6c2's stability sample either way.
-- **The strata, and how a continuous column becomes one** — the inputs are
-  `original_width`/`original_height` and their aspect ratio; `bbox_width × bbox_height` against
-  `width × height` for framing (derived — there is no `bbox_area` column); segmentation `area` for
-  figure complexity. Every one is `int32` or `float64`, so each is **binned into quartiles over the
-  corpus** and the stratum key is the concatenation of the bin labels, the way `stratify_key`
-  concatenates. Quartiles rather than fixed edges because no edge is defensible before anyone has
-  seen the distributions — and **the realised edges are recorded with the strata**, so a later draw
-  reproduces the same bins rather than re-deriving them from a different corpus version. Strata
-  below `min_size` are **pooled into the nearest stratum sharing the most bin labels**, following
-  `split_strata`, which exists because this is the part that is easy to get wrong.
+- **Four binned inputs, and the count is the design** — the **original long edge**
+  (`max(original_width, original_height)`, the size *before* Meta's 512 px resize); the **original
+  aspect ratio**; the **framing ratio**, `bbox_width × bbox_height` against `width × height`
+  (derived — there is no `bbox_area` column); and segmentation **`area`** for figure complexity.
+  Size and aspect are both needed and neither substitutes: a 3024×4032 phone photo and a 756×1008
+  digital canvas share an aspect ratio and differ in long edge. At four bins each that is up to
+  **256 cells over ~178,000 rows, a mean near 700** — so with any correlation between the four,
+  pooling is a routine path and not an edge case, which is why its parameters are a recorded
+  Decision rather than prose here.
+- **The binning and pooling parameters are the implementer's, recorded as a Decision** — bin count
+  and whether bins are quantile or fixed; `min_size`; what happens when `pd.qcut` finds duplicate
+  edges on a concentrated column; the pooling candidate set, the tie-break, and the fallback when
+  nothing is big enough. `split_strata` (`bias.py`) answers every one of those for its own case and
+  is the shape to follow — a candidate set restricted to strata already at `min_size`, an explicit
+  tie-break, a terminal "pool everything" fallback. **This plan deliberately does not pin the
+  values**: nobody has looked at the distributions, and a number chosen here before anyone has
+  would be a guess with a plan's authority behind it. What the slice requires is that the choices
+  are recorded with their reasons, and that **the realised bin edges ship with the strata** so a
+  later draw reproduces the same bins rather than re-deriving them from a different corpus version.
+  The stratum key is the concatenation of bin labels, the way `stratify_key` concatenates.
 - **A one-valued column raises, and that is a behavioural rule rather than a statistical one** —
   `n_keypoints` is the live example: `schemas.py` records it as "17 for every Amateur Drawings row
   today", so it cannot stratify anything. The failure is otherwise silent, and silent in a way a
@@ -265,8 +276,9 @@ S6b2's consumer and S6c2's want a sampler, and neither wants to wait on the rend
   pass it as `random_state`**, as every sampling call site in `bias.py` does, so a draw is
   reproducible — S6c2 freezes 1,000 ids and S6d re-measures the same statistic on the same
   drawings, which a redrawn sample would make incomparable. Keyed on **strata**, so they work
-  whether or not S6b4 ever runs; if it adopts a cluster id, that becomes one more bin label and the
-  samplers take it unchanged.
+  whether or not S6b4 ever runs. If S6b4 adopts a cluster id it joins as a **categorical**
+  bin label rather than a binned one — the strata builder needs that path, since
+  quartile-binning a cluster id is meaningless — and the samplers then take it unchanged.
 - **What the strata do *not* establish** — that a size signature really separates photographs from
   scans from digital canvases. That is an assumption, so the slice reports **stratum occupancy** —
   how many drawings fall in each bin — as a dated Verified fact, and makes no claim about capture
@@ -279,7 +291,10 @@ S6b2's consumer and S6c2's want a sampler, and neither wants to wait on the rend
   4. From a deliberately skewed fixture at a fixed seed, the proportional draw reproduces the skew
      and the uniform draw flattens it, each within a stated tolerance.
   5. The stratum-occupancy table is recorded as a dated Verified fact.
-- **Testing** — the five cases above, plus a fixture whose stratum columns are absent entirely,
+  6. Every derived record carries `license` and `attribution`, which the review checklist
+     makes a standing rule and which matters here because the corpus is CC-BY-NC-4.0.
+- **Testing** — clauses 1–4 and 6 above are tests; clause 5 is a markdown edit and is not
+  one. Plus a fixture whose stratum columns are absent entirely,
   which must raise rather than silently return the whole corpus. Every test is seeded; an unseeded
   draw with no tolerance is either flaky or loose enough to pass either way.
 - **Not a schema change** — the samplers return row subsets of `CHARACTER_DRAWINGS`, which already
@@ -317,7 +332,7 @@ it — S6b3 ships the samplers, and S6b4 can only ever add a stratum.
 - **The judge must not be SigLIP's text tower.** Its towers are trained aligned, so SigLIP's image
   clusters score higher in SigLIP's text space than DINOv2's do **by construction**. Use a text
   encoder independent of both candidates, or decide on the distinctive terms, which are neutral.
-- **Why person-led** — the full sweep is 178,000 images × 2 encoders ≈ **12 hours** on this
+- **Why person-only** — the full sweep is 178,000 images × 2 encoders ≈ **12 hours** on this
   machine's CPU wheel (0.12 s is S6a's measured warm `analyse` for SigLIP, **assumed** for DINOv2,
   and counts forward passes only — not PNG decode, not reading ~48 GB), and captioning is
   autoregressive, so its per-image cost is well above a single forward pass and has **not been
@@ -335,18 +350,22 @@ it — S6b3 ships the samplers, and S6b4 can only ever add a stratum.
 - **If it is adopted** — the cluster id is a **sidecar** keyed by `record_id`, not a column:
   `CHARACTER_DRAWINGS` is frozen with its DVC pointer at a `gs://` path, so a new column would mean
   a re-run and a new data version. It carries `license` and `attribution` like any derived record,
-  and S6b3's samplers take it as one more stratum.
+  and S6b3's samplers take it as one more categorical bin label.
 - **Privacy** — children's drawings, and AGENTS.md's rule is "No PII in logs, fixtures or commits".
   Nothing this spike produces goes in the repository: any images pulled for inspection stay on
   local scratch. **Captions need the same care** — children write their names on drawings and a
   captioner with OCR ability may transcribe them, so scrub before recording anything. TF-IDF
   terms are shareable in a Verified fact where the images are not.
 - **Needs what nothing supplies** — DINOv2 and a captioner are external models that no slice
-  delivers, and neither is in `pyproject.toml`. Part of why this is person-led.
-- **How it stops** — a spike with no stop rule is how a spike becomes open-ended. **Two working
-  days of a person's time, or one full sweep per encoder, whichever comes first**; `k` is swept
-  over at most three values, chosen and recorded before the sweep, because each extra value
-  multiplies the twelve hours the person-led justification rests on. If the budget is reached
+  delivers, and neither is in `pyproject.toml`. Part of why this is person-only.
+- **How it stops** — a spike with no stop rule is how a spike becomes open-ended. **Two working days of a
+  person's time** — that is the termination condition. **One full embedding sweep per encoder**
+  is a cap on re-work rather than a stopping point: stopping when the sweep finishes would stop
+  before any clustering, captioning or comparison had happened, which is the whole deliverable.
+  `k` is swept over at most three values, chosen and recorded beforehand — not because of the
+  twelve hours, since embeddings are computed once and cached and re-clustering at another `k`
+  costs minutes, but because **captioning scales with cluster count** at ~50 captions per
+  cluster, and captioning is the cost nobody has measured. If the budget is reached
   with no verdict, the Verified fact records **inconclusive** and the spike closes — which is a
   result, and leaves S6b3's strata standing as the answer.
 - **Done when** — a dated Verified fact records the verdict, whichever it is: captions too generic
@@ -985,10 +1004,12 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   the wrong population — all 100 carry one, while `golden.py` scores only the **80 `kind: book`**
   scenarios, which is the 80 the superseded fact above it counts. The 16 distinct values and the
   1.0 ceiling are unchanged. Second: "seventeen minutes" is the gap to this branch's fifth
-  commit `a8e0c51` on `feat/KAN-109-plan-photographed-eval` (PR #22); the gap to `c57d8eb`,
+  commit `a8e0c51` on `docs/KAN-109-plan-photographed-eval` (PR #22); the gap to `c57d8eb`,
   which actually recorded the supersession, is **42 minutes**. A third pairing in the fact
   above is also loose: `cf48752` is the branch head at 23:26Z, while 23:38Z is when the
-  merge commit `5569fe5` landed. Both were
+  merge commit `5569fe5` landed.
+
+  The two claims corrected here — the population and the seventeen minutes — were both Both were
   rewritten in place in an earlier commit, against `documentation.md`'s
   "append, do not rewrite, the record"; this entry restores the original and corrects it here
   instead.
