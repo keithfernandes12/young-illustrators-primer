@@ -647,7 +647,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S5b | not started | | Vertex GPU job |
 | S6a | merged | [#18](https://github.com/keithfernandes12/young-illustrators-primer/pull/18) | zero-shot SigLIP 2 baseline; no measured number until S6c |
 | S6b | merged | [#19](https://github.com/keithfernandes12/young-illustrators-primer/pull/19) | `render_strokes` + config + PNG; numpy only, so CI covers it. KAN-87 |
-| S6b1 | not started | | the shared preprocessing module, both directions. Unblocks S6b2 and S6c2. KAN-31 |
+| S6b1 | in review | | `prepare_drawing` + `augment_canvas`, numpy only, wired into the encoder; binarising is local after two global thresholds failed on real drawings. Unblocks S6b2 and S6c2. KAN-31 |
 | S6b3 | not started | | ready: strata and two samplers over Amateur Drawings, pandas only, CI covers it. KAN-117 |
 | S6b4 | not started | | **spike, person-only**: waits on S6b3, S6a and KAN-24, plus DINOv2 and a captioner that no slice supplies. Can only add a stratum. KAN-117 |
 | S6b2 | not started | | S6b merged; waits on S6b1 |
@@ -1034,6 +1034,75 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   in the facts above is therefore a property of this environment, not a limit of this machine** —
   including S6d being unrunnable and the measured VRAM figure AGENTS.md asks for being
   unobtainable. Both would be one install away if the remedy works, which nobody has tried.
+
+- **2026-11-14 — S6b1: Amateur Drawings is almost never square, and the recogniser's processor
+  squashes.** Over all 174,981 rows of `processed/character_drawings` (batch
+  `20261110T055432Z`, metadata only): 1.35% square, 88.17% portrait, 10.48% landscape, aspect
+  p5/p50/p95 0.463/0.750/1.333. The real `SiglipImageProcessorPil` at the pinned revision turns a
+  512 x 384 drawing into 224 x 224 — a squash, on nearly every drawing in the corpus.
+  `prepare_drawing` therefore resizes the long side to `size` and pads with the drawing's own
+  edge colour (per-channel median of the outermost pixels), not the renderer's white, which
+  would frame a grey photograph in bars no training image has.
+- **2026-11-14 — S6b1: binarising after padding turned whole photographs into ink.**
+  *Hypothesis:* Otsu over the padded, resized drawing separates marks from paper. *Result:* no.
+  On 60 drawings (seed `20261114`, an **unstratified** `numpy` draw without replacement —
+  S6b3's sampler is in #29, not on `main`) the median drawing came out **74.2% ink** and the worst
+  exactly **75.0%**, the share of a 384 x 512 drawing left after padding it square: the white
+  padding was the brightest class, so the whole page fell on the ink side. Fixed by thresholding
+  before padding; `test_binarising_a_non_square_photograph_thresholds_the_drawing_not_the_padding`
+  fails on the old order (32 ink pixels where it requires 2).
+- **2026-11-14 — S6b1: a global threshold turns lighting into ink, so binarising is local.**
+  *Hypothesis:* Otsu on the drawing alone is enough. *Result:* no. Same 60 drawings: in the
+  median one **39.8%** of the photograph's own edge binarised to ink, and in 42 of 60 more than a
+  quarter — shadows, vignetting, the table round the sheet. Replaced with a local threshold (ink
+  when more than `binarise_offset` darker than the mean of a `binarise_window` square; Bradley and
+  Roth's published 1/8 and 15%, **untuned**): edge-as-ink median **4.1%**, more than a quarter on
+  5 of 60; ink overall p50/p95/max **5.4% / 13.6% / 36.1%** of the drawing, cropped to the
+  annotated box 6.3% / 14.0% / 39.7%. Its cost is pinned by a test: a solid dark area binarises to
+  its outline. S6c2's binarised row now measures this method, and should say so.
+- **2026-11-14 — S6b1: 1.89% of the annotated boxes reach past their image, all by at most a
+  pixel.** 3,311 of 174,981 once rounded outwards to whole pixels, maximum overshoot **1.00 px**,
+  none with zero area. A strict check would have refused all of them, so `prepare_drawing` clamps
+  within `BOX_TOLERANCE = 1.0` px and refuses beyond; corpus-wide that refuses none.
+- **2026-11-14 — S6b1: the processor adds nothing after `prepare_drawing`.** The pinned
+  processor gives identical `pixel_values` for a prepared array and for a PIL image of it
+  (max |diff| 0), and both equal plain `(x / 255 − 0.5) / 0.5`: at 224 its resize is a no-op.
+  So `prepare_drawing` is the only resampling between a decoded drawing and the tower, and
+  handing the processor an array instead of an image changed nothing it computes.
+- **2026-11-14 — S6b1: the inference direction leaves a rendered canvas alone, and the
+  augmentation is cheap enough per drawing but not per epoch.** On 150 real Quick, Draw!
+  drawings (the first 50 of `house`, `cat` and `bicycle` from the public bucket, read
+  anonymously) `prepare_drawing(render_strokes(s))` equals the render on **150/150**.
+  `augment_canvas` took **7.6–8.6 ms** mean, p95 10.4–12.3 ms over two runs, then
+  `prepare_drawing` about 1 ms; the same seed gave identical output 20/20. At S6b2's ~500k
+  records that is about **70 minutes an epoch single-threaded** against rendering's 3 — S6b2
+  needs loader workers, and this, not rendering, is the number to profile first.
+- **2026-11-14 — S6b1: preparing a full-resolution upload costs more than recognising it.** A
+  4032 x 3024 x 3 array took **0.32–0.42 s** in colour and 0.12–0.28 s in greyscale across runs,
+  against the tower's 0.11 s warm forward pass; a 512 px Amateur Drawing takes 31 ms mean
+  (p95 58 ms). Amateur Drawings was resized by Meta, so no corpus figure shows this — a parent's
+  phone will. Not optimised: an integer pre-shrink before the area resize is the obvious fix and
+  is KAN-71's to ask for.
+- **2026-11-14 — S6b1: the first lighting augmentation fired and did nothing.** It shifted
+  brightness and stretched contrast both ways, and on white paper a brighter, punchier draw
+  clipped the page back to 255: one seed in four on the test square changed no pixel. Lighting now
+  only darkens and flattens (shading, exposure loss, contrast loss), which is what a photograph of
+  a page does; a test checks eight seeds all reach the paper.
+- **2026-11-14 — S6b1: the new path end to end, on one real drawing.** The first `house` record,
+  rendered by `render_strokes_png` and run through `python -m primer.drawing.smoke` (decode,
+  `flattened`, `prepare_drawing`, the pinned tower on CPU): `house` at **0.3026**, then `tooth`,
+  `square`, `castle`, `barn`; 0.11 s warm. **Evidence about wiring, not quality** — one drawing,
+  and still no `drawing_top5_acc` until S6c.
+- **2026-11-14 — S6b1 departs from this plan in two places, both on purpose.** `ink` and
+  `background` carry over from `drawing_render.yaml` as well as `size` — "binarise to the
+  renderer's black-on-white convention" names them, and a copy would be the drift the module
+  exists to prevent. And `flattened` stays in `model.py`, as this plan says and against KAN-31's
+  description, which recommends moving it: it is Pillow, and moving it would break the ticket's
+  own no-image-library acceptance. The shipped `greyscale: false` and `binarise: false` keep what
+  S6a did and **decide neither question** — colour versus greyscale is the KAN-38 owner's, on
+  S6c2's numbers. None of these figures is in MLflow: they measure preprocessing rather than
+  compare models, and there is no host yet (KAN-107). S6b2 inherits the remaining half of the
+  single-path guard — asserting the training loader imports `augment_canvas` from here.
 
 ## Open questions
 
