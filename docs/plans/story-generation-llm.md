@@ -335,6 +335,9 @@ S2 runs these steps in this order. The order matters: dedupe before the split, g
    pair's full story, and keeps the first row per hash in a fixed source order. That order is
    `african_storybook`, `storyweaver`, `tinystories`, so a duplicate keeps its picture-book
    attribution. The dropped count goes in the manifest. **Near**-duplicates (MinHash) stay in S2b.
+   - **3b. Near-duplicate dedupe and safety filter** (S2b, a later slice): MinHash across sources,
+     then the safety classifier, both on the pool and before the split. Until S2b lands, S2 runs
+     steps 1–3 and 4–6 only.
 4. **Split: a pure hash of the book key, 80/10/10** (review F1).
    - `book_key = f"{source}/{book_id}"`, with `book_id = source_id` for TinyStories. That is the
      format `split_of()` already uses (`illustration/consistency/experiment.py:83`), so a picture book
@@ -466,7 +469,7 @@ sentence); `story_output.schema.json` plus `parse_story()`; `TemplateStoryWriter
 *size: medium*
 
 `story/data.py`: `read_dataset(version, split)` returns pairs built from `storybook_pages` (picture
-books) and the TinyStories rows of `stories_text`, at a pinned version. It follows the six steps in
+books) and the TinyStories rows of `stories_text`, at a pinned version. It follows steps 1–6 (all but S2b's 3b) in
 "Building the pairs and the splits":
 
 - one pair per book;
@@ -504,7 +507,10 @@ It writes a manifest.
   - deduping per source breaks the cross-source test;
   - balancing before the split breaks the copy-stays test;
   - removing the clamp breaks the `fk_grade ≥ 0` test on a one-syllable-word text;
-  - dropping the pool salt breaks the "pooled TinyStories reach val and test" ratio test.
+  - dropping the pool salt breaks the "pooled TinyStories reach val and test" ratio test. That test
+    pins `pool_fraction = 0.05`, well below the 0.8 train cut. Without the salt, every pooled story
+    falls in train, so the test fails. (At `pool_fraction = 1.0` an unsalted pool would still split
+    80/10/10 and the test could not catch it.)
 
   `fk_grade` also gets a table of hand-computed cases.
 - **Depends on** — S1 (types). **Jira** — KAN-39.
