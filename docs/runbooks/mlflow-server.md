@@ -37,14 +37,19 @@ One server holds every run the team logs, local runs included
   because the default network's own rules (`default-allow-internal` for `10.128.0.0/9`,
   `default-allow-ssh` for `0.0.0.0/0`, both priority 65534) otherwise let any other VM reach port
   5000 and the whole internet reach port 22. The VM has an ephemeral external IP so it can pull
-  images; that IP is billed.
+  images; that IP is billed. It is public, but no rule admits the internet to port 5000, and after
+  hardening none admits it to port 22 either.
 - **Not yet true of the live server.** A read-only `gcloud compute firewall-rules list` on
   2026-11-15 showed `allow-iap-mlflow` with **no target tag** (so it applies to every VM in the
   network), no deny rule, and the VM untagged. Until a person runs **Harden the live server**
   below, any VM added to the default network can read and write every run, and SSH is open to the
-  internet. Today `mlflow` is the project's only VM. Delete this bullet once that step is done.
-- **Cloud jobs.** The server has no public address, and after hardening only IAP can reach it, so
-  a Vertex or Cloud Run job has no path in. Today a job in the same VPC reaches it only through
+  internet. Today `mlflow` is the project's only VM. The bucket was also created without
+  `--public-access-prevention` (it reports `inherited`); apply it with
+  `gcloud storage buckets update gs://yip-mlflow-artifacts --public-access-prevention`. When both
+  are done, delete this bullet, the "untested" sentence under **Harden the live server**, and the
+  "until then" wording in the port comment of `infra/mlflow/docker-compose.yml`.
+- **Cloud jobs.** The server's external IP admits no one on port 5000, and after hardening only
+  IAP can reach it, so a Vertex or Cloud Run job has no path in. Today a job in the same VPC reaches it only through
   `default-allow-internal`, which hardening closes. How cloud runs log is an open decision (an
   internal-only rule for a tagged range, or a login proxy); until it is made, log from a machine
   with the tunnel open.
@@ -59,9 +64,9 @@ One server holds every run the team logs, local runs included
   below passes `--project=young-illustrators-primer`; the `gcloud storage` lines name the bucket,
   which is global. A teammate's default project is usually their own, and the create and delete
   commands would act there.
-- **Person-only steps.** Every step that creates a resource or grants a role — **Build it from
-  scratch** steps 1–4, **Harden the live server** and **Grant a teammate access** — is for a
-  person to run. Agents cannot make IAM grants (`.claude/settings.json`, `guard_cloud.py`) and must
+- **Person-only steps.** Every step that creates a resource, changes the network or grants a role
+  — **Build it from scratch**, **Harden the live server** and **Grant a teammate access** — is for
+  a person to run. Agents cannot make IAM grants (`.claude/settings.json`, `guard_cloud.py`) and must
   not create service-account keys.
 - **Windows shells.** On Windows, the `gcloud` lines below are written so they run unchanged in
   both PowerShell and Git Bash. Four PowerShell traps cost time on the first setup:
@@ -107,7 +112,7 @@ One server holds every run the team logs, local runs included
    - Experiment: `MLFLOW_EXPERIMENT_NAME=yip-<component>`.
    - Tags: the ones `model-development.md` lists.
    - Slice metrics: `slice/<key>/<value>/<metric>`. MLflow rejects `=` and `:` in metric names,
-     so the documented `slice/<key>=<value>/<metric>` cannot be logged.
+     so the earlier form `slice/<key>=<value>/<metric>` cannot be logged.
 
 ## Grant a teammate access (person-only)
 
@@ -132,9 +137,10 @@ gcloud compute ssh mlflow --zone=us-central1-a --project=young-illustrators-prim
 ## Harden the live server (person-only)
 
 Do this once, before anyone adds another VM to the default network. It tags the VM, scopes the
-allow rule to that tag and lets it win over the default rules, then denies the rest. `allow` is
-priority 800 and `deny` is 900: the lower number wins, so IAP's range gets through and everyone else
-is refused. Tag first, so the VM is never left without the rules.
+allow rule to that tag, then denies the rest. `allow` is priority 800 and `deny` is 900: the lower
+number wins, so the allow rule beats the deny rule, IAP's range gets through and everyone else is
+refused. (The default rules sit at 65534 and lose to both.) Tag first, so the VM is never left
+without the rules.
 
 ```
 gcloud compute instances add-tags mlflow --tags=mlflow --zone=us-central1-a --project=young-illustrators-primer
@@ -150,6 +156,17 @@ gcloud compute firewall-rules list --project=young-illustrators-primer --format=
 
 `allow-iap-mlflow` and `deny-non-iap-mlflow` must both show target tag `mlflow`. This procedure has
 not been run yet, so it is untested.
+
+**If the tunnel or SSH stops working afterwards**, undo it. Deleting the deny rule restores access
+at once; the other two lines return the allow rule and the VM to how they were first built:
+
+```
+gcloud compute firewall-rules delete deny-non-iap-mlflow --project=young-illustrators-primer
+gcloud compute firewall-rules update allow-iap-mlflow --clear-target-tags --priority=1000 --project=young-illustrators-primer
+gcloud compute instances remove-tags mlflow --tags=mlflow --zone=us-central1-a --project=young-illustrators-primer
+```
+
+The `--clear-target-tags` flag has not been run either.
 
 ## Build it from scratch (person-only)
 
@@ -195,14 +212,15 @@ not been run yet, so it is untested.
    ```
    sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile && echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
    sudo apt-get update && sudo apt-get install -y docker.io docker-compose
-   cd ~/mlflow && echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" > .env && chmod 600 .env
+   cd ~/mlflow && (umask 077; echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" > .env)
    sudo docker-compose up -d --build
-   sleep 20; curl -s localhost:5000/health
+   sleep 60; curl -s localhost:5000/health
    ```
 
    Run the `.env` line only on a fresh VM: on a running one it makes a new password that does not
-   match the existing `pgdata` volume. The last line prints `OK`. If the `mlflow` container keeps restarting, run
-   `sudo docker-compose logs --tail=40 mlflow`. One failed start while Postgres initialises is
+   match the existing `pgdata` volume. The last line prints `OK`; if it prints nothing, wait a
+   little and run the `curl` again, since the first image build on an e2-micro is slow. If the
+   `mlflow` container keeps restarting, run `sudo docker-compose logs --tail=40 mlflow`. One failed start while Postgres initialises is
    normal, and `restart: unless-stopped` retries it.
 
 ## If something goes wrong
@@ -212,8 +230,8 @@ not been run yet, so it is untested.
   (`compute.instances.get`, `compute.instances.list`); see **Grant a teammate access**.
 - **The VM rebooted.** Both containers restart on their own. The swap file is in `/etc/fstab`.
 - **Rebuild the server only.** `sudo docker-compose up -d --build` in `~/mlflow` rebuilds it from
-  the copy of the files on the VM, not from the repo; copy a changed file up first (see step 3
-  above). Runs survive, because they live in the `pgdata` volume and the bucket.
+  the copy of the files on the VM, not from the repo; copy a changed file up first (see
+  **Build it from scratch**, step 3). Runs survive, because they live in the `pgdata` volume and the bucket.
 - **Cannot be undone:** `sudo docker-compose down -v`, or deleting the VM, destroys the `pgdata`
   volume and with it **every run's params, metrics and tags**. Only the artifacts in the bucket
   survive. There is no backup of the database yet; that is an open question in

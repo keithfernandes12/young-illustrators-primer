@@ -1461,9 +1461,10 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   against the same numbers. *Recommended:* add the extra to the pinned set when CI installs it.
 - **Where does a zero-shot number get logged?** **Tracked as KAN-107.** `AGENTS.md` requires every model comparison to go
   to MLflow, and nothing from S6a is in one: the baseline's figures live in these Verified facts
-  only. `docs/engineering/model-development.md` still has an open question about who hosts the
-  shared MLflow server, so there is nowhere to log to yet. *Recommended:* settle the host before
-  S6c produces the first `drawing_top5_acc`, which is a number that genuinely needs comparing.
+  only. **Update, 2026-11-15:** a shared MLflow server now exists on the shared project (KAN-107,
+  `docs/runbooks/mlflow-server.md`), reached through an IAP tunnel, and S6c's baseline is its first
+  run. Who hosts it long term is still the project owner's to confirm
+  (`docs/engineering/model-development.md`), and a cloud job cannot reach it yet (see the runbook).
 - **Does the recogniser see colour, or greyscale?** The pipeline answers this inconsistently today
   — see the Verified fact above — and nothing has measured what the inconsistency costs. Zero-shot
   the asymmetry is probably mild, since SigLIP 2 was trained on photographs; the concern is after

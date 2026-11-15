@@ -131,7 +131,9 @@ configuration**: model, weights, seed and sampler settings, which must be pinned
 
 ### Tracking conventions
 
-Every run, local or cloud, logs to the shared MLflow server. The experiment name is fixed by
+Every run, local or cloud, logs to the shared MLflow server. (It is reached through an IAP tunnel, so
+a cloud job has no path in once the runbook's hardening is applied; how cloud jobs log is an open
+decision there.) The experiment name is fixed by
 `train-vertex`: **`MLFLOW_EXPERIMENT_NAME=yip-<component>`**. On top of that, these tags, without which
 runs from six machines cannot be compared:
 
