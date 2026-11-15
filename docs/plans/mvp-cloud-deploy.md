@@ -107,7 +107,15 @@ image prompts; a book that fails is regenerated, never shown.
 *size: medium*
 
 > **Planned in detail in `docs/plans/story-generation-llm.md`** (KAN-39), slices S1–S6 there. Update
-> progress in that plan's status table; this entry stays as the MVP-level summary.
+> progress in that plan's status table; this entry stays as the MVP-level summary. Where the two
+> differ, that plan is current:
+> - **Candidates** are Qwen3-4B, Phi-4-mini and Llama 3.2 3B, so up to 4B rather than "1–3B".
+> - **Dependencies:** it uses the Flesch-Kincaid formula and the safety fake until S3 and S4 here
+>   land, so it does not wait on them.
+> - **Regeneration** is on target words and the age-mode format only. Serving's existing safety
+>   check refuses a flagged story, and level is steered by the prompt, not regenerated on.
+>
+> The text below is kept as originally written.
 
 `src/primer/story/`: an instruct model (Llama 3.x 1–3B, Qwen 2.5 or Phi) with a prompt per age mode,
 then check, and regenerate on failure, for target-word inclusion, readability (S3) and safety (S4).
@@ -120,8 +128,9 @@ then check, and regenerate on failure, for target-word inclusion, readability (S
 
 *size: medium*
 
-> **Planned in detail in `docs/plans/story-generation-llm.md`** (KAN-39), slices S7–S9 there. The
-> candidate set there is Qwen3-4B, Phi-4-mini and Llama 3.2 3B, and the method is QLoRA.
+> **Planned in detail in `docs/plans/story-generation-llm.md`** (KAN-39), slices S7–S9 there. Where
+> the two differ, that plan is current: the base is chosen from Qwen3-4B, Phi-4-mini and Llama 3.2 3B
+> (up to 4B, not "1–3B"), and the method is QLoRA. The text below is kept as originally written.
 
 LoRA on the chosen 1–3B base with the instruction dataset (TinyStories plus the picture-book corpora),
 trained on Vertex AI with `train-vertex`; replaces the S5 base model only if the `story` gate group improves.

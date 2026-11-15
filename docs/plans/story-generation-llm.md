@@ -84,8 +84,9 @@ fetched on 2026-11-14. Also not read: the bucket itself (no row counts), the `tr
 - **Boundaries.**
   - `story` never imports `serving`.
   - Nothing imports `primer.data` at request time. So the vocabulary lists the prompt needs are built
-    offline into a file in `story/configs/`, and `model.py` reads that file. Only `data.py` and the
-    build scripts read `primer.data`.
+    offline into a file in `story/configs/`, and `model.py` reads that file. Only offline code reads
+    `primer.data`: `data.py`, the vocabulary build script, and `slices.py` and `evaluate.py` (which use
+    `primer.data.bias`). `model.py` never does.
   - Weights load lazily. Importing `primer.story.*` stays cheap.
   - `src/primer/evaluation/` and `configs/golden/` belong to member 5. Any change there (S5) is
     reviewed by them.
@@ -172,7 +173,9 @@ use a Flesch-Kincaid grade (0.0–4.3 in the golden book scenarios).
 
 - Build pairs with the FK grade, rounded to 0.5, and a `level_source` column.
 - When B4 lands, rebuild the pairs from the scorer's levels under a new data version and retrain.
-  The pipeline does not change, only the column the label comes from.
+  The pair builder changes in one place: it reads `storybook_pages.reading_level`, which the schema
+  stores as a **string** (`schemas.py:46`), parses it to a float grade, and sets
+  `level_source: "readability_scorer"`. Nothing downstream of the pairs changes.
 - Report `level_source` in every MLflow run and in `CARD.md`, so no number is read as scorer-aligned
   when it is not.
 - `age_group` is derived from level: grade < 1.5 → 3–5, otherwise 5–8. That cut is a proposal and
@@ -204,16 +207,26 @@ would make the gate measure our tuning.
 5. Regeneration rate.
 6. Judge quality (1–5) on a fixed 40-request subset.
 7. p50/p95 generation latency, tokens per second, and peak VRAM on one named GPU.
+8. Peak VRAM of the model loaded in 4-bit for inference, and whether that alone fits in 8 GB (the
+   laptop RTX 4060 AGENTS.md names). This is measured. QLoRA *training* memory cannot be measured in
+   S6, because the training code arrives in S7, so it is estimated here and measured in S7.
 
 **Selection rule**, fixed before the runs so the result cannot pick the rule:
 
-1. **Hard filters.** Licence acceptable for a course project. 4-bit QLoRA fits on one L4 (24 GB) at our
-   sequence length, measured, not estimated. p95 for a whole book is ≤ 30 s on an L4, which leaves room
-   inside the 120 s `p95_full_book_s` for illustration and TTS.
-2. **Primary metric.** The constraint score: the mean of target-word inclusion, level-within-±1 and
-   format compliance.
-3. **Within 2 points of the leader**, prefer the higher judge score, then the lower latency, then the
-   smaller model (AGENTS.md: "Prefer a model that fine-tunes comfortably on one local GPU").
+1. **Hard filters.**
+   - Licence acceptable for a course project.
+   - 4-bit inference VRAM (item 8, measured), plus an estimate for LoRA adapters, optimiser state and
+     activations at sequence length 1024, fits on one L4 (24 GB).
+   - p95 for a whole book is ≤ 30 s on an L4, which leaves room inside the 120 s `p95_full_book_s`
+     for illustration and TTS.
+2. **Primary metric.** The constraint score: the mean of three rates in 0–1: target-word inclusion
+   (item 2), level-within-±1 (item 3), and format compliance, which means item 4.
+3. **Within 0.02 (2 percentage points) of the leader's constraint score**, prefer the higher judge
+   score, then the lower latency, then the candidate that fits in 8 GB, then the smaller model
+   (AGENTS.md: "Prefer a model that fine-tunes comfortably on one local GPU").
+
+If S7's first real step shows the winner does not fit QLoRA on an L4 after all, S7 falls back to the
+runner-up and records why in Decisions.
 
 The comparison bar plot and every number are MLflow artifacts. The decision goes in Decisions, citing
 the run ids.
@@ -230,7 +243,17 @@ the run ids.
   - regeneration of the whole story, up to `max_attempts` (config, default 3), then a typed error.
     Serving decides what to show; the writer never returns a story that fails the check.
   - An optional small positive logit bias on the target words' first tokens is a sensitivity knob
-    (S8), not a default.
+    (S8a), not a default.
+- **What triggers regeneration in v0.** Exactly three things: invalid JSON (which constrained decoding
+  should make impossible, so this is a backstop), a missing target word, and a page-count or
+  sentence-length violation of the age-mode preset.
+  - **Level is not a regenerate condition in v0.** It is steered by the prompt (S3 tests that the
+    prompt carries the requested level) and the fine-tune, and is measured, not enforced. Rejecting
+    on an FK formula that is noisy on short texts would mostly burn attempts. Revisit once the
+    readability scorer is real.
+  - **Safety is not checked inside the writer.** `serving/book.py:109-121` already classifies the
+    story after `write` and refuses a flagged book. Checking again in the writer would duplicate
+    member 3's area inside this one.
 - **Vocabulary-aware prompts.** An offline build step reads `word_lists` at `v1.1` and writes one file
   per age mode into `story/configs/`:
   - Learn to Read (3–5): Dolch pre-primer to grade 1, plus Fry first 300.
@@ -250,7 +273,7 @@ the run ids.
 - **Dedupe before splitting.** The pipeline drops exact duplicates only (`text_hash`). S2b adds the
   near-duplicate (MinHash) pass that §3.2 promises, so a near-copy cannot sit in train and test.
 - **Source mix.** TinyStories will dwarf the picture books. The training sampler caps TinyStories to
-  a configured ratio (start 3:1), which is a sensitivity axis in S8. The bias report's capped country
+  a configured ratio (start 3:1), which is a sensitivity axis in S8b. The bias report's capped country
   weights apply when the picture books are sampled (KAN-80).
 
 ## Evaluation
@@ -260,10 +283,13 @@ the run ids.
 | target words ≥ 95% | `target_word_inclusion` | story | check-and-regenerate makes misses rare; the fine-tune makes them cheap |
 | reading level within ±1 for ≥ 85% | `reading_level_within1` | **readability** | the key is computed on our text by member 3's scorer. We report an FK-formula version in `CARD.md` and per slice. Until the scorer is real, the gate number for this key is not ours to claim |
 | quality ≥ 4.0 | `story_quality_mean` | story | LLM-as-judge with a fixed rubric (age fit, coherence, uses the words naturally, gentle ending), calibrated against a human rating of 30 stories. The judge model is open question 3 |
-| zero safety violations on the golden set | `safety_violations_golden` | **safety** | the story's job is to never return text the safety check flags: the writer regenerates on a flag, and S8 reports the flag rate per slice |
+| zero safety violations on the golden set | `safety_violations_golden` | **safety** | serving's existing check after `write` refuses a flagged story (see "What triggers regeneration"). This plan's part is to measure: S8a reports the safety-flag rate on our stories per slice |
 
-- `evaluate.py` writes the contract shape, with `baseline` set to the chosen model's zero-shot score
-  from S6. That is model-development step 1, before any training.
+- `evaluate.py` writes the contract shape, with `baseline` set to the **chosen model's zero-shot
+  score on the golden set**, measured in S6 after the choice is made. That is model-development
+  step 1, before any training. The dev set chooses; the golden set gives the baseline the fine-tune
+  in S7 is compared against. Both numbers are on the same golden set, so the comparison is like for
+  like.
 - `golden.py` still drives `FakeStoryWriter` with `write(prompt, words, age) -> str`, which is not
   the `StoryWriter` protocol. S5 adds an adapter so a real `StoryWriter` can run in the golden set
   (`golden.py`'s own docstring calls this open work belonging with the first real area).
@@ -297,8 +323,11 @@ the run ids.
 - **QLoRA starting point**, provisional, to be swept with Optuna in `story/configs/`: 4-bit NF4 with
   double quantisation, bf16 compute, LoRA r=16, α=32, dropout 0.05 on all attention and MLP
   projections, lr 2e-4 cosine, 2 epochs, max sequence length 1024, gradient checkpointing. Loss is
-  computed on the JSON answer tokens only. `train.py` honours `max_steps` and a 30-minute wall clock
-  (ADR clause 2) and checkpoints often enough that a Spot preemption costs minutes.
+  computed on the JSON answer tokens only. `train.py` always honours `max_steps` from the config.
+  The 30-minute wall clock (ADR clause 2) applies to **agent-local runs only**: it is a
+  `--max-minutes` flag that the agent-local path sets and the Vertex job leaves unset, so a real
+  2-epoch run is never cut at 30 minutes. `train.py` also checkpoints often enough that a Spot
+  preemption costs minutes.
 
 ## Slices
 
@@ -390,23 +419,33 @@ page and sentence violations, out-of-list rate, and FK grade.
 the JSON grammar, parses, checks, and regenerates up to `max_attempts`. Adds a `story` extra to
 `pyproject.toml`, not installed in CI.
 
-- **Acceptance** — with a scripted fake backend: invalid JSON is never returned; a story missing a
-  word triggers regeneration; N failures raise `StoryGenerationError`; importing `primer.story.model`
-  does not import `torch`.
-- **Testing** — the four cases above, plus an import-cost test like the other areas'.
+- **Acceptance** — with a scripted fake backend:
+  - invalid JSON is never returned;
+  - a story missing a word triggers regeneration;
+  - a story that breaks the age-mode page count or sentence length triggers regeneration;
+  - N failures raise `StoryGenerationError`;
+  - importing `primer.story.model` does not import `torch`.
+
+  Level and safety are deliberately not regenerate conditions (see "What triggers regeneration in
+  v0").
+- **Testing** — the five cases above, plus an import-cost test like the other areas'.
 - **Depends on** — S3. **Jira** — KAN-39.
 
 ### S5 · Evaluation harness and golden adapter
 
 *size: medium*
 
-`evaluate.py` writes the contract `metrics.json` (story keys, `baseline`, slices). `slices.py` reports
-age mode, gender-swapped prompts and picture-book origin, through `primer.data.bias`. Adds the
-LLM-as-judge rubric. An adapter lets `golden.py` drive a real `StoryWriter`; member 5 reviews that
-change.
+`evaluate.py` writes the contract `metrics.json` (story keys, `baseline`, slices). `slices.py` defines
+the slice keys (age mode, gender-swapped prompts, picture-book origin) through `primer.data.bias` and
+is exercised on the fake. Per-slice numbers for a real model come in S8a. Adds the LLM-as-judge
+rubric. An adapter lets `golden.py` drive a real `StoryWriter`; member 5 reviews that change.
 
-- **Acceptance** — `evaluate.py --model fake` writes a file that `contract.missing_keys` accepts for the
-  story keys. The golden runner with `--fake-models` produces numbers identical to before the adapter.
+- **Acceptance**
+  - `evaluate.py --model fake` writes a file in which the story keys
+    (`{k for k, o in contract.METRIC_OWNERS.items() if o == "story"}`) are all present in `overall`,
+    and `baseline` is present. (`contract.missing_keys` checks all eleven keys with no stage filter,
+    so a story-only file can never pass it.)
+  - The golden runner with `--fake-models` produces numbers identical to before the adapter.
 - **Depends on** — S4. **Jira** — KAN-39.
 
 ### S6 · Candidate bake-off and model choice (*person-only for the GPU run*)
@@ -415,11 +454,16 @@ change.
 
 One config per candidate with a pinned revision. A `bakeoff` CLI runs the development request set,
 logs one MLflow run per candidate, and draws the bar plot. A person runs it on one L4. The result is
-recorded in Decisions with run ids, VRAM as a dated Verified fact, and the winner's zero-shot score
-becomes the `baseline`.
+recorded in Decisions with run ids, and VRAM as a dated Verified fact. Then the person runs the
+**golden set** once with the zero-shot winner. That golden `story` group is the `baseline`.
 
-- **Acceptance** — three MLflow runs exist with identical prompt, decoding and data version; the
-  selection rule applied to them is written in Decisions.
+- **Acceptance**
+  - Three MLflow runs exist with identical prompt, decoding and data version.
+  - The selection rule applied to them is written in Decisions.
+  - A fourth MLflow run holds the zero-shot winner's golden-set `story` group, and its numbers are in
+    Verified facts as the baseline S7 must beat. This also meets `mvp-cloud-deploy` S5's acceptance:
+    golden `target_word_inclusion` and `story_quality_mean` reported, and the gate passed or the gap
+    recorded.
 - **Testing** — the CLI is tested with a fake backend: one run per candidate, and the rule picks the
   expected winner from a fixed table.
 - **Depends on** — S5; GPU quota; MLflow server. **Jira** — KAN-39.
@@ -428,25 +472,51 @@ becomes the `baseline`.
 
 *size: large*
 
-`train.py` uses `peft` and `bitsandbytes` with answer-only loss, and honours `max_steps` and the 30-min
-cap. Optuna search space in config. `Dockerfile` moves to a CUDA base. `--smoke` runs one step on a tiny
-model on CPU.
+`train.py` uses `peft` and `bitsandbytes` with answer-only loss. It always honours `max_steps`, and
+the 30-minute cap only when `--max-minutes` is set (the agent-local path). Optuna search space in
+config. `Dockerfile` moves to a CUDA base. `--smoke` runs one step on a tiny model on CPU.
 
-- **Acceptance** — `--smoke` passes in CI-equivalent conditions. One Vertex run logged with every tag
-  above. The `story` gate group compared with S6's baseline in Verified facts. The adapter replaces
-  the base only if the group improves.
+- **Touches** — `story/train.py`, `story/configs/` (including `story_baseline.yaml`, still
+  `data_version: unpinned`), `story/Dockerfile`, `pyproject.toml` (`story` extra), and
+  `tests/models/test_area_interfaces.py::test_the_vertex_template_passes_flags_train_actually_accepts`.
+  That test feeds `.claude/skills/train-vertex/job_template.yaml`'s arguments, including a `gs://`
+  `--out`, to `train.main` and expects `NotImplementedError`. Once `train.py` is real, the test
+  changes to parse-only through a `--dry-run` flag that validates the arguments and config and returns
+  without training. It still fails if the template's flags drift.
+- **Acceptance**
+  - `.venv/bin/python -m pytest tests/story/test_train_smoke.py` passes locally with
+    `pip install -e ".[dev,story]"`. CI does not install the `story` extra, so there the test is skipped
+    by `pytest.importorskip`, as in `tests/drawing/test_siglip_encoder.py`. The PR says so and records
+    the local run.
+  - One Vertex run logged with every tag above.
+  - The golden `story` group compared with S6's golden baseline in Verified facts.
+  - The adapter replaces the base only if the group improves.
+  - First real step confirms QLoRA VRAM on the L4; falls back to the runner-up if it does not fit.
 - **Depends on** — S6. **Jira** — KAN-39.
 
-### S8 · Bias slices and sensitivity (ablation)
+### S8a · Bias slices and sensitivity on the zero-shot model
 
 *size: medium*
 
-Per-slice metrics for age mode, gender-swapped prompts and origin. Ablations: drop each prompt
-constraint in turn (word list, level, target-word instruction), temperature sweep, TinyStories ratio,
-logit bias on/off. Results and mitigations go in `CARD.md`. SHAP is stated as inapplicable
-(`model-development` §3).
+`model-development` §3 puts bias (step 3) and sensitivity (step 4) before training (step 5), so this
+runs on S6's zero-shot winner:
 
-- **Depends on** — S7 (or S6 for the zero-shot model). **Jira** — KAN-39.
+- per-slice metrics for age mode, gender-swapped prompts and origin, including the safety-flag rate;
+- ablations that drop each prompt constraint in turn (word list, level, target-word instruction);
+- a temperature sweep, and logit bias on and off.
+
+Results and mitigations go in `CARD.md`. SHAP is stated as inapplicable (`model-development` §3).
+
+- **Depends on** — S6. **Jira** — KAN-39.
+
+### S8b · Training-dependent sensitivity
+
+*size: small*
+
+Re-runs S8a's slices on the fine-tuned adapter, and adds the axes that only exist with training: the
+TinyStories ratio and the LoRA rank.
+
+- **Depends on** — S7. **Jira** — KAN-39.
 
 ### S9 · Register, container, model card
 
@@ -455,7 +525,7 @@ logit bias on/off. Results and mitigations go in `CARD.md`. SHAP is stated as in
 `register.py` (MLflow registry plus Artifact Registry push); `CARD.md` complete. Only a
 `GATE_RESULT: PASS` run takes `candidate`.
 
-- **Depends on** — S7 and S8. Deploy is `mvp-cloud-deploy` S10. **Jira** — KAN-39.
+- **Depends on** — S7 and S8b. Deploy is `mvp-cloud-deploy` S10. **Jira** — KAN-39.
 
 ## Status
 
@@ -470,7 +540,8 @@ logit bias on/off. Results and mitigations go in `CARD.md`. SHAP is stated as in
 | S5 | not started | | touches member 5's area |
 | S6 | not started | | needs GPU quota + MLflow |
 | S7 | not started | | Vertex GPU job, person-launched |
-| S8 | not started | | |
+| S8a | not started | | before training, per model-development §3 |
+| S8b | not started | | |
 | S9 | not started | | |
 
 ## Decisions
@@ -496,6 +567,15 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
   (`.local-data/`), with the full tag set so they can be re-logged to the shared server later.
 - **2026-11-14** — *Jira (chosen default, revisable in review).* No sub-tasks. Every slice is
   tracked on KAN-39.
+- **2026-11-14** — *Candidates up to 4B.* Scoping §5.3 says "Llama 3.x 1–3B / Qwen 2.5 / Phi".
+  KAN-39 names Qwen3-4B and Phi-4-mini (3.8B), which are above that range. The KAN-39 list is used,
+  and the selection rule's VRAM filter and 8 GB tie-break keep AGENTS.md's single-GPU preference.
+  The submitted scoping doc is left as submitted.
+- **2026-11-14** — *Regeneration conditions in v0.* The writer regenerates on a missing target word
+  and on age-mode format violations. It does not regenerate on level, which is prompt-steered and
+  measured, or on safety, which serving already checks after `write`. Chosen to avoid a noisy FK
+  check burning attempts, and to avoid duplicating the safety area. Revisit when the readability
+  scorer is real. (From review finding F3.)
 
 ## Verified facts
 
@@ -523,15 +603,23 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
 1. ~~KAN-92's types vs the merged interface.~~ Chosen default 2026-11-14: extend, don't replace
    (Decisions).
 2. ~~The `level` field.~~ Chosen default 2026-11-14: FK grade now, back-fill later (Decisions).
-   Still open to Keith in review.
+   Still open to Keith in review. Note that the brief (`model-stages-and-data-coverage`) recommends
+   option A and names the **Language lead** as decider. If that is not Keith, the Language lead
+   should see this choice in review too.
 3. **Which model judges `story_quality_mean`?** It must not be one of the candidates. A hosted API
    model costs money but is stronger; a larger open model costs GPU time. Either way it is calibrated
    against 30 human ratings. *Recommended:* a hosted model on a capped sample, rubric and prompt pinned
-   in config. *Decides:* Diya with member 5, since the key flows through `golden.py`.
+   in config. Whichever is chosen, the judge only ever sees golden-set and development-set text,
+   which is synthetic, and never a real request: `character_name` can be a child's own name (COPPA;
+   run `privacy-guard` on S5). *Decides:* Diya with member 5, since the key flows through `golden.py`.
 4. **Age 5 is in both modes** (§: 3–5 Learn to Read, 5–8 Grow Vocabulary). *Recommended:* the parent
    picks the mode; the default is by age, with 5 → Learn to Read. *Decides:* Diya.
 5. **Where the GPU runs come from.** *Recommended:* Diya requests L4 quota in her compute project now,
    since a new project starts at zero. *Decides:* Diya.
+6. **Serving has to handle `StoryGenerationError`.** After S4 the writer can raise once its attempts
+   run out, and `serving/book.py:109` calls `writer.write` with no handling. *Recommended:* a Jira
+   issue for the serving owner (member 6, `mvp-cloud-deploy` S9), linked here. Not opened yet, because
+   opening issues waits on Diya. (Review finding F13.)
 
 ## Out of scope
 
