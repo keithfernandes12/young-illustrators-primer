@@ -335,7 +335,9 @@ def chance_baseline(vocabulary_size: int) -> dict[str, Any]:
 
 
 def _accuracy(hits: Sequence[bool]) -> float:
-    return round(sum(hits) / len(hits), 4)
+    # Unrounded: the gate compares this to its threshold, and rounding 0.8499605 to 0.85 would pass
+    # a run that misses. Only the printed summary rounds.
+    return sum(hits) / len(hits)
 
 
 def accuracy_by_slice(hits: Sequence[bool], groups: Mapping[str, Sequence[str]]) -> list[dict[str, Any]]:
@@ -371,7 +373,7 @@ def metrics_file(
     groups: Mapping[str, Sequence[str]],
     vocabulary_size: int,
     *,
-    whole_split: bool = True,
+    gated: bool = True,
     **provenance: Any,
 ) -> dict[str, Any]:
     """The ``primer.evaluation.contract`` shape, plus the gated key at the top level.
@@ -381,15 +383,17 @@ def metrics_file(
     drawing``. There is deliberately no ``fake_models`` key: the gate reads that flag for the
     whole file, which is why a real number is not merged into ``golden.py``'s fake-scored one.
 
-    With ``whole_split=False`` (a ``--limit`` probe) the top-level key is left out, so the gate
-    says ``metric missing`` rather than passing or failing -- and never certifies an MLflow run
-    -- on a few hundred drawings that are not even a random sample of the split.
+    With ``gated=False`` the top-level key is left out, so the gate says ``metric missing`` rather
+    than passing or failing -- and never certifies an MLflow run. That is the case for a ``--limit``
+    probe (a few hundred drawings that are not even a random sample of the split) and for the
+    ``val`` split, which is used to choose the model and so is diagnostic only: the gate's
+    population is the complete ``test`` split.
     """
     overall = {"drawing_top5_acc": _accuracy(hits), "drawings": len(hits)}
-    gated = {"drawing_top5_acc": overall["drawing_top5_acc"]} if whole_split else {}
+    top_level = {"drawing_top5_acc": overall["drawing_top5_acc"]} if gated else {}
     return {
         "stage": STAGE,
-        **gated,
+        **top_level,
         "overall": overall,
         "baseline": chance_baseline(vocabulary_size),
         "slices": accuracy_by_slice(hits, groups),
@@ -458,9 +462,22 @@ def _evaluate_accuracy(argv: list[str]) -> int:
     if args.limit is not None and args.limit < 1:
         parser.error("--limit must be at least 1")
 
+    if not args.version.strip():
+        # `required=True` only demands the flag: `--version ""` would read the unfrozen current
+        # data (the catalog treats "" as no version) and still write a gate-eligible file.
+        parser.error("--version must name a frozen primer-data version, e.g. v1.1")
+
     config = DrawingConfig.from_yaml(args.model)
     labels = config.labels()
     prompts = config.prompts()
+    if len(set(prompts)) != len(prompts):
+        # The same refusal `DrawingRecognizerModel` makes. A `prompt_template` without `{label}`
+        # gives every label one prompt, so top-five hits would follow vocabulary order, not the
+        # drawing. Checked before the bucket or the weights are touched.
+        parser.error(
+            f"prompt_template {config.prompt_template!r} does not give every label a distinct "
+            "prompt; a template without {label} makes every score identical"
+        )
     index = label_index(labels)
 
     store = Store()
@@ -495,7 +512,7 @@ def _evaluate_accuracy(argv: list[str]) -> int:
         hits,
         groups,
         len(labels),
-        whole_split=args.limit is None,
+        gated=args.split == "test" and args.limit is None,
         model_uri=str(args.model),
         encoder=config.encoder,
         encoder_revision=config.encoder_revision,
@@ -513,7 +530,7 @@ def _evaluate_accuracy(argv: list[str]) -> int:
     args.out.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     judged = sum(1 for s in result["slices"] if s["judged"])
     print(
-        f"wrote {args.out}: drawing_top5_acc={result['overall']['drawing_top5_acc']} over {len(hits)} drawings "
+        f"wrote {args.out}: drawing_top5_acc={result['overall']['drawing_top5_acc']:.4f} over {len(hits)} drawings "
         f"(chance {result['baseline']['drawing_top5_acc']}; {judged} of {len(result['slices'])} slices judged)"
     )
     return 0

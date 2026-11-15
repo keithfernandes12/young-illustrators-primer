@@ -1486,6 +1486,13 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
     `the great wall of china` (108). Hypothesis: the pipeline was broken. Result: it was not; the
     labels are hard, and a random 300 scored 0.52. `--limit` takes the first N rows, which is why
     its help text says "never a result".
+  - **What can be gated, after review (Copilot, 2026-11-15).** The top-level `drawing_top5_acc` is
+    written only for the complete `test` split: a `--limit` probe and `--split val` both omit it, so
+    `check_gate` says `metric missing` and `--mlflow-run-id` cannot tag them `gate_passed=true`
+    (`val` chooses the model; it stays diagnostic). The ratio is written unrounded, because 53,811
+    of 63,310 is 0.8499605 and rounds to a passing 0.85. An empty `--version` and a
+    `prompt_template` without `{label}` are refused before any bucket or weights are read. The
+    0.4956 above is unchanged: it was the four-place display of the same hits.
   - **The golden ceiling, re-counted.** `configs/golden/scenarios.jsonl` holds 80 book scenarios
     over 16 distinct `drawing_label`s. All 16 are in the 345, case-insensitively and exactly, so a
     flawless recogniser reaches 1.0. That is a property of the golden set, not of this number,

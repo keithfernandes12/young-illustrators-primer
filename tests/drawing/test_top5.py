@@ -164,7 +164,7 @@ def test_the_file_is_the_contract_shape_with_the_gated_key_also_at_the_top():
 
 def test_a_limited_probe_cannot_be_gated(tmp_path):
     path = tmp_path / "probe.json"
-    path.write_text(json.dumps(_file([True] * 10, whole_split=False)), encoding="utf-8")
+    path.write_text(json.dumps(_file([True] * 10, gated=False)), encoding="utf-8")
 
     run = subprocess.run(
         [sys.executable, str(CHECK_GATE), "--metrics", str(path), "--only", "drawing"],
@@ -174,6 +174,24 @@ def test_a_limited_probe_cannot_be_gated(tmp_path):
     )
 
     assert "metric missing" in run.stdout
+    assert "GATE_RESULT: FAIL" in run.stdout
+
+
+def test_the_gated_ratio_is_not_rounded_so_a_near_miss_cannot_round_up_to_a_pass(tmp_path):
+    # 53,811 of 63,310 is 0.8499605: rounded to four places it reads 0.85 and the gate passes it.
+    hits = [True] * 53_811 + [False] * (63_310 - 53_811)
+    result = _file(hits)
+
+    assert result["drawing_top5_acc"] < 0.85
+    assert result["overall"]["drawing_top5_acc"] == result["drawing_top5_acc"] == 53_811 / 63_310
+    path = tmp_path / "near_miss.json"
+    path.write_text(json.dumps(result), encoding="utf-8")
+    run = subprocess.run(
+        [sys.executable, str(CHECK_GATE), "--metrics", str(path), "--only", "drawing"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     assert "GATE_RESULT: FAIL" in run.stdout
 
 
@@ -278,6 +296,61 @@ def test_a_limited_cli_run_writes_no_gated_key(monkeypatch, tmp_path):
     result = json.loads(out.read_text(encoding="utf-8"))
     assert "drawing_top5_acc" not in result
     assert result["overall"] == {"drawing_top5_acc": 1.0, "drawings": 2} and result["limit"] == 2
+
+
+def test_a_validation_run_cannot_be_gated(monkeypatch, tmp_path):
+    # `val` selects the model, so it is diagnostic: no top-level key means the gate cannot certify it.
+    from primer.drawing.data import split_of
+
+    frame = _test_split_frame(6)
+    val_ids = [f"v{i}" for i in range(400) if split_of(f"v{i}") == "val"][:6]
+    frame = frame.assign(source_id=val_ids, record_id=[f"r-{i}" for i in val_ids])
+    _stub_world(monkeypatch, frame, winner="The Eiffel Tower")
+    out = tmp_path / "val.json"
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    evaluate.main(["--model", str(model_yaml), "--version", "v1.1", "--split", "val", "--out", str(out)])
+
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert result["split"] == "val" and result["overall"]["drawings"] == 6
+    assert "drawing_top5_acc" not in result
+
+
+def test_an_empty_version_is_refused_before_anything_is_read(monkeypatch, tmp_path):
+    from primer.data import catalog
+
+    def boom(*args, **kwargs):
+        raise AssertionError("the bucket must not be read")
+
+    monkeypatch.setattr(catalog, "read_dataset", boom)
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    for version in ("", "  "):
+        with pytest.raises(SystemExit):
+            evaluate.main(
+                ["--model", str(model_yaml), "--version", version, "--out", str(tmp_path / "m.json")]
+            )
+
+
+def test_a_template_without_label_is_refused_before_anything_is_read(monkeypatch, tmp_path):
+    from primer.data import catalog
+    from primer.drawing import model
+
+    def boom(*args, **kwargs):
+        raise AssertionError("the bucket and the weights must not be touched")
+
+    monkeypatch.setattr(catalog, "read_dataset", boom)
+    monkeypatch.setattr(model, "SiglipEncoder", boom)
+    base = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+    text = base.read_text(encoding="utf-8").replace("This is a photo of {label}.", "a drawing")
+    bad = tmp_path / "bad.yaml"
+    bad.write_text(text, encoding="utf-8")
+    # `labels_file` resolves beside the config, so the vocabulary has to sit next to the copy.
+    (tmp_path / "quickdraw_categories.txt").write_text(
+        (base.parent / "quickdraw_categories.txt").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    with pytest.raises(SystemExit):
+        evaluate.main(["--model", str(bad), "--version", "v1.1", "--out", str(tmp_path / "m.json")])
 
 
 def test_the_cli_refuses_the_training_split():
