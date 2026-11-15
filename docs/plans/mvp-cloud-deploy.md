@@ -693,7 +693,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6b1 | in review | [#31](https://github.com/keithfernandes12/young-illustrators-primer/pull/31) | `prepare_drawing` + `augment_canvas`, numpy only, wired into the encoder; binarising is local after two global thresholds failed on real drawings. Unblocks S6b2 and S6c2. KAN-31 |
 | S6b3 | not started | | ready: strata and two samplers over Amateur Drawings, pandas only, CI covers it. KAN-117 |
 | S6b4 | not started | | **spike, person-only**: waits on S6b3, S6a and KAN-24, plus DINOv2 and a captioner that no slice supplies. Can only add a stratum. KAN-117 |
-| S6b2 | in review | | `data.py`: hashed 80/10/10 split of v1.1 (506k/63k/63k), rendered on demand through `render_strokes` → `augment_canvas` (train only) → `prepare_drawing`. Unblocks S6c |
+| S6b2 | in review | [#32](https://github.com/keithfernandes12/young-illustrators-primer/pull/32) | `data.py`: hashed 80/10/10 split of v1.1 (506k/63k/63k), rendered on demand through `render_strokes` → `augment_canvas` (train only) → `prepare_drawing`. Unblocks S6c |
 | S6c | not started | | the gate's number, over rendered Quick, Draw! — not the product's. Ceiling back to 1.0 since KAN-116 merged |
 | S6c2 | not started | | preprocessing stability over Amateur Drawings; no labels needed. Needs S6a and S6b1; S6b3's sampler softly, random draw is a stated fallback. KAN-109 |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap. Reads S6c2's stability figures |
