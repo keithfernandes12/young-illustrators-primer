@@ -16,8 +16,9 @@ They are in one file for KAN-87's reason a second time: if training degraded ima
 inference normalised them another, a measured ``drawing_top5_acc`` would compare a model with two
 preprocessing paths, and nobody could say which one moved. ``tests/drawing/test_preprocess.py``
 asserts there is one entry point per direction, and fails if anything else in the drawing path
-imports an image-processing library or calls Pillow's resize, crop, thumbnail or a non-RGB
-``convert`` -- the forms a second path takes in practice. That is a guard, not a proof: a second
+imports or references one of a listed set of image-processing modules (torchvision's transforms,
+scipy.ndimage, OpenCV, PIL.ImageOps and the like), or calls Pillow's resize, crop, thumbnail or a
+non-RGB ``convert`` -- the forms a second path takes in practice. That is a guard, not a proof: a second
 path written in plain numpy under another name would pass it, as it would pass KAN-87's.
 
 The contract between the two: ``augment_canvas``'s output is always something ``prepare_drawing``

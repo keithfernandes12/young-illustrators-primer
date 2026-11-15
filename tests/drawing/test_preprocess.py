@@ -549,6 +549,22 @@ def test_paper_texture_reaches_every_pixel_of_paper(canvas):
     assert len(np.unique(augment_canvas(canvas, seed=3, config=TEXTURED)[canvas == 255])) > 10
 
 
+@pytest.mark.parametrize(
+    ("setting", "low", "high", "base"),
+    [
+        ("paper_texture_wavelength", 0.1, 0.9, replace(TEXTURED, paper_grain=0.0)),
+        ("fill_coverage_wavelength", 0.2, 0.9, replace(QUIET, fill_probability=1.0)),
+        ("fill_coverage_spread", 0.0, 1.0, replace(QUIET, fill_probability=1.0)),
+    ],
+)
+def test_each_shape_setting_is_read_from_the_config(canvas, setting, low, high, base):
+    """A setting the code ignores still validates; only a change in the pixels shows it is read."""
+    first = augment_canvas(canvas, seed=5, config=replace(base, **{setting: low}))
+    second = augment_canvas(canvas, seed=5, config=replace(base, **{setting: high}))
+
+    assert not np.array_equal(first, second)
+
+
 def test_turning_one_operation_off_leaves_unrelated_pixels_where_they_were(canvas):
     """One random stream per operation, so toggling wobble does not reshuffle paper or lighting.
 
@@ -712,14 +728,28 @@ def convert_mode(call: ast.Call) -> ast.expr | None:
     return next((keyword.value for keyword in call.keywords if keyword.arg == "mode"), None)
 
 
+def dotted(node: ast.expr) -> str | None:
+    """`a.b.c` for an attribute chain rooted at a plain name, else None."""
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    return ".".join([node.id, *reversed(parts)])
+
+
+def is_image_processing(name: str) -> bool:
+    return any(name == banned or name.startswith(banned + ".") for banned in IMAGE_PROCESSING)
+
+
 def array_preprocessing(tree: ast.Module) -> set[str]:
-    found = {
-        name
-        for name in imported_names(tree)
-        for banned in IMAGE_PROCESSING
-        if name == banned or name.startswith(banned + ".")
-    }
+    found = {name for name in imported_names(tree) if is_image_processing(name)}
     for node in ast.walk(tree):
+        # `import torchvision` then `torchvision.transforms.Grayscale(...)`: the import names only
+        # the parent, so the banned module shows up in the attribute chain where it is used.
+        if isinstance(node, ast.Attribute) and (name := dotted(node)) and is_image_processing(name):
+            found.add(name)
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
             continue
         if node.func.attr in GEOMETRY:
@@ -770,6 +800,8 @@ def test_nothing_else_in_the_drawing_path_preprocesses_an_image():
         ("from torchvision import transforms", "torchvision.transforms"),
         ("from torchvision.transforms import Grayscale", "torchvision.transforms"),
         ("from scipy import ndimage", "scipy.ndimage"),
+        ("import torchvision\nt = torchvision.transforms.Grayscale(3)", "torchvision.transforms.Grayscale"),
+        ("import scipy\nz = scipy.ndimage.zoom(a, 2)", "scipy.ndimage.zoom"),
         ("image = image.convert('L')", ".convert('L')"),
         ("image = image.convert(mode='1')", ".convert('1')"),
         ("image = image.resize((224, 224))", ".resize()"),

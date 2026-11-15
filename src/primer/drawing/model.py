@@ -256,6 +256,15 @@ class SiglipEncoder:
             height, width = size.get("height"), size.get("width")
         else:
             height, width = getattr(size, "height", None), getattr(size, "width", None)
+        if height is None or width is None:
+            # A shortest-edge (CLIP, DINOv2) or patch-budget (SigLIP 2 NaFlex) processor has no
+            # fixed square, so there is no resolution to change `size` to -- the fix is different.
+            raise ValueError(
+                f"{self.config.encoder}'s processor declares no fixed height x width (size: "
+                f"{size!r}), but `prepare_drawing` hands it a {expected} x {expected} square; a "
+                "checkpoint that resizes by shortest edge or patch budget needs this coupling "
+                "rethought, not a new `size`"
+            )
         if (height, width) != (expected, expected):
             raise ValueError(
                 f"{self.config.encoder} expects {width} x {height} input, but drawings are "

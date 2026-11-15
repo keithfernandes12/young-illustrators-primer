@@ -322,10 +322,21 @@ def test_load_selects_the_dtype_that_goes_with_the_device(config, monkeypatch, d
     assert tower.evaluated, "dropout and the like off; the tower is only ever used for inference"
 
 
+def loading_with(monkeypatch, config, size) -> SiglipEncoder:
+    """A `SiglipEncoder` whose `load()` gets a stub tower and a processor declaring `size`."""
+    import transformers
+
+    processor = StubProcessor()
+    processor.image_processor = SimpleNamespace(size=size)
+    monkeypatch.setattr(transformers.AutoModel, "from_pretrained", lambda name, **kwargs: StubTower([0.0] * 4))
+    monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", lambda name, **kwargs: processor)
+    return SiglipEncoder(config, device="cpu")
+
+
 @pytest.mark.parametrize(
     "size",
-    [SimpleNamespace(height=256, width=256), {"height": 256, "width": 256}, None],
-    ids=["size-dict", "plain-dict", "no-size"],
+    [SimpleNamespace(height=256, width=256), {"height": 256, "width": 256}],
+    ids=["size-dict", "plain-dict"],
 )
 def test_load_refuses_a_processor_whose_resolution_is_not_the_prepared_one(config, monkeypatch, size):
     """`prepare_drawing` is the only resampling only while the two sizes agree; nothing else checks.
@@ -333,17 +344,34 @@ def test_load_refuses_a_processor_whose_resolution_is_not_the_prepared_one(confi
     `drawing_render.yaml` marks its `size` provisional, so the checkpoint and the render settings
     can part. When they do, the processor would resize every prepared drawing a second time.
     """
-    import transformers
-
-    processor = StubProcessor()
-    processor.image_processor = SimpleNamespace(size=size)
-    monkeypatch.setattr(transformers.AutoModel, "from_pretrained", lambda name, **kwargs: StubTower([0.0] * 4))
-    monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", lambda name, **kwargs: processor)
-    built = SiglipEncoder(config, device="cpu")
+    built = loading_with(monkeypatch, config, size)
 
     with pytest.raises(ValueError, match="prepared at 224 x 224"):
         built.load()
     assert built._model is None, "nothing is published from a refused load"
+
+
+@pytest.mark.parametrize(
+    "size",
+    [SimpleNamespace(height=224, width=224), {"height": 224, "width": 224}],
+    ids=["size-dict", "plain-dict"],
+)
+def test_load_accepts_a_processor_at_the_prepared_resolution(config, monkeypatch, size):
+    """Both shapes a processor's `size` comes in -- the real one is a `SizeDict`, read by attribute."""
+    built = loading_with(monkeypatch, config, size)
+
+    built.load()
+
+    assert built._model is not None
+
+
+@pytest.mark.parametrize("size", [None, {"shortest_edge": 224}, SimpleNamespace(max_num_patches=256)])
+def test_a_processor_with_no_fixed_square_is_refused_for_what_it_is(config, monkeypatch, size):
+    """Shortest-edge and patch-budget processors have no resolution to set `size` to."""
+    built = loading_with(monkeypatch, config, size)
+
+    with pytest.raises(ValueError, match="no fixed height x width"):
+        built.load()
 
 
 def test_the_pixels_are_cast_to_the_towers_dtype(half, png):

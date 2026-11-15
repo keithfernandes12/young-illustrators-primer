@@ -1118,7 +1118,12 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   the encoder's `prepare=` argument and the processor-size coupling untested (both now pinned by
   a mutation-checked test), hard-coded augmentation constants (now in the YAML), a white paper
   tint that clipped 54.8% of the texture away (tints now leave room for it, enforced at load),
-  and an augmentation config with inverted levels that drew blank pages (now refused).
+  and an augmentation config with inverted levels that drew blank pages (now refused). A second
+  round confirmed all of it by mutation and found three smaller gaps the fixes left — three moved
+  settings with no test that they are read, the size check never shown to accept a plain dict
+  nor to explain a processor without a fixed square, and `import torchvision` followed by
+  `torchvision.transforms.…` slipping past the guard — each now closed with a mutation-checked
+  test.
 
 ## Open questions
 
