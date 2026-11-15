@@ -253,12 +253,40 @@ def test_vignetted_paper_keeps_only_the_ink():
             for x in range(400)
         ]
     )
-    image.paste(30, (170, 130, 230, 136))
-    buffer = BytesIO()
-    image.save(buffer, format="PNG")
-    control = prepare_sketch(buffer.getvalue()).convert("L")
+    _outline(image, 30, (140, 110, 260, 210))  # a drawing-sized house body, about 1.6% of the photo
+    _outline(image, 30, (180, 150, 220, 210))  # and its door
+    control = prepare_sketch(_png(image)).convert("L")
     assert control.getpixel((0, 256)) == 0
-    assert 0 < control.histogram()[255] < control.width * control.height * 0.03
+    assert 0 < control.histogram()[255] < control.width * control.height * 0.06
+
+
+def _outline(image: Image.Image, ink: int, box: tuple[int, int, int, int], width: int = 4) -> None:
+    """A rectangle's outline, pasted as four strips: no rasteriser outside `primer.drawing.render`."""
+    x0, y0, x1, y1 = box
+    for strip in (
+        (x0, y0, x1, y0 + width),
+        (x0, y1 - width, x1, y1),
+        (x0, y0, x0 + width, y1),
+        (x1 - width, y0, x1, y1),
+    ):
+        image.paste(ink, strip)
+
+
+def test_a_dark_object_in_frame_does_not_erase_a_pencil_drawing():
+    # A pen on the page is the darkest thing in the photo. Judging "strongest ink" from too few pixels
+    # sets the threshold from the pen alone, and the grey pencil falls below it.
+    image = Image.new("L", (400, 300), 235)
+    _outline(image, 170, (140, 110, 260, 210))
+    image.paste(0, (20, 250, 120, 258))  # the pen, 0.7% of the photo
+    control = prepare_sketch(_png(image)).convert("L")
+    # The house body's top edge: y 110 of 300, padded by 50 and scaled by 512/400.
+    assert control.crop((200, 200, 300, 212)).getextrema()[1] == 255
+
+
+def test_alt_text_is_the_whole_page_text(model, child_style_sketch):
+    text = "  The little house floated across the sky until it found a soft cloud to rest on.  "
+    page = model.illustrate(0, text, "watercolor", sketch=child_style_sketch)
+    assert page.alt_text == text.strip()
 
 
 def test_dark_table_covering_much_of_the_photo_is_refused():

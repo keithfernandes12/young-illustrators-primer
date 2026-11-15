@@ -14,7 +14,7 @@ from primer.illustration.interface import Illustration
 
 
 def draw_house(size=(200, 120), ink=0, paper=255, mode="L") -> bytes:
-    """A house on a cloud, the way a child draws it: dark lines on light paper, wider than tall.
+    """A house with a pointed roof, the way a child draws it: dark lines on light paper, wider than tall.
 
     ``ink`` and ``paper`` are values for ``mode``: grey levels for "L", tuples for "RGB" or "RGBA".
     Greyscale drawings are saved as RGB, the way a phone or scanner delivers them; other modes are

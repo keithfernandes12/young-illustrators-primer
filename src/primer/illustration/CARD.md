@@ -51,8 +51,10 @@ None measured yet. The planned slices are subject category, and skin-tone and or
   brightness, so a vignetted phone photo keeps only its ink. Three control images are refused rather
   than generated from: one with no strokes, one more than 25% stroke, and one whose outer edge is
   mostly stroke (a strip of dark table, or a page coloured in past half). The cost: a drawing that is
-  heavily coloured in is refused too. Uneven lighting in a phone photo is not handled yet: a shadow can
-  read as a stroke. Cropping to the paper and correcting the light is KAN-119.
+  heavily coloured in is refused too. Still traced without an error, on synthetic probes: a hard hand
+  or phone shadow, a flash hotspot on dim paper (the image is not inverted and the control is a
+  disc), dark table along one side only, and the ruled lines of notebook paper. Cropping to the paper
+  and correcting the light is KAN-119; until then this is one more reason inputs stay synthetic.
 - **No character identity across pages.** IP-Adapter on `characters` is follow-up work; pages return
   `identity=None`, so `clip_consistency` cannot be scored against a character yet.
 - **Too slow for the latency target on a laptop.** About 4–5 minutes for a 6-page book, against the
