@@ -89,3 +89,22 @@ Per-slice results for the keys in `slices.py`, and what was done about any gap. 
   norm being exactly 1 (the ranking is a dot product of two vectors scaled the same way), but a
   consumer that assumes a unit vector should know it holds to three decimals, not to float
   precision.
+
+## Sensitivity
+
+Measured by `python -m primer.drawing.sensitivity` (S6f) on 2,000 `val` drawings of v1.1, on GPU in
+bf16. The run is MLflow `d99d75b514934b18836e4ad94ddbc32f`, and the full table is in the plan's
+Verified facts. Each figure is the change in top-5 accuracy against the same drawings unperturbed.
+
+- **Missing strokes hurt most.** Dropping the last stroke costs 11.7 points, and the last two cost
+  19.9. A child who stops early, or a scan that loses faint lines, will cost far more accuracy than
+  any change of pen.
+- **Line thickness does not move top-5.** From 1 to 7 px, every interval spans zero. Top-1 still
+  changes on a quarter to a third of drawings, so the label shown first is less stable than the
+  gated number suggests.
+- **The prompt is a real setting.** `a child's drawing of a {label}.` scores 4.3 points above the
+  shipped `This is a photo of {label}.`. Changing it is an open decision, not done here.
+- **The answer rests on a few regions.** In occlusion maps of 20 correctly ranked drawings, the
+  three most important 32 px patches carry about half the confidence drop.
+- **Not covered:** training hyperparameters (S6d), and children's drawings, for which see S6c2's
+  preprocessing stability.

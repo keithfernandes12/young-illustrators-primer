@@ -580,6 +580,27 @@ the licence constraint on each.
   sets; who owns that step is still open between KAN-38 and KAN-42.
 - **Depends on** — S6a. **Jira** — KAN-38.
 
+### S6f · Sensitivity analysis of the recogniser
+
+*size: small · added 2026-11-15 at the KAN-38 owner's request*
+
+`src/primer/drawing/sensitivity.py`: how far the recogniser's top-5 moves when the drawing changes.
+The perturbations are the ones `docs/engineering/model-development.md` lists for this stage —
+stroke count, line thickness and partial erasure. It also measures how far the answer moves when
+the prompt template changes, which is the one inference-time setting a zero-shot model has. Occlusion
+maps are the attribution step that the course guidelines meet with SHAP or LIME.
+
+- **Why separate** — it reads nothing that S6c (#37) or the MLflow server (#38) change. It builds
+  only on `main`: the renderer, `augment_canvas`, and S6c2's `scored` and `pair_stats`. A fake
+  scorer covers all of it in CI.
+- **Acceptance** — each perturbation is reported against the unperturbed drawing over the same
+  drawings, with a paired bootstrap interval on the top-5 change. One real run is recorded as a
+  dated Verified fact, logged to MLflow if a server is reachable.
+- **Not in this slice** — sensitivity to training hyperparameters, which belongs to S6d because
+  nothing here trains. Also not a change to `prompt_template`: a better-scoring template is a
+  KAN-38 decision, not something this slice ships.
+- **Depends on** — S6a, S6b, S6b1. **Jira** — KAN-38.
+
 ### S7a · Illustration model, pretrained baseline
 
 *size: small*
@@ -703,6 +724,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6c2 | merged | [#33](https://github.com/keithfernandes12/young-illustrators-primer/pull/33) | 1,000 frozen drawings (unstratified), four variants: top-1 moves 25% / 50% / 41% between adjacent variants; over half the drawings come out `squiggle`. Reproduces exactly. KAN-109 |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); still waits on S6b2 (#32) and S6c. Reads S6c2's stability figures |
 | S6e | merged | [#35](https://github.com/keithfernandes12/young-illustrators-primer/pull/35) | `sheet.py`: Florence-2 + SAM 2.1 + ViTPose beside SigLIP 2; every field filled on 82/82 real sheets; two figures found as two on 12/20. Unblocks KAN-42 |
+| S6f | in review | | sensitivity: stroke drop, line width, erasure, prompt template, occlusion; paired bootstrap intervals; runs on `val`. KAN-38 |
 | S7a | in progress | branch `feat/KAN-42-controlnet-baseline` | pretrained SD 1.5 + ControlNet-Scribble, one page, local output; synthetic inputs only until KAN-94 |
 | S7b | not started | | needs S1, GPU quota in region, a working `consistency()`, and KAN-94 |
 | S8 | not started | | |
@@ -814,6 +836,22 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   - Every device loads the pinned fp16 files, upcast to fp32 on CPU, because the fp32 files are not
     cached and an offline CPU run could not fetch them.
   - Read errors drop the path, which can be the child's file name.
+- **2026-11-15 — S6f perturbs evaluation drawings on purpose, and runs on `val`.**
+  - `data.py` refuses augmentation on `val` and `test` because an augmented evaluation measures the
+    augmentation. Measuring it is S6f's point, and every figure sits beside the unperturbed drawing.
+  - `val` is the default because the prompt sweep compares templates. Acting on a comparison taken
+    on `test` would tune on the test split.
+  - Erasure is `augment_canvas` with every other operation off, not a second eraser.
+- **2026-11-15 — S6f's perturbations are measured so that the outcome is not decided in advance.**
+  - Strokes are dropped by count (the last 1 or 2), not by fraction. A fraction collapses on
+    drawings with few strokes.
+  - Erasure records the ink mass it actually removed. Erasures that remove less than 5% are left
+    out, because `augment_canvas` places rectangles at random and many land on blank paper.
+  - Occlusion paints patches paper-white, which erases them and is in-distribution. Blank patches
+    are not scored, since their drop is 0 by construction. The report is how concentrated the drop
+    is, not "ink matters more than paper", which would be true by construction.
+  - Only drawings the baseline already ranks in its top five are occluded.
+  - Every change in accuracy is paired over the same drawings and carries a 95% bootstrap interval.
 
 ## Verified facts
 
@@ -1415,6 +1453,49 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   separates is "exactly 3:4 or narrower" from "everything else", which is a mode indicator rather
   than an orientation one. A fixed edge at 1.0 would give a genuine orientation split; a quantile
   edge cannot. Whether that is worth having is the open question on this slice.
+- **2026-11-15 — S6f: what moves S6a's zero-shot answer, measured.**
+  - **The run.** `python -m primer.drawing.sensitivity --version v1.1 --split val --sample 2000
+    --device cuda --mlflow` scored a seeded uniform draw (seed 20261115) of 2,000 **val** drawings
+    on the RTX 4060 in bf16, at code `8c47145`, in 285 s. It is MLflow run
+    `d99d75b514934b18836e4ad94ddbc32f` in `yip-drawing`. Baseline top-5 on the sample is 0.4755.
+    That is lower than S6c's 0.4956 on `test`, but this is a different split and 2,000 drawings,
+    so the two are not comparable figures.
+  - **Reading the figures below.** Each is the top-5 change against the same drawings unperturbed,
+    with its 95% paired bootstrap interval, then the top-1 change rate (S6c2's `pair_stats`).
+
+    | Perturbation | Drawings | Top-5 change [95% CI] | Top-1 changes |
+    |---|---|---|---|
+    | drop the last stroke | 1,728 | −0.117 [−0.134, −0.098] | 40% |
+    | drop the last two | 1,440 | −0.199 [−0.222, −0.176] | 53% |
+    | line width 1 px (shipped: 3) | 2,000 | −0.004 [−0.017, +0.009] | 32% |
+    | line width 5 px | 2,000 | +0.002 [−0.009, +0.013] | 24% |
+    | line width 7 px | 2,000 | +0.000 [−0.014, +0.013] | 31% |
+    | erasure, ≥5% of ink removed | 202 | −0.045 [−0.089, −0.005] | 18% |
+    | prompt `{label}` | 2,000 | −0.042 [−0.054, −0.029] | 29% |
+    | prompt `a sketch of a {label}.` | 2,000 | +0.033 [+0.019, +0.047] | 42% |
+    | prompt `a child's drawing of a {label}.` | 2,000 | +0.043 [+0.029, +0.059] | 50% |
+
+  - **Stroke count matters most.** Losing the last one or two strokes costs 12–20 points.
+  - **Line width does not move accuracy** at 1–7 px; every interval spans zero. It does reshuffle
+    the ranking: top-1 changes on 24–32% of drawings while top-5 accuracy stays put. So 3 px
+    neither helps nor hurts the gated number, and the choice matters to the top-1 label the
+    product shows.
+  - **The prompt template is worth +4.3 points on `val`.** `a child's drawing of a {label}.` beats
+    the shipped `This is a photo of {label}.`. This slice does not change `prompt_template`. That
+    is the KAN-38 owner's call, and it is now an Open question. The figure was taken on `val`, so
+    a decision taken on it leaves `test` clean.
+  - **The training erasure barely erases.** With erasure forced on at the shipped settings (up to 3
+    rectangles of up to 20% a side), the median drawing loses **0.5%** of its ink. Only 202 of
+    2,000 lose ≥5%, so the erasure row is measured on a tenth of the sample and its interval is
+    wide. In training, erasure fires on 30% of drawings, so most training canvases are not
+    meaningfully erased. This is an Open question for S6d.
+  - **Occlusion**, on the first 20 sample drawings the baseline ranked in its top five, with 32 px
+    patches. The median drawing loses 0.076 of the true label's confidence when its single most
+    important patch is erased. Its three most important patches carry half the total drop
+    (median `top3_share` 0.50), so the answer rests on a few regions but not on one. The
+    per-drawing maps are in the run's `sensitivity/` artifact.
+  - **What this does not cover.** Sensitivity to training hyperparameters, which is S6d's; and
+    children's drawings, where S6c2 measured the preprocessing.
 
 ## Open questions
 
@@ -1621,6 +1702,19 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   worker), and a content-hash name means two children's identical crops would share one object
   once the GCS store exists, which complicates deleting one child's data. *Recommended:* serving
   passes a store explicitly and the GCS one decides its naming against the deletion path (KAN-64).
+- **Should the recogniser's prompt template change?** S6f measured `a child's drawing of a {label}.`
+  at +4.3 top-5 points [+2.9, +5.9] over the shipped `This is a photo of {label}.` on 2,000 `val`
+  drawings. The product reads children's drawings, so the wording also fits. Changing it moves
+  every score, including S6c's and S6c2's, so they would need re-measuring. It also bears on S6d,
+  because fine-tuning learns against whatever text the prompts give it. *Recommended:* decide
+  before S6d starts. If it changes, re-run S6c on `test` once under the new template.
+  *Decides:* the KAN-38 owner.
+- **Is the training erasure too weak to matter?** At the shipped `erasure_*` settings, forced on,
+  it removes a median of 0.5% of a drawing's ink, and it fires on only 30% of training drawings.
+  S6f found that losing real strokes costs 12–20 points, so robustness to missing ink is worth
+  training for, and this augmentation barely provides it. *Recommended:* in S6d, try larger or more
+  rectangles, or dropping whole strokes before rendering, against the shipped setting. Measure each
+  on `val` with `sensitivity.py`. *Decides:* S6d, with the KAN-38 owner.
 
 ## Out of scope
 
