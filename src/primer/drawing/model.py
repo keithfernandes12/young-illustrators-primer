@@ -241,16 +241,22 @@ class SiglipEncoder:
         #: start, not a rare interleaving.
         self._lock = threading.Lock()
 
-    def _check_resolution(self, processor: Any) -> None:
+    @property
+    def dtype_name(self) -> str | None:
+        """The tower's dtype as text (``float32``, ``bfloat16``), or None before it is loaded."""
+        return None if self._dtype is None else str(self._dtype).removeprefix("torch.")
+
+    def _check_resolution(self, processor: Any, prepare: PrepareConfig | None = None) -> None:
         """Refuse a processor whose input size is not the square `prepare_drawing` produces.
 
         `prepare_drawing` is the only resampling between a decoded drawing and the tower only while
         `drawing_render.yaml`'s `size` -- marked provisional there -- equals the checkpoint's own
         resolution. If they part, the processor quietly resizes every prepared drawing a second
         time, squashing nothing but resampling everything, and a measured number stops being
-        comparable with the rendered split it was meant to match. Checked once, at load.
+        comparable with the rendered split it was meant to match. Checked once, at load, and again
+        for a per-call ``prepare``, whose ``render.size`` can differ from the encoder's own.
         """
-        expected = (self.prepare or default_prepare_config()).size
+        expected = (prepare or self.prepare or default_prepare_config()).size
         size = getattr(getattr(processor, "image_processor", None), "size", None)
         if isinstance(size, dict):
             height, width = size.get("height"), size.get("width")
@@ -264,6 +270,12 @@ class SiglipEncoder:
                 f"{size!r}), but `prepare_drawing` hands it a {expected} x {expected} square; a "
                 "checkpoint that resizes by shortest edge or patch budget needs this coupling "
                 "rethought, not a new `size`"
+            )
+        if (height, width) != (expected, expected) and prepare is not None:
+            raise ValueError(
+                f"this call's `prepare` renders at {expected} x {expected}, but {self.config.encoder} "
+                f"expects {width} x {height}; a variant must keep the checkpoint's resolution, or "
+                "the processor resamples every prepared drawing a second time"
             )
         if (height, width) != (expected, expected):
             raise ValueError(
@@ -355,6 +367,8 @@ class SiglipEncoder:
         from PIL import Image
 
         self.load()
+        if prepare is not None:
+            self._check_resolution(self._processor, prepare)
         text_features = self._encode_prompts(prompts)
         # RGB: the tower expects three channels, and a child's drawing arrives as anything from a
         # 1-bit PNG to an RGBA screenshot. Composited rather than converted -- see `flattened`,

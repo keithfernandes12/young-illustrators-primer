@@ -1247,6 +1247,22 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   make. What these numbers add to that decision: the gate's number is taken on drawings a
   classifier already recognised (S6b2), while on children's drawings the same model's answer
   moves 25–50% under preprocessing alone.
+- **2026-11-15 — S6c2: what the figures above were taken under, and what review changed.** The
+  figures are from the **CPU, fp32** run (S6a's baseline, as stated), before the summary recorded
+  its own execution. It now records the resolved `device` and `dtype`, the prompt template,
+  count and a hash of the prompt text, every scoring setting, and each variant's preprocessing
+  settings, and `stability --device cpu` pins the CPU baseline on a machine with a GPU, whose
+  bf16 moves confidences about 20% (Verified fact on the CUDA torch). Review also fixed three
+  things that do not move the table: top-5 overlap is divided by the labels there are when fewer
+  than five (this vocabulary has 345, so the table is unchanged), a per-call `prepare` whose
+  `render.size` differs from the checkpoint's resolution is now refused rather than resampled
+  twice, and the `top1_change_rate_confident` docstring said the opposite of what it measures:
+  flips that were only near-ties would pile up below the median margin and leave this rate near
+  zero, and a rate close to the overall one would say the flips are spread evenly. In all three
+  pairs it sits below the overall rate (10.0% against 25.5%, 35.8% against 49.9%, 24.6% against
+  41.3%) but far above zero: some flips are near-ties, and confident answers moved too. The
+  figures were **not** re-measured after these changes; none of them touches a number in the
+  tables.
 - **2026-11-15 — Local GPU work runs: `.venv`'s torch is now a CUDA build.** *Supersedes* the
   2026-11-15 fact "The GPU is present; the installed `torch` cannot see it" and the CPU-only notes
   in earlier facts, which stay as the record of what was true then. `torch` went from

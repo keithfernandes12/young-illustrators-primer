@@ -23,6 +23,7 @@ the same tail. The gated metric reads top-5 membership, so the overlap is in the
 from __future__ import annotations
 
 import argparse
+import hashlib
 import itertools
 import json
 import statistics
@@ -30,7 +31,7 @@ import sys
 import time
 from collections import Counter
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -86,12 +87,20 @@ def pair_stats(before: Sequence[Scored], after: Sequence[Scored]) -> dict[str, f
 
     ``top1_change_rate_confident`` restricts the change rate to drawings whose margin under
     ``before`` is at least its median: the half where the model had a preference to perturb.
-    If that rate is as high as the overall one, the flips are tie-breaking noise, not effect.
+    Flips that were only near-ties broken the other way would pile up among the *low*-margin
+    drawings, so this rate would then sit well below the overall one. A rate close to the overall
+    one says the flips are not concentrated there: confident answers moved too, so the movement
+    is not only tie-breaking.
     """
     if len(before) != len(after) or not before:
         raise ValueError("pair_stats needs the same, non-empty set of drawings under both variants")
     changed = [a.ranking[0] != b.ranking[0] for a, b in zip(before, after, strict=True)]
-    overlap = [len(set(a.ranking[:5]) & set(b.ranking[:5])) / 5 for a, b in zip(before, after, strict=True)]
+    # By the entries a ranking has, not by five: with fewer than five labels an unchanged ranking
+    # shares all of its top-k and must score 1.0, not 3/5.
+    top = min(5, len(before[0].ranking))
+    overlap = [
+        len(set(a.ranking[:top]) & set(b.ranking[:top])) / top for a, b in zip(before, after, strict=True)
+    ]
     median_margin = statistics.median(s.margin for s in before)
     confident = [flip for flip, s in zip(changed, before, strict=True) if s.margin >= median_margin]
     return {
@@ -156,16 +165,51 @@ def load_sample(path: Path = SAMPLE_PATH) -> list[str]:
     return ids
 
 
+def describe_run(config: Any, device: str, dtype: str, base: PrepareConfig | None = None) -> dict[str, Any]:
+    """What a stability number was taken under, so two runs can be told apart or reproduced.
+
+    A margin is a difference of two confidences, and confidences move about 20% between fp32 on a
+    CPU and bf16 on a GPU (see `model.CONFIDENCE_DECIMALS`), so the device and dtype are part of
+    the result. So are the prompts -- the template, how many, and a hash of the text itself -- and
+    every preprocessing setting each variant used. ``config_dir`` is left out: it is a path on one
+    person's machine and says nothing about the score.
+    """
+    prompts = config.prompts()
+    scoring = {key: value for key, value in asdict(config).items() if key != "config_dir"}
+    return {
+        "device": device,
+        "dtype": dtype,
+        "scoring": scoring,
+        "prompt_count": len(prompts),
+        "prompts_sha256": hashlib.sha256("\n".join(prompts).encode()).hexdigest(),
+        "preprocessing": {
+            name: {**asdict(prepare), "crops_to_box": crops}
+            for name, (prepare, crops) in variant_settings(base).items()
+        },
+    }
+
+
+def stability_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="evaluate stability")
+    parser.add_argument("--version", required=True)
+    parser.add_argument("--out", required=True)
+    parser.add_argument(
+        "--device",
+        choices=("cpu", "cuda"),
+        default=None,
+        help="default: cuda if available, else cpu. Pass cpu to reproduce the recorded CPU baseline "
+        "(fp32) on a machine with a GPU, whose bf16 moves the thin margins",
+    )
+    return parser
+
+
 def _stability(argv: list[str]) -> int:
     """The CLI: read the sample's drawings from a frozen version and write the summary."""
     from primer.data import catalog
     from primer.data.storage import Store
     from primer.drawing.model import DrawingConfig, SiglipEncoder
 
-    parser = argparse.ArgumentParser(prog="evaluate stability")
-    parser.add_argument("--version", required=True)
-    parser.add_argument("--out", required=True)
-    args = parser.parse_args(argv)
+    args = stability_parser().parse_args(argv)
 
     store = Store()
     frame = catalog.read_dataset("character_drawings", store, ["amateur_drawings"], version=args.version)
@@ -182,7 +226,8 @@ def _stability(argv: list[str]) -> int:
 
     config = DrawingConfig.from_yaml()
     start = time.perf_counter()
-    summary = measure_stability(drawings(), SiglipEncoder(config), config.prompts())
+    encoder = SiglipEncoder(config, device=args.device)
+    summary = measure_stability(drawings(), encoder, config.prompts())
     labels = config.labels()
     for stats in summary["variants"].values():
         # The name beside the index: "53% of drawings got label 207" says nothing to a reader.
@@ -197,6 +242,7 @@ def _stability(argv: list[str]) -> int:
             "encoder": config.encoder,
             "encoder_revision": config.encoder_revision,
             "seconds": round(time.perf_counter() - start, 1),
+            **describe_run(config, str(encoder.device), encoder.dtype_name or "unknown"),
         }
     )
     Path(args.out).write_text(json.dumps(summary, indent=2), encoding="utf-8")
