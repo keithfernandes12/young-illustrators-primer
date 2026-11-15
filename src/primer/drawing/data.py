@@ -36,11 +36,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import operator
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, fields
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, SupportsIndex
 
 import numpy as np
 import numpy.typing as npt
@@ -186,7 +187,24 @@ class RenderedSplit(Sequence[tuple[Image, int]]):
         state = np.random.SeedSequence([self.seed, self.epoch, index]).generate_state(1)
         return int(state[0])
 
-    def record(self, index: int) -> DrawingRecord:
+    def position(self, index: SupportsIndex) -> int:
+        """``index`` as a position in ``0 <= position < len(self)``, or ``IndexError``.
+
+        Negative indices count from the end, but only down to ``-len(self)``: normalising first and
+        bounds-checking after is what stops ``split[-4]`` of three items from turning into
+        ``split[-1]``. ``operator.index`` rather than an ``int`` check so numpy integers, which
+        samplers hand over, work, while a float or a string is a ``TypeError``.
+        """
+        position = operator.index(index)
+        size = len(self)
+        if position < 0:
+            position += size
+        if not 0 <= position < size:
+            raise IndexError(f"index {operator.index(index)} is out of range for {size} drawings")
+        return position
+
+    def record(self, index: SupportsIndex) -> DrawingRecord:
+        index = self.position(index)
         row = self._frame.iloc[index]
         return DrawingRecord(
             record_id=str(row["record_id"]),
@@ -200,8 +218,7 @@ class RenderedSplit(Sequence[tuple[Image, int]]):
     def __getitem__(self, index: Any) -> Any:
         if isinstance(index, slice):
             return [self[i] for i in range(*index.indices(len(self)))]
-        if index < 0:
-            index += len(self)
+        index = self.position(index)
         row = self._frame.iloc[index]
         try:
             canvas = render_strokes(json.loads(row["strokes"]), self._render)

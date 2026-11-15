@@ -166,6 +166,53 @@ def test_every_item_carries_its_licence_and_attribution():
     assert record.attribution.startswith("Google Creative Lab")
 
 
+def test_indices_past_either_end_raise_instead_of_wrapping_to_another_drawing():
+    """With three items, `split[-4]` used to come back as `split[-1]`: the wrong drawing, silently."""
+    small = RenderedSplit(frame(3), "test", LABELS, augment=False)
+    size = len(small)
+    assert size == 3
+
+    for bad in (-size - 1, -size - 2, size, size + 5):
+        with pytest.raises(IndexError):
+            small[bad]
+        with pytest.raises(IndexError):
+            small.record(bad)
+
+
+def test_negative_indices_count_from_the_end_down_to_minus_len():
+    small = RenderedSplit(frame(3), "test", LABELS, augment=False)
+
+    assert [small.record(i) for i in (-3, -2, -1)] == [small.record(i) for i in (0, 1, 2)]
+    assert np.array_equal(small[-1][0], small[2][0]) and small[-1][1] == small[2][1]
+    assert np.array_equal(small[-3][0], small[0][0])
+
+
+def test_a_negative_index_gets_the_augmentation_of_the_item_it_names():
+    """The seed comes from the normalised position, so `train[-1]` is `train[len - 1]` exactly."""
+    train = RenderedSplit(frame(5), "train", LABELS, augment=True, seed=3)
+
+    assert np.array_equal(train[-1][0], train[len(train) - 1][0])
+    assert np.array_equal(train[-5][0], train[0][0])
+
+
+def test_numpy_integers_index_and_other_types_do_not():
+    small = RenderedSplit(frame(3), "test", LABELS, augment=False)
+
+    assert np.array_equal(small[np.int64(1)][0], small[1][0])
+    assert small.record(np.int32(-1)) == small.record(2)
+    for bad in (1.0, "1", None):
+        with pytest.raises(TypeError):
+            small[bad]
+        with pytest.raises(TypeError):
+            small.record(bad)
+
+
+def test_slices_still_work_and_stay_in_bounds():
+    small = RenderedSplit(frame(3), "test", LABELS, augment=False)
+
+    assert len(small[:]) == 3 and len(small[-2:]) == 2 and small[5:] == []
+
+
 def test_a_drawing_the_renderer_refuses_raises_naming_its_record():
     broken = frame(30, strokes=[json.dumps([[[1, 2, 3], [1, 2]]])] * 30)
     test = build_splits(broken, labels=LABELS)["test"]
