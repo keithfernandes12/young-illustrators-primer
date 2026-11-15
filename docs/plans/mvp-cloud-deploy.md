@@ -6,7 +6,7 @@ updated: 2026-11-14
 status: active
 author: rishiparekh
 tags: [mvp, gcp, serving, models, deploy, loops]
-related: [ai-coding-framework, ci-hardening, autonomous-loops]
+related: [ai-coding-framework, ci-hardening, autonomous-loops, story-generation-llm]
 ---
 
 # MVP on Google Cloud — models v0, serving, deploy, gates and monitoring
@@ -106,22 +106,28 @@ image prompts; a book that fails is regenerated, never shown.
 
 *size: medium*
 
+> **Planned in detail in `docs/plans/story-generation-llm.md`** (KAN-39), slices S1–S6 there. Update
+> progress in that plan's status table; this entry stays as the MVP-level summary.
+
 `src/primer/story/`: an instruct model (Llama 3.x 1–3B, Qwen 2.5 or Phi) with a prompt per age mode,
 then check, and regenerate on failure, for target-word inclusion, readability (S3) and safety (S4).
 
 - **Acceptance** — golden `target_word_inclusion` and `story_quality_mean` reported; gate group `story`
   passes or the gap is recorded under Verified facts.
-- **Depends on** — S3, S4. **Jira** — to create.
+- **Depends on** — S3, S4. **Jira** — KAN-39.
 
 ### S5b · Story LoRA fine-tune
 
 *size: medium*
 
+> **Planned in detail in `docs/plans/story-generation-llm.md`** (KAN-39), slices S7–S9 there. The
+> candidate set there is Qwen3-4B, Phi-4-mini and Llama 3.2 3B, and the method is QLoRA.
+
 LoRA on the chosen 1–3B base with the instruction dataset (TinyStories plus the picture-book corpora),
 trained on Vertex AI with `train-vertex`; replaces the S5 base model only if the `story` gate group improves.
 
 - **Acceptance** — MLflow run with data version; golden `story` metrics compared with S5 in Verified facts.
-- **Depends on** — S1, S5. **Jira** — to create.
+- **Depends on** — S1, S5. **Jira** — KAN-39.
 
 ### S6a · Drawing recogniser, pretrained baseline
 
@@ -482,8 +488,8 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S2 | merged | [#11](https://github.com/keithfernandes12/young-illustrators-primer/pull/11) | golden set + runner + gate done on fakes; real-model evaluation still open. Unblocks S3–S6, S11 |
 | S3 | not started | | |
 | S4 | not started | | |
-| S5 | not started | | |
-| S5b | not started | | Vertex GPU job |
+| S5 | not started | | detailed in `story-generation-llm` (S1–S6). KAN-39 |
+| S5b | not started | | Vertex GPU job; detailed in `story-generation-llm` (S7–S9). KAN-39 |
 | S6a | merged | [#18](https://github.com/keithfernandes12/young-illustrators-primer/pull/18) | zero-shot SigLIP 2 baseline; no measured number until S6c |
 | S6b | merged | [#19](https://github.com/keithfernandes12/young-illustrators-primer/pull/19) | `render_strokes` + config + PNG; numpy only, so CI covers it. KAN-87 |
 | S6b1 | not started | | the shared preprocessing module, both directions. Unblocks S6b2 and S6c2. KAN-31 |
