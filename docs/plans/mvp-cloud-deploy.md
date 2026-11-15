@@ -1040,8 +1040,10 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   `data/character_drawings` gives **174,981 rows** — the source docstring's "over 178,000" is the
   annotation count, not what survives preprocessing. Building the four strata over all of them:
   **126 cells, not the 256 four bins would allow**, because `aspect` supports only **two** bins.
-  Its 25th, 50th and 75th percentiles are all **0.75** — three quarters of the corpus is 3:4
-  portrait — so `pd.qcut` drops the duplicate edges. That path was specified defensively and turns
+  Its 25th, 50th and 75th percentiles are all **0.75** — **61.8%** of the corpus is exactly
+  3:4 portrait — so `pd.qcut` drops the duplicate edges. (An earlier draft of this fact said
+  "three quarters"; the quartiles only need a bit over half the mass at one value, and the
+  measured share is 108,087 of 174,981.) That path was specified defensively and turns
   out to be the live case, not an edge case.
   **Pooling is rarer than this slice assumed:** 39 of the 126 cells fall under `min_size = 100`,
   and together they hold **1,291 rows, 0.7% of the corpus**. The slice previously said pooling
@@ -1056,6 +1058,22 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   through. This is the difference the slice exists to make legible: using the uniform draw for an
   evaluation set would over-represent the corpus's rare modes fivefold and report a number the
   product never sees.
+
+- **2026-11-15 — The stratum-occupancy distribution, which acceptance clause 5 asks for.**
+  Over the 87 pooled strata: smallest **106** rows, median **884**, largest **10,991**. Deciles of
+  stratum size are 106 / 183 / 354 / 884 / 2,509 / 5,545 / 10,991 at the 0th, 10th, 25th, 50th,
+  75th, 90th and 100th percentiles. Half the corpus sits in the largest **12** strata, 80% in the
+  largest 31, 90% in the largest 46. So the distribution has a long thin tail rather than a few
+  dominant modes, which is why the uniform and proportional samplers diverge as much as they do —
+  the uniform draw gives the 46 smallest strata the same weight as the 12 that hold half the rows.
+- **2026-11-15 — The `aspect` bin does not separate portrait from landscape, and the PR body was
+  wrong to say it does.** The realised edge is **0.75**, not 1.0, because the bins are quantiles.
+  So bin 1 is "wider than 3:4", which mixes orientations: of 174,981 rows, 154,290 are portrait,
+  18,347 landscape and 2,344 square — and **7,927 portrait rows (5.1% of all portrait drawings)
+  fall above the 0.75 edge** into the same bin as the landscape ones. What the bin actually
+  separates is "exactly 3:4 or narrower" from "everything else", which is a mode indicator rather
+  than an orientation one. A fixed edge at 1.0 would give a genuine orientation split; a quantile
+  edge cannot. Whether that is worth having is the open question on this slice.
 
 ## Open questions
 

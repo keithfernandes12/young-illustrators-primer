@@ -15,6 +15,8 @@ from primer.data.strata import (
     BIN_COUNT,
     EVERYTHING,
     DegenerateStratum,
+    _pool,
+    bin_column,
     build_strata,
     carries_provenance,
     occupancy,
@@ -73,9 +75,10 @@ def test_build_strata_returns_labels_and_the_edges_that_produced_them():
         assert len(cuts) - 1 <= BIN_COUNT
 
 
-def test_the_recorded_edges_are_what_make_a_later_draw_reproducible():
-    """Same corpus, same edges. The edges are a property of the corpus, so a different data
-    version would re-bin every row -- which is why they are returned rather than recomputed."""
+def test_building_strata_twice_on_one_frame_gives_the_same_edges():
+    """Determinism, which is all this can show. The edges are returned so a later draw
+    *could* re-use them, but no function accepts them yet, so reproducing a draw across
+    data versions is not achievable through this API today."""
     frame = spread()
     _, first = build_strata(frame, min_size=1)
     _, again = build_strata(frame, min_size=1)
@@ -198,13 +201,13 @@ def test_uniform_takes_a_small_stratum_whole_rather_than_shrinking_the_sample():
 
 
 def test_occupancy_counts_every_row_once_and_shares_sum_to_one():
-    frame = spread()
-    strata, _ = build_strata(frame, min_size=1)
+    frame, strata = skewed()
 
     table = occupancy(strata)
 
     assert table["rows"].sum() == len(frame)
     assert table["share"].sum() == pytest.approx(1.0)
+    assert table["rows"].tolist() == [900, 100], "largest first"
     assert table["rows"].is_monotonic_decreasing
 
 
@@ -241,3 +244,179 @@ def test_everything_pools_into_one_stratum_when_nothing_is_big_enough():
     frame = spread(40)
     pooled, _ = build_strata(frame, min_size=10_000)
     assert set(pooled) == {EVERYTHING}
+
+
+# --- pooling: the neighbour loop, which nothing reached before -------------------------------
+
+
+def test_a_small_stratum_pools_into_the_neighbour_it_shares_most_labels_with():
+    """The neighbour selection itself, which the `min_size` tests above never reach.
+
+    Those build strata where *nothing* reaches ``min_size``, so ``_pool`` returns at its
+    terminal fallback before the loop runs. Deleting the loop entirely left them all passing.
+    Here two strata are big enough to be pooling targets and three small ones have to choose.
+    """
+    keys = (
+        ["x=0 / y=0 / z=0"] * 200
+        + ["x=1 / y=1 / z=1"] * 150
+        + ["x=0 / y=0 / z=1"] * 5
+        + ["x=1 / y=1 / z=0"] * 3
+    )
+    strata = pd.Series(keys)
+
+    pooled = _pool(strata, min_size=150)
+
+    assert set(pooled) == {"x=0 / y=0 / z=0", "x=1 / y=1 / z=1"}
+    assert (pooled[strata == "x=0 / y=0 / z=1"] == "x=0 / y=0 / z=0").all()
+    assert (pooled[strata == "x=1 / y=1 / z=0"] == "x=1 / y=1 / z=1").all()
+    assert len(pooled) == len(strata)
+
+
+def test_pooling_ties_on_shared_labels_go_to_the_larger_stratum():
+    keys = ["x=0 / y=0"] * 200 + ["x=1 / y=1"] * 150 + ["x=0 / y=1"] * 4
+    strata = pd.Series(keys)
+
+    pooled = _pool(strata, min_size=150)
+
+    assert (pooled[strata == "x=0 / y=1"] == "x=0 / y=0").all()
+
+
+def test_a_stratum_exactly_at_min_size_is_a_valid_pooling_target():
+    """``>=`` rather than ``>``. With ``>`` the 150-row stratum stops being a target and its
+    own near neighbour is pooled into the wrong place."""
+    keys = ["x=0 / y=0 / z=0"] * 200 + ["x=1 / y=1 / z=1"] * 150 + ["x=1 / y=1 / z=0"] * 3
+    strata = pd.Series(keys)
+
+    pooled = _pool(strata, min_size=150)
+
+    assert (pooled[strata == "x=1 / y=1 / z=0"] == "x=1 / y=1 / z=1").all()
+
+
+def test_every_pooled_stratum_reaches_min_size():
+    keys = ["x=0 / y=0"] * 200 + ["x=1 / y=1"] * 150 + ["x=0 / y=1"] * 4
+    pooled = _pool(pd.Series(keys), min_size=150)
+    assert pooled.value_counts().min() >= 150
+
+
+# --- the remainder branches, which no fixture reached ----------------------------------------
+
+
+def test_proportional_returns_exactly_n_when_shares_do_not_divide():
+    """Three equal strata and n=100: each share rounds to 33, leaving one row to redistribute."""
+    frame = drawings([(3024, 4032)] * 300)
+    strata = pd.Series(["a"] * 100 + ["b"] * 100 + ["c"] * 100, index=frame.index)
+
+    assert len(sample_proportional(frame, strata, 100, seed=0)) == 100
+
+
+def test_proportional_returns_exactly_n_when_rounding_overshoots():
+    """Six strata and n=9: every share rounds up, so the correction has to subtract."""
+    frame = drawings([(3024, 4032)] * 600)
+    strata = pd.Series([c for c in "abcdef" for _ in range(100)], index=frame.index)
+
+    assert len(sample_proportional(frame, strata, 9, seed=0)) == 9
+
+
+def test_uniform_returns_exactly_n_across_many_strata():
+    """40 rows over 16 strata: 2 each leaves 8 to spread one at a time."""
+    frame = spread(400)
+    strata, _ = build_strata(frame, min_size=1)
+
+    assert len(sample_uniform(frame, strata, 40, seed=0)) == 40
+
+
+# --- the concentrated-column path, which is the live case on the real corpus ------------------
+
+
+def concentrated() -> pd.DataFrame:
+    """70% of rows share one aspect ratio, like the real corpus at 3:4.
+
+    The 3:4 rows are drawn at four different scales so that long_edge still varies --
+    otherwise it would be the constant column and the degenerate guard fires first.
+    """
+    portrait = [(300, 400), (600, 800), (900, 1200), (1200, 1600)]
+    sizes = [portrait[i % 4] for i in range(70)] + [(w, 500) for w in range(200, 230)]
+    return drawings(sizes)
+
+
+def test_a_concentrated_column_drops_duplicate_edges_rather_than_raising():
+    """Without ``duplicates="drop"`` this raises, and the real corpus hits it: `aspect`'s three
+    quartiles are all 0.75, so it supports two bins rather than four."""
+    strata, edges = build_strata(concentrated(), min_size=1)
+
+    assert len(edges["aspect"]) - 1 < BIN_COUNT
+    assert len(edges["aspect"]) - 1 >= 2
+    assert len(strata) == 70 + 30
+
+
+# --- missing values, which become their own stratum level -------------------------------------
+
+
+def test_a_missing_input_becomes_an_unknown_bin_rather_than_dropping_the_row():
+    frame = concentrated()
+    frame.loc[0, "original_height"] = 0
+
+    strata, _ = build_strata(frame, min_size=1)
+
+    assert len(strata) == len(frame), "a row with a missing input must not vanish"
+    assert "unknown" in strata.iloc[0]
+
+
+def test_bin_column_labels_a_missing_value_unknown_itself():
+    """Pins bin_column's own contract rather than the pipeline's.
+
+    stratify_key also maps NaN to "unknown", so a build_strata-level test passes even if
+    bin_column stops labelling them -- the two are redundant by design and the redundancy
+    hides the mutation.
+    """
+    values = pd.Series([1.0, 2.0, 3.0, 4.0, None, 6.0, 7.0, 8.0], name="framing")
+
+    labels, _ = bin_column(values, bins=2)
+
+    assert labels.iloc[4] == "unknown"
+    assert labels.notna().all(), "no row may come back unlabelled"
+
+
+# --- a non-unique index silently draws the wrong rows ------------------------------------------
+
+
+def test_a_non_unique_index_raises_rather_than_corrupting_the_draw():
+    """`.loc` with duplicate labels returns every match, so a draw would silently mix strata."""
+    frame = pd.concat([spread(40), spread(40)])
+
+    with pytest.raises(ValueError, match="non-unique index"):
+        stratum_inputs(frame)
+
+
+# --- what the four inputs actually compute -----------------------------------------------------
+
+
+def test_the_four_inputs_are_what_the_slice_says_they_are():
+    frame = drawings([(300, 400)], framing=[0.5], areas=[1234.0])
+    frame.loc[0, "width"] = 500
+    frame.loc[0, "height"] = 400
+    frame.loc[0, "bbox_width"] = 250.0
+    frame.loc[0, "bbox_height"] = 400.0
+
+    row = stratum_inputs(frame).iloc[0]
+
+    assert row["long_edge"] == 400
+    assert row["aspect"] == pytest.approx(0.75)
+    assert row["framing"] == pytest.approx(250.0 * 400.0 / (500 * 400))
+    assert row["area"] == 1234.0
+
+
+def test_the_missing_column_guard_names_every_missing_column_and_why():
+    frame = spread(40).drop(columns=["bbox_width", "area"])
+    with pytest.raises(KeyError, match="needed to build strata"):
+        stratum_inputs(frame)
+    with pytest.raises(KeyError, match="bbox_width, area"):
+        stratum_inputs(frame)
+
+
+# --- provenance ---------------------------------------------------------------------------------
+
+
+def test_provenance_check_fails_when_a_column_is_absent_entirely():
+    """Dropping the column is the likeliest way a derived set loses provenance."""
+    assert not carries_provenance(spread(40).drop(columns=["attribution"]))

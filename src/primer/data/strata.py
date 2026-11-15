@@ -28,7 +28,7 @@ from collections.abc import Iterable, Mapping
 
 import pandas as pd
 
-from primer.data.bias import stratify_key
+from primer.data.bias import SMALL_SLICE, stratify_key
 
 log = logging.getLogger(__name__)
 
@@ -36,10 +36,10 @@ log = logging.getLogger(__name__)
 #: enough resolution to separate a phone photograph from a thumbnail.
 BIN_COUNT = 4
 
-#: Strata smaller than this are pooled into a neighbour. 100 is the same floor
-#: ``primer.data.bias.SMALL_SLICE`` uses, and the reason is the same: below it a stratum cannot be
-#: split or sampled from without the draw being mostly luck.
-MIN_STRATUM = 100
+#: Strata smaller than this are pooled into a neighbour. Taken from ``bias.SMALL_SLICE``
+#: rather than restated, so the two cannot drift: below it a stratum cannot be split or
+#: sampled from without the draw being mostly luck.
+MIN_STRATUM = SMALL_SLICE
 
 #: The label a pooled-away stratum collapses to when nothing is big enough to pool into.
 EVERYTHING = "all"
@@ -80,6 +80,12 @@ def stratum_inputs(drawings: pd.DataFrame) -> pd.DataFrame:
     missing = [c for c in REQUIRED_COLUMNS if c not in drawings.columns]
     if missing:
         raise KeyError(f"drawings is missing {', '.join(missing)}; needed to build strata")
+    if not drawings.index.is_unique:
+        dupes = drawings.index[drawings.index.duplicated()].unique()[:3].tolist()
+        raise ValueError(
+            f"drawings has a non-unique index (e.g. {dupes}); label-based selection would"
+            " draw the wrong rows. Concatenate batches with ignore_index=True."
+        )
 
     long_edge = drawings[["original_width", "original_height"]].max(axis=1)
     aspect = drawings["original_width"] / drawings["original_height"].replace(0, pd.NA)
@@ -106,6 +112,11 @@ def bin_column(values: pd.Series, bins: int = BIN_COUNT) -> tuple[pd.Series, lis
     A concentrated column can have fewer distinct quantile edges than ``bins`` -- ``pd.qcut`` would
     raise on the duplicates -- so duplicate edges are dropped and the column simply gets fewer bins.
     A column with one distinct value raises instead: it cannot stratify anything.
+
+    Rows whose value is missing get the label ``"unknown"`` rather than being dropped, so they
+    stay in the frame and form their own stratum level. ``stratum_inputs`` manufactures NaN on
+    purpose -- a zero ``original_height`` or a zero-area frame would otherwise divide by zero --
+    so this is the path those rows take. The real corpus has none today.
     """
     clean = values.dropna()
     if clean.nunique() <= 1:
@@ -125,8 +136,10 @@ def _pool(keys: pd.Series, min_size: int) -> pd.Series:
     """Strata under ``min_size`` folded into the nearest stratum that is already big enough.
 
     "Nearest" is how many bin labels two keys share, which is the natural distance over a key built
-    by concatenation. Ties go to the larger target, then to the lexicographically earlier one, so
-    the result does not depend on dict ordering. If no stratum reaches ``min_size`` the whole frame
+    by concatenation. Ties go to the larger target, then by a stable ordering of the key
+    itself, so the result never depends on dict ordering. (That last tier compares
+    character by character, so a longer key beats a prefix of itself -- irrelevant here,
+    where every key has the same shape, but it is not plain lexicographic order.) If no stratum reaches ``min_size`` the whole frame
     becomes one stratum, the same terminal fallback ``split_strata`` uses.
     """
     sizes = keys.value_counts()
@@ -185,10 +198,11 @@ def _draw(
     wanted: Mapping[str, int],
     seed: int,
 ) -> pd.DataFrame:
-    """``wanted[stratum]`` rows from each stratum, seeded, in the frame's original order."""
+    """``wanted[stratum]`` rows from each stratum, seeded, returned in index order."""
+    groups = strata.groupby(strata).groups
     picked = []
     for key, n in wanted.items():
-        rows = drawings.loc[strata[strata == key].index]
+        rows = drawings.loc[groups[key]]
         picked.append(rows if n >= len(rows) else rows.sample(n=n, random_state=seed))
     if not picked:
         return drawings.iloc[:0]
@@ -211,9 +225,7 @@ def sample_uniform(
     A stratum smaller than its share is taken whole and the shortfall is spread over the rest, so
     the result is ``n`` rows whenever the corpus has that many.
     """
-    keys = list(occupancy(strata).index)
-    wanted = _even_split(n, {k: int((strata == k).sum()) for k in keys})
-    return _draw(drawings, strata, wanted, seed)
+    return _draw(drawings, strata, _even_split(n, strata.value_counts().to_dict()), seed)
 
 
 def sample_proportional(
@@ -228,7 +240,7 @@ def sample_proportional(
     what happens in production, and a draw that over-represents rare modes reports a number the
     product never sees. Use :func:`sample_uniform` for training instead.
     """
-    sizes = {k: int((strata == k).sum()) for k in occupancy(strata).index}
+    sizes = strata.value_counts().to_dict()
     total = sum(sizes.values())
     wanted = {k: round(n * size / total) for k, size in sizes.items()}
     short = n - sum(wanted.values())
