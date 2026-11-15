@@ -233,8 +233,8 @@ before either writes a loader.
 ### Stage 5's baseline, and what has to beat it
 
 The baseline is **SD 1.5 + ControlNet-Scribble at a fixed seed and fixed sampler settings**. Member 4
-pins the exact weights, seed and sampler in `illustration/CARD.md`, whose Base model row still reads
-`_not chosen_`; that stub is what step 1 of section 3 fills in. The scoping doc leaves "SDXL / 1.5"
+pins the exact weights, seed and sampler in `illustration/CARD.md` and
+`illustration/configs/illustration_baseline.yaml` (KAN-42, plan slice S7a in `mvp-cloud-deploy`). The scoping doc leaves "SDXL / 1.5"
 open; this picks 1.5 so that the baseline
 is one reproducible configuration rather than a family, which makes SDXL a candidate that has to beat
 it like any other.

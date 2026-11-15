@@ -6,7 +6,7 @@ updated: 2026-11-15
 status: active
 author: rishiparekh
 tags: [mvp, gcp, serving, models, deploy, loops]
-related: [ai-coding-framework, ci-hardening, autonomous-loops]
+related: [ai-coding-framework, ci-hardening, autonomous-loops, story-generation-llm]
 ---
 
 # MVP on Google Cloud — models v0, serving, deploy, gates and monitoring
@@ -106,22 +106,39 @@ image prompts; a book that fails is regenerated, never shown.
 
 *size: medium*
 
+> **Planned in detail in `docs/plans/story-generation-llm.md`** (KAN-39), slices S1–S6 there. Update
+> progress in that plan's status table; this entry stays as the MVP-level summary. Where the two
+> differ, that plan is current:
+> - **Candidates** are Qwen3-4B, Phi-4-mini and Llama 3.2 3B, so up to 4B rather than "1–3B".
+> - **Dependencies:** it uses the Flesch-Kincaid formula and the safety fake until S3 and S4 here
+>   land, so it does not wait on them.
+> - **Regeneration** is on target words and the age-mode format only. Serving's existing safety
+>   check refuses a flagged story, and level is steered by the prompt, not regenerated on.
+>
+> The text below is kept as originally written, except the Depends line, which now marks S3 and S4
+> as non-blocking (review F8 on PR #28).
+
 `src/primer/story/`: an instruct model (Llama 3.x 1–3B, Qwen 2.5 or Phi) with a prompt per age mode,
 then check, and regenerate on failure, for target-word inclusion, readability (S3) and safety (S4).
 
 - **Acceptance** — golden `target_word_inclusion` and `story_quality_mean` reported; gate group `story`
   passes or the gap is recorded under Verified facts.
-- **Depends on** — S3, S4. **Jira** — to create.
+- **Depends on** — S3, S4, as **non-blocking**. The detailed plan uses the Flesch-Kincaid formula
+  and the safety fake until they land. **Jira** — KAN-39.
 
 ### S5b · Story LoRA fine-tune
 
 *size: medium*
 
+> **Planned in detail in `docs/plans/story-generation-llm.md`** (KAN-39), slices S7–S9 there. Where
+> the two differ, that plan is current: the base is chosen from Qwen3-4B, Phi-4-mini and Llama 3.2 3B
+> (up to 4B, not "1–3B"), and the method is QLoRA. The text below is kept as originally written.
+
 LoRA on the chosen 1–3B base with the instruction dataset (TinyStories plus the picture-book corpora),
 trained on Vertex AI with `train-vertex`; replaces the S5 base model only if the `story` gate group improves.
 
 - **Acceptance** — MLflow run with data version; golden `story` metrics compared with S5 in Verified facts.
-- **Depends on** — S1, S5. **Jira** — to create.
+- **Depends on** — S1, S5. **Jira** — KAN-39.
 
 ### S6a · Drawing recogniser, pretrained baseline
 
@@ -559,15 +576,41 @@ the licence constraint on each.
   sets; who owns that step is still open between KAN-38 and KAN-42.
 - **Depends on** — S6a. **Jira** — KAN-38.
 
-### S7 · Illustration worker v0
+### S7a · Illustration model, pretrained baseline
+
+*size: small*
+
+`src/primer/illustration/model.py` and `sketch.py`: `IllustratorModel` behind the merged
+`Illustrator` contract. Each page loads the child's sketch (the in-memory bytes, or re-read from a
+`gs://` or `file://` `drawing_ref`), turns it into a white-on-black square control image, and runs
+SD 1.5 + ControlNet-Scribble v1.1 at the pinned revisions and settings in
+`configs/illustration_baseline.yaml`. The page is written to a local folder under a random name and
+returned as a `file://` `image_ref`. The diffusion stack is the `illustration` extra; CI does not
+install it, and the tests use a recording fake pipeline.
+
+- **Why separate** — the model can be built and proved locally now; S7b needs S1's bucket and GPU
+  quota, which are person-only and not in place.
+- **Acceptance** — the tests in `tests/illustration/` pass with no weights or network; `python -m
+  primer.illustration.smoke` produces one 512×512 page from a synthetic sketch with the cached weights.
+- **Not in this slice** — IP-Adapter on `characters` (pages return `identity=None`), the style LoRA,
+  reposing, the consistency score (`consistency()` raises), GCS output, the GPU container, the first
+  storybook reference image (open with KAN-38), and the generated-image safety check (KAN-94).
+- **Depends on** — nothing. **Jira** — KAN-42.
+
+### S7b · Illustration worker on Cloud Run
 
 *size: medium*
 
-`src/primer/illustration/`: Stable Diffusion + ControlNet-Scribble conditioned on the child's drawing,
-one image per page, written to GCS; container for Cloud Run with an L4 GPU.
+S7a's model behind a GPU worker: pages written to GCS, a container for Cloud Run with an L4 GPU.
+
+**Before `build_book` can use `IllustratorModel`, `consistency()` must work.** `build_book` calls it on
+every book, and in S7a it raises `NotImplementedError`, so wiring the model in now would fail every
+book even though `isinstance(model, Illustrator)` passes. Stage 6's `ConsistencyScorer` exists.
+KAN-105 tracks wiring it into `IllustratorModel.consistency()`.
 
 - **Acceptance** — `clip_consistency` reported; p95 time per page measured on staging.
-- **Depends on** — S1. **Jira** — to create.
+- **Depends on** — S1, S7a, a working `consistency()` (above), and KAN-94 before any real child's
+  drawing is illustrated. **Jira** — KAN-42.
 
 ### S8 · Narration v0
 
@@ -588,7 +631,7 @@ one image per page, written to GCS; container for Cloud Run with an L4 GPU.
 `ai-coding-framework`.
 
 - **Acceptance** — the dry-run endpoint returns a complete fake book in tests; `privacy-guard` passes.
-- **Depends on** — S5, S8 (fakes are fine for S6, S7). **Jira** — to create.
+- **Depends on** — S5, S8 (fakes are fine for S6, S7a, S7b). **Jira** — to create.
 
 ### S10 · Build and canary deploy
 
@@ -644,11 +687,11 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S2 | merged | [#11](https://github.com/keithfernandes12/young-illustrators-primer/pull/11) | golden set + runner + gate done on fakes; real-model evaluation still open. Unblocks S3–S6, S11 |
 | S3 | not started | | |
 | S4 | not started | | |
-| S5 | not started | | |
-| S5b | not started | | Vertex GPU job |
+| S5 | not started | | detailed in `story-generation-llm` (S1–S6). KAN-39 |
+| S5b | not started | | Vertex GPU job; detailed in `story-generation-llm` (S7–S9). KAN-39 |
 | S6a | merged | [#18](https://github.com/keithfernandes12/young-illustrators-primer/pull/18) | zero-shot SigLIP 2 baseline; no measured number until S6c |
 | S6b | merged | [#19](https://github.com/keithfernandes12/young-illustrators-primer/pull/19) | `render_strokes` + config + PNG; numpy only, so CI covers it. KAN-87 |
-| S6b1 | not started | | the shared preprocessing module, both directions. Unblocks S6b2 and S6c2. KAN-31 |
+| S6b1 | merged | [#31](https://github.com/keithfernandes12/young-illustrators-primer/pull/31) | `prepare_drawing` + `augment_canvas`, numpy only, wired into the encoder; binarising is local after two global thresholds failed on real drawings. Unblocks S6b2 and S6c2. KAN-31 |
 | S6b3 | in review | [#29](https://github.com/keithfernandes12/young-illustrators-primer/pull/29) | strata and two samplers, measured over the real 174,981 rows. KAN-117 |
 | S6b4 | not started | | **spike, person-only**: waits on S6b3, S6a and KAN-24, plus DINOv2 and a captioner that no slice supplies. Can only add a stratum. KAN-117 |
 | S6b2 | not started | | S6b merged; waits on S6b1 |
@@ -656,7 +699,8 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6c2 | not started | | preprocessing stability over Amateur Drawings; no labels needed. Needs S6a and S6b1; S6b3's sampler softly, random draw is a stated fallback. KAN-109 |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap. Reads S6c2's stability figures |
 | S6e | not started | | unblocks KAN-42's reposing and IP-Adapter branches |
-| S7 | not started | | needs GPU quota in region |
+| S7a | in progress | branch `feat/KAN-42-controlnet-baseline` | pretrained SD 1.5 + ControlNet-Scribble, one page, local output; synthetic inputs only until KAN-94 |
+| S7b | not started | | needs S1, GPU quota in region, a working `consistency()`, and KAN-94 |
 | S8 | not started | | |
 | S9 | not started | | |
 | S10 | not started | | |
@@ -749,9 +793,36 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 - **2026-11-07** — Pretrained baseline first, then the team-trained model, for each of the three models
   §5.4 requires; both measured by the golden gate. Eight days remain before the MVP and every model
   area is empty, so the baseline keeps the end-to-end path alive if a training run slips.
+- **2026-11-14** — S7 is split into S7a (the model, provable locally) and S7b (the Cloud Run worker),
+  because S7b waits on S1 and GPU quota while S7a needs neither.
+- **2026-11-14** — S7a uses SD 1.5, not SDXL: it runs in fp16 on a 16 GB laptop GPU, and the scoping
+  doc's §5.3 leaves "SDXL / 1.5" open. SDXL is a sensitivity question for later, not a baseline.
+- **2026-11-14** — The generated-image safety check lives in serving, after `illustrate()`, not in the
+  model (KAN-94). Diffusers' built-in checker is off because it returns a black image and reports
+  nothing, which would reach a `complete` book as a blank page. Until KAN-94 lands, S7a runs only on
+  synthetic sketches.
+- **2026-11-14** — The sketch is read from the in-memory bytes when serving passes them, and from
+  `drawing_ref` only otherwise; `http(s)://` and `fixture://` refs are refused rather than fetched.
+- **2026-11-14** — From an independent review of S7a:
+  - The stroke threshold is relative to the paper, not a fixed 128. At 128, a transparent canvas
+    export, grey pencil, yellow crayon and a dim phone photo all produced empty control images.
+  - A drawing with no strokes is refused rather than generated from nothing.
+  - Every device loads the pinned fp16 files, upcast to fp32 on CPU, because the fp32 files are not
+    cached and an offline CPU run could not fetch them.
+  - Read errors drop the path, which can be the child's file name.
 
 ## Verified facts
 
+- **2026-11-13** — Local baseline on an Apple M4 (16 GB, MPS, fp16), SD 1.5 rev `451f4fe` +
+  `control_v11p_sd15_scribble` rev `3564ec7`, UniPC, 25 steps, guidance 7.5, ControlNet scale 1.0,
+  seed 42, 512×512: 44.2 s to generate one page, 3.4 s to load from cache. Download is 2.86 GB of fp16
+  weights. Edge recall against the sketch was 0.993, against 0.619 for the same sketch rotated 180°.
+  Checked by running the standalone baseline script (Adit's local copy, not in the repo).
+- **2026-11-14** — `python -m primer.illustration.smoke` on the same synthetic sketch, through a
+  `file://` `drawing_ref`, on the same machine: 39.8 s to generate, 5.7 s to load on the
+  committed code (39.3–42.5 s and 5.1–5.9 s on earlier runs). The house, roof, door, round window, cloud ellipses and sun kept their places. At that speed a 6-page book takes
+  about 4–5 minutes locally, well over the 120 s `p95_full_book_s` target, so S7b needs the L4 or a
+  few-step sampler (LCM/Turbo).
 - **2026-11-14 — S6a: the zero-shot baseline loads and ranks sensibly.** *Hypothesis:* SigLIP 2's
   towers can score the 345 Quick, Draw! categories for one drawing and return a ranked character
   sheet, with no training and no dataset. *Result:* yes.
@@ -1036,6 +1107,95 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   including S6d being unrunnable and the measured VRAM figure AGENTS.md asks for being
   unobtainable. Both would be one install away if the remedy works, which nobody has tried.
 
+- **2026-11-14 — S6b1: Amateur Drawings is almost never square, and the recogniser's processor
+  squashes.** Over all 174,981 rows of `processed/character_drawings` (batch
+  `20261110T055432Z`, metadata only): 1.35% square, 88.17% portrait, 10.48% landscape, aspect
+  p5/p50/p95 0.463/0.750/1.333. The real `SiglipImageProcessorPil` at the pinned revision turns a
+  512 x 384 drawing into 224 x 224 — a squash, on nearly every drawing in the corpus.
+  `prepare_drawing` therefore resizes the long side to `size` and pads with the drawing's own
+  edge colour (per-channel median of the outermost pixels), not the renderer's white, which
+  would frame a grey photograph in bars no training image has.
+- **2026-11-14 — S6b1: binarising after padding turned whole photographs into ink.**
+  *Hypothesis:* Otsu over the padded, resized drawing separates marks from paper. *Result:* no.
+  On 60 drawings (seed `20261114`, an **unstratified** `numpy` draw without replacement —
+  S6b3's sampler is in #29, not on `main`) the median drawing came out **74.2% ink** and the worst
+  exactly **75.0%**, the share of a 384 x 512 drawing left after padding it square: the white
+  padding was the brightest class, so the whole page fell on the ink side. Fixed by thresholding
+  before padding. The order still matters under the local threshold that replaced Otsu (next
+  fact) — padding first draws a bar of ink along each seam — and
+  `test_binarising_a_non_square_photograph_thresholds_the_drawing_not_the_padding` pins it on
+  grey paper: 268 ink pixels padding first, against the drawing's 12. (Its first version used
+  light paper on an 8px canvas and, once the threshold went local, passed in either order; an
+  independent review caught that, and a pad-first mutation now fails it.)
+- **2026-11-14 — S6b1: a global threshold turns lighting into ink, so binarising is local.**
+  *Hypothesis:* Otsu on the drawing alone is enough. *Result:* no. Same 60 drawings: in the
+  median one **39.8%** of the photograph's own edge binarised to ink, and in 42 of 60 more than a
+  quarter — shadows, vignetting, the table round the sheet. Replaced with a local threshold (ink
+  when more than `binarise_offset` darker than the mean of a `binarise_window` square; Bradley and
+  Roth's published 1/8 and 15%, **untuned**): edge-as-ink median **4.1%**, more than a quarter on
+  5 of 60; ink overall p50/p95/max **5.4% / 13.6% / 36.1%** of the drawing, cropped to the
+  annotated box 6.3% / 14.0% / 39.7%. Its cost is pinned by a test: a solid dark area binarises to
+  its outline. S6c2's binarised row now measures this method, and should say so.
+- **2026-11-14 — S6b1: 1.89% of the annotated boxes reach past their image, all by at most a
+  pixel.** 3,311 of 174,981 once rounded outwards to whole pixels, maximum overshoot **1.00 px**,
+  none with zero area. A strict check would have refused all of them, so `prepare_drawing` clamps
+  within `BOX_TOLERANCE = 1.0` px and refuses beyond; corpus-wide that refuses none.
+- **2026-11-14 — S6b1: the processor adds nothing after `prepare_drawing`.** The pinned
+  processor gives identical `pixel_values` for a prepared array and for a PIL image of it
+  (max |diff| 0), and both equal plain `(x / 255 − 0.5) / 0.5`: at 224 its resize is a no-op.
+  So `prepare_drawing` is the only resampling between a decoded drawing and the tower, and
+  handing the processor an array instead of an image changed nothing it computes.
+- **2026-11-14 — S6b1: the inference direction leaves a rendered canvas alone, and the
+  augmentation is cheap enough per drawing but not per epoch.** On 150 real Quick, Draw!
+  drawings (the first 50 of `house`, `cat` and `bicycle` from the public bucket, read
+  anonymously) `prepare_drawing(render_strokes(s))` equals the render on **150/150**.
+  `augment_canvas` took **7.6–8.6 ms** mean, p95 10.4–12.3 ms over two runs, then
+  `prepare_drawing` about 1 ms; the same seed gave identical output 20/20. At S6b2's ~500k
+  records that is about **70 minutes an epoch single-threaded** against rendering's 3 — S6b2
+  needs loader workers, and this, not rendering, is the number to profile first.
+- **2026-11-14 — S6b1: preparing a full-resolution upload costs more than recognising it.** A
+  4032 x 3024 x 3 array took **0.32–0.42 s** in colour and 0.12–0.28 s in greyscale across runs,
+  against the tower's 0.11 s warm forward pass; a 512 px Amateur Drawing takes 31 ms mean
+  (p95 58 ms). Amateur Drawings was resized by Meta, so no corpus figure shows this — a parent's
+  phone will. Not optimised: an integer pre-shrink before the area resize is the obvious fix and
+  is KAN-71's to ask for.
+- **2026-11-14 — S6b1: the first lighting augmentation fired and did nothing.** It shifted
+  brightness and stretched contrast both ways, and on white paper a brighter, punchier draw
+  clipped the page back to 255: one seed in four on the test square changed no pixel. Lighting now
+  only darkens and flattens (shading, exposure loss, contrast loss), which is what a photograph of
+  a page does; a test checks eight seeds all reach the paper.
+- **2026-11-14 — S6b1: the new path end to end, on one real drawing.** The first `house` record,
+  rendered by `render_strokes_png` and run through `python -m primer.drawing.smoke` (decode,
+  `flattened`, `prepare_drawing`, the pinned tower on CPU): `house` at **0.3026**, then `tooth`,
+  `square`, `castle`, `barn`; 0.11 s warm. **Evidence about wiring, not quality** — one drawing,
+  and still no `drawing_top5_acc` until S6c.
+- **2026-11-14 — S6b1 departs from this plan in two places, both on purpose.** `ink` and
+  `background` carry over from `drawing_render.yaml` as well as `size` — "binarise to the
+  renderer's black-on-white convention" names them, and a copy would be the drift the module
+  exists to prevent. And `flattened` stays in `model.py`, as this plan says and against KAN-31's
+  description, which recommends moving it: it is Pillow, and moving it would break the ticket's
+  own no-image-library acceptance. The shipped `greyscale: false` and `binarise: false` keep what
+  S6a did and **decide neither question** — colour versus greyscale is the KAN-38 owner's, on
+  S6c2's numbers. None of these figures is in MLflow: they measure preprocessing rather than
+  compare models, and there is no host yet (KAN-107). S6b2 inherits the remaining half of the
+  single-path guard — asserting the training loader imports `augment_canvas` from here.
+- **2026-11-15 — S6b1: the first independent review found the single-path guard half-blind.**
+  *Hypothesis:* the guard catches a second preprocessing path in the drawing path. *Result:* not
+  as written. It read only `node.module`, so `from torchvision import transforms` and
+  `from scipy import ndimage` passed, as did `.convert(mode="L")` and every Pillow `resize`,
+  `crop` and `thumbnail`: a reviewer added a torchvision `Compose([Grayscale, Resize])` to
+  `drawing/data.py` and the guard stayed green. All four forms are now caught, each with a test,
+  and the same mutation fails it. The guard is still a guard rather than a proof — a second path
+  written in plain numpy under a new name passes it, as it passes KAN-87's. The same round found
+  the encoder's `prepare=` argument and the processor-size coupling untested (both now pinned by
+  a mutation-checked test), hard-coded augmentation constants (now in the YAML), a white paper
+  tint that clipped 54.8% of the texture away (tints now leave room for it, enforced at load),
+  and an augmentation config with inverted levels that drew blank pages (now refused). A second
+  round confirmed all of it by mutation and found three smaller gaps the fixes left — three moved
+  settings with no test that they are read, the size check never shown to accept a plain dict
+  nor to explain a processor without a fixed square, and `import torchvision` followed by
+  `torchvision.transforms.…` slipping past the guard — each now closed with a mutation-checked
+  test.
 - **2026-11-15 — S6b3's strata, measured over the real corpus.** `dvc pull` of
   `data/character_drawings` gives **174,981 rows** — the source docstring's "over 178,000" is the
   annotation count, not what survives preprocessing. Building the four strata over all of them:
@@ -1078,6 +1238,27 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   edge cannot. Whether that is worth having is the open question on this slice.
 
 ## Open questions
+
+- **What S6b1 hands to S6b2 and S6c2.** Recorded here so they are not found only in Verified
+  facts. *S6b2:* assert the training loader imports `augment_canvas` from `preprocess.py`, the
+  half of the single-path guard that needs a loader to exist; run augmentation in loader workers,
+  since at ~8 ms a canvas it costs about 70 minutes an epoch single-threaded; and decide whether
+  training should see non-square framing — 98.65% of Amateur Drawings reach the tower padded with
+  bars of their own paper colour, while rendered and augmented canvases are always square, so
+  training never sees a bar (raised on KAN-38). *S6c2:* its binarised row now measures a local
+  threshold, not a global one, and its cropped row cannot run through the encoder at all —
+  `Encoder.encode(bytes, prompts)` has no way to pass a box, so either the box travels through
+  that seam or S6c2 calls `prepare_drawing` itself before encoding (raised on KAN-109).
+- **Where does EXIF orientation get applied?** A phone JPEG with Orientation=6 reaches
+  `prepare_drawing` unrotated, as it reached the tower before this slice. The standard fix,
+  `PIL.ImageOps.exif_transpose` at the decode site, is decode rather than preprocessing, but the
+  single-path guard bans `PIL.ImageOps` wholesale and would fail CI on it. *Recommended:* apply it
+  in `encode` beside `flattened` and narrow the guard to allow exactly `exif_transpose`. Raised
+  on KAN-64, which owns uploads.
+- **Should a full-resolution upload be shrunk before the area resize?** A 4032 x 3024 photo costs
+  0.3–0.4 s to prepare and peaks around 337 MB of allocations (the float64 copy), and the
+  resampling-weight cache can hold 32 matrices of ~7 MB. An integer block-mean pre-shrink would
+  cut both. *Recommended:* yes, when KAN-71 budgets the upload path. Raised on KAN-71.
 
 - **Should CI run any line of `SiglipEncoder`?** **Tracked as KAN-106.** Today it runs none: CI installs `.[dev]`, `torch`
   is only in the `drawing` extra, and `tests/drawing/test_siglip_encoder.py` skips wholesale. Both

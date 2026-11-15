@@ -21,24 +21,34 @@ dependencies = [
     "great_expectations>=1.0,<2",  # profiling.py uses the 1.x API (data_sources, batch definitions)
     "fairlearn>=0.15",
     "scikit-learn>=1.5",
+    "pillow>=10.3",  # illustration: reading drawings and building the ControlNet control image
 ]
 
 [project.optional-dependencies]
 dashboard = ["streamlit>=1.40"]
 dvc = ["dvc[gs]>=3.50"]
 dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.10"]
+# The diffusion stack for illustration/model.py. Gigabytes with CUDA wheels, so CI does not install it:
+# the tests use a fake pipeline, and only the smoke run and the GPU worker need the real one.
+illustration = [
+    "torch>=2.4",
+    "diffusers>=0.30",
+    "transformers>=5.0,<6",
+    "accelerate>=0.33",
+    "safetensors>=0.4",
+]
 # The drawing recogniser's weights. Deliberately not in `dependencies`: CI never installs torch,
 # and `tests/drawing/` runs against a fake encoder instead. requirements.txt does not pin these --
 # tests/test_requirements.py covers the dependencies, dev and dvc sets, which CI installs.
 # `transformers>=5` because that is the API the encoder was written and run against: 5.x returns a
 # `BaseModelOutputWithPooling` from `get_text_features`, where the model card's 4.x example shows a
 # bare tensor. `model.pooled` handles both, but only the 5.x path has been exercised.
-drawing = ["torch>=2.4", "transformers>=5.0,<6", "pillow>=10.0"]
+drawing = ["torch>=2.4", "transformers>=5.0,<6"]
 # Stage 6 character consistency: pretrained CLIP / DINOv2, and MLflow for the threshold experiment.
 # Same torch and transformers floors as `drawing`: the 5.x `get_image_features` output is the path
 # that has been run (embedders.py also accepts 4.x's bare tensor). Not pinned in requirements.txt,
 # for the same reason as `drawing`.
-consistency = ["torch>=2.4", "transformers>=5.0,<6", "pillow>=10.0", "mlflow>=2.14"]
+consistency = ["torch>=2.4", "transformers>=5.0,<6", "mlflow>=2.14"]
 # Read-aloud ASR (src/primer/speech). Not needed for tests, which never load weights.
 speech = ["torch>=2.4", "transformers>=5.0,<6", "soundfile>=0.12", "mlflow>=2.14", "matplotlib>=3.8"]
 

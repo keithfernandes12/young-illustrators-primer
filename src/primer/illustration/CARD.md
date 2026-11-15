@@ -1,24 +1,61 @@
 # Model card: illustration
 
-Stub. Fill this in before the first registration; `register.py` has nothing to attach without it.
+Pretrained baseline (KAN-42, plan slice S7a in `docs/plans/mvp-cloud-deploy.md`). Nothing is trained
+yet, and nothing is registered.
 
 | Field | Value |
 |---|---|
 | Stage | illustration |
-| Purpose | illustrate pages consistently |
-| Base model | _not chosen_ |
-| Data version | _not pinned_ |
-| Owner | _unassigned_ |
+| Purpose | illustrate each page so it keeps the shape of the child's drawing |
+| Base model | `stable-diffusion-v1-5/stable-diffusion-v1-5` rev `451f4fe`, CreativeML OpenRAIL-M |
+| Conditioning | `lllyasviel/control_v11p_sd15_scribble` rev `3564ec7` (OpenRAIL), on the child's sketch |
+| Settings | `configs/illustration_baseline.yaml`: 25 steps, guidance 7.5, ControlNet scale 1.0, seed 42, 512×512. The UniPC sampler is fixed in `model.py`, not configurable |
+| Measured with | torch 2.15.0, diffusers 0.43.0, transformers 5.23.0, accelerate 1.15.0, safetensors 0.8.0, Python 3.13.5 — inside the `illustration` extra's ranges, including `transformers>=5.0,<6` |
+| Data version | not pinned: a pretrained model, used as published |
+| Owner | Adit Vakil (KAN-42) |
+
+## How a page is made
+
+The sketch is the in-memory upload when serving passes it, or it is re-read from `drawing_ref` (`gs://`
+or `file://`). `sketch.py` makes it white strokes on black, pads it to a square and resizes it. Children
+draw dark on light, and the scribble model was trained on light on dark. One diffusion call follows, and
+the PNG is written under a random name. `characters` is accepted but not yet used.
 
 ## Metrics
 
 Gated keys this stage owns are listed in `evaluate.py` as `OWNED_METRICS`, taken from
-`primer.evaluation.contract`. Record the value, the baseline it beat, and the run id.
+`primer.evaluation.contract`. `clip_consistency` has no threshold yet, and `evaluate.py` is still a
+stub, so no gated number exists. Measured locally, not gated:
+
+| Measure | Value | How |
+|---|---|---|
+| Seconds per page | 39.3–44.2 | Apple M4, MPS, fp16, 25 steps, four runs (2026-11-13 to 2026-11-15; the last is `smoke.py` with the style-first prompt, 40.0 s) |
+| Load from cache | 3.4–5.9 s | same |
+| Edge recall against the sketch | 0.993, against 0.619 for the sketch rotated 180° | baseline run, 2026-11-13 |
 
 ## Slices
 
-Per-slice results for the keys in `slices.py`, and what was done about any gap.
+None measured yet. The planned slices are subject category, and skin-tone and origin prompts.
 
 ## Mitigations and trade-offs
 
-What the model gets wrong, who it gets wrong for, and what was traded for what.
+- **No safety check on generated images here.** Diffusers' checker is off because it silently returns a
+  black page. The check belongs in serving, after `illustrate()` (KAN-94). Synthetic inputs only until
+  then.
+- **Shapes are kept, and details drift.** In the baseline, a single round window became three windows,
+  and cloud ellipses became coloured orbs. The scribble model follows outlines, not what they mean.
+- **Not usable from `build_book` yet.** `consistency()` raises until the stage 6 ConsistencyScorer is wired in, and
+  `build_book` calls it on every book. Use `illustrate()` directly until then.
+- **Faint and unusual drawings.** The stroke threshold is set relative to the paper, so pencil, yellow
+  crayon, transparent canvas exports and dim photos keep their strokes. The paper level is the median
+  brightness, so a vignetted phone photo keeps only its ink. Three control images are refused rather
+  than generated from: one with no strokes, one more than 25% stroke, and one whose outer edge is
+  mostly stroke (a strip of dark table, or a page coloured in past half). The cost: a drawing that is
+  heavily coloured in is refused too. Still traced without an error, on synthetic probes: a hard hand
+  or phone shadow, a flash hotspot on dim paper (the image is not inverted and the control is a
+  disc), dark table along one side only, and the ruled lines of notebook paper. Cropping to the paper
+  and correcting the light is KAN-119; until then this is one more reason inputs stay synthetic.
+- **No character identity across pages.** IP-Adapter on `characters` is follow-up work; pages return
+  `identity=None`, so `clip_consistency` cannot be scored against a character yet.
+- **Too slow for the latency target on a laptop.** About 4–5 minutes for a 6-page book, against the
+  120 s `p95_full_book_s` target. S7b needs the L4 or a few-step sampler.
