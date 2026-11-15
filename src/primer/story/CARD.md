@@ -11,8 +11,9 @@ young reading level, and free of the topics on the avoid-list. Plan:
 | Candidates | `Qwen/Qwen2.5-0.5B-Instruct` @ `7ae557604adf67be50417f59c2c2f167def9a775`; `Qwen/Qwen2.5-1.5B-Instruct` @ `989aa7980e4cf806f80c7fef2b1adb7bc71aa306` (both Apache-2.0, pinned in `configs/story_grid.yaml`) |
 | Training | none in this submission: zero-shot pretrained instruct models. The 4B candidates and QLoRA are later work |
 | Baseline (frozen configuration) | Qwen2.5-0.5B-Instruct, temperature 0.7, max_new_tokens 512, top_p 0.9, seed 1234, 3 attempts |
-| Selected configuration | _not yet measured_: the grid has not run on real models (needs bucket access for the requests) |
-| Data version | `v1.1` (validation requests from the **val** split; `test` and the golden set untouched) |
+| Selected configuration | _not yet measured_: the real grid reruns after the review fixes |
+| Data version | `v1.1`: 30 validation requests from the **val** split, built from all `storybook_pages` plus the smallest TinyStories file (2,000 stories, pinned by generation); `test` and the golden set untouched |
+| Decoding | ordinary sampling, then parse-and-retry. **Grammar-constrained decoding** (which KAN-39 asks for) is **deferred** in M1: the JSON validity rate measures how much it is needed first |
 | Level | `fk_formula@1` (`levels.fk_grade`: whole story, clamped at 0, rounded to 0.5) |
 | Hardware | the owner's MacBook Air (Apple M4, 16 GB), MPS, fp16 |
 | Owner | DiyaKaswa11 (member 2) |
@@ -61,7 +62,7 @@ disparity is claimed from them.
 
 | Guideline | Status | Where, or why not |
 |---|---|---|
-| Load data from the versioned pipeline | **Done (code); data pending** | `data.py` reads `v1.1` via `read_dataset(version=)`: one pair per book, cross-source exact dedupe, pure-hash split. The ~30 real requests wait on the owner's bucket read access |
+| Load data from the versioned pipeline | **Done** | `data.py` reads `v1.1` at exact GCS generations: one pair per book, cross-source exact dedupe, pure-hash split. 30 requests built 2026-11-15 (manifest beside them in `.local-data/story/`); every MLflow run carries `dvc/<dataset>` tags |
 | Train and select the best model | **Select: done. Train: deferred** | `grid.py` compares two pretrained models over a grid and applies a rule fixed in config before any run. No training: QLoRA on 4B candidates needs a CUDA GPU and is later work (plan Decisions 2026-11-15) |
 | Validation on a hold-out | **Done** | Requests come only from the book-level **val** split; `test` is never read; the golden set is not used to choose |
 | Bias detection by slicing | **Partial** | Per-slice metrics by source and age in `metrics.json` and MLflow. Gender-swapped prompt pairs (the slice `model-development` names) are deferred: they need paired requests |
@@ -71,6 +72,7 @@ disparity is claimed from them.
 | Experiment tracking | **Done** | One MLflow run per grid point, local git-ignored SQLite store (`.local-data/mlflow.db`, artifacts in `.local-data/mlartifacts`), with the section 2 tags plus `level_source`; re-logged to the shared server when it exists |
 | Result visualisations | **Done** | `charts.py`: comparison bars and the temperature sweep (needs the `story` extra) |
 | Sensitivity analysis | **Partial** | Hyperparameter spreads (`sensitivity.py`). Prompt-constraint ablation is deferred (plan S8a). SHAP/LIME do not apply to a generative stage |
+| Constrained decoding (KAN-39) | **Deferred** | M1 samples freely and retries on invalid JSON. Grammar-constrained decoding (`outlines` / `xgrammar`, plan S4) comes once the grid shows how often small models break the JSON |
 | `story_quality_mean` (gated) | **Deferred** | Needs an LLM-as-judge (plan open question 3). Listed in `metrics.json` under `not_measured`, never faked |
 | Push to Artifact / Model Registry | **Deferred** | Registration requires a golden-gate PASS and a run reproducible on Vertex (ADR `bounded-local-training-for-agents`); weights are pinned by Hugging Face revision meanwhile |
 | Docker | **Deferred** | `Dockerfile` is the area stub; a container cannot use the Mac's MPS, so this submission runs natively |

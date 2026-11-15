@@ -49,7 +49,8 @@ class WordEchoBackend:
 
     def generate(self, messages: list[dict[str, str]], settings: GenerationSettings) -> str:
         user = messages[-1]["content"]
-        words = user.split("Word list: ", 1)[1].rstrip(".").split(", ") if "Word list: " in user else []
+        # The word list ends at its full stop; a reading-level sentence may follow it.
+        words = user.split("Word list: ", 1)[1].split(".", 1)[0].split(", ") if "Word list: " in user else []
         key = (user, settings.temperature, settings.max_new_tokens)
         if self.invalid_first and key not in self._seen:
             self._seen.add(key)

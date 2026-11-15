@@ -1,7 +1,8 @@
 """The prompt for one story: rules for ages 3-5, the avoid-list topics, and the JSON format.
 
 The avoid-list goes in as **topics** ("do not include: violence, weapons, ..."), not as its word list;
-the words are used only to check the output (`guardrails.py`). The character's name goes into the
+the words are used only to check the output (`guardrails.py`). The target reading level goes in too,
+so the model is told what `fk_within1_rate` measures it against. The character's name goes into the
 prompt, never into a log.
 """
 
@@ -42,4 +43,13 @@ def build_messages(request: StoryRequest, mode: AgeMode, avoid_list: AvoidList) 
         parts.append(f" Their drawing shows: {request.description}.")
     if request.target_words:
         parts.append(" Word list: " + ", ".join(request.target_words) + ".")
+    if request.reading_level is not None:
+        parts.append(f" Reading level: {level_phrase(request.reading_level)} or easier.")
     return [{"role": "system", "content": system}, {"role": "user", "content": "".join(parts)}]
+
+
+def level_phrase(level: float) -> str:
+    """The target FK grade as words a model understands: below grade 1 is "kindergarten"."""
+    if level < 1.0:
+        return "kindergarten"
+    return f"US grade {level:g}"

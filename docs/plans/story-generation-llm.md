@@ -13,9 +13,11 @@ related: [mvp-cloud-deploy, model-stages-and-data-coverage, bounded-local-traini
 
 ## Where things stand
 
-`src/primer/story/` is the stage 2 area skeleton (`model-development` §2). `interface.py` is real:
-`StoryRequest`, `Story`, the `StoryWriter` protocol and `FakeStoryWriter`, which `serving/book.py` and
-`tests/models/test_area_interfaces.py` already use. Every other file raises `NotImplementedError`.
+`src/primer/story/` is the stage 2 area (`model-development` §2). `interface.py` holds `StoryRequest`,
+`Story`, the `StoryWriter` protocol and `FakeStoryWriter`, which `serving/book.py` and
+`tests/models/test_area_interfaces.py` already use. When this plan was written, every other file
+raised `NotImplementedError`. Slice M1 (2026-11-15) has since built the 3–5 pipeline on two small
+pretrained models; `train.py` and `register.py` are still stubs.
 KAN-39 asks for three things: compare Qwen3-4B, Phi-4-mini and Llama 3.2 3B on constraint following,
 QLoRA fine-tune the winner on the instruction dataset, and produce structured JSON with constrained
 decoding and vocabulary-aware prompts. KAN-92 is the deterministic template generator that "defines the
@@ -434,8 +436,9 @@ S2 runs these steps in this order. The order matters: dedupe before the split, g
 - **Every run** (bake-off, smoke, sweep, fine-tune) logs to experiment `yip-story` with these tags:
   - `stage=story`, `owner`, `data_version=v1.1`, `git_sha`, `base_model` with the pinned revision,
     `gate_group=story`, and `where` (`local` or `vertex`);
-  - plus `level_source`, and the DVC object hash for `stories_text`, `storybook_pages` and
-    `word_lists`, read from `data/*.dvc` at the `data-v1.1` tag.
+  - plus `level_source`, and `dvc/<dataset>` tags for `stories_text`, `storybook_pages` and
+    `word_lists`: a short SHA-1 of each `data/<dataset>.dvc` pointer file as committed at the
+    `data-v1.1` git tag (`grid.dvc_tags`), which pins the object versions the data came from.
   - Params are the whole config. Artifacts are `metrics.json`, the pair-build manifest, the bar plot
     and `CARD.md`. The manifest holds counts per split for each (source × 0.5-level) reporting bin;
     these bins are reported only and never used to assign splits.
@@ -801,7 +804,7 @@ TinyStories ratio (3:1, 10:1, 30:1, all drawn from the step-2 pool) and the LoRA
 | Slice | State | PR | Notes |
 |---|---|---|---|
 | S0 | in review | [#28](https://github.com/keithfernandes12/young-illustrators-primer/pull/28) | this plan; level decided by Keith (option B, with conditions); other four defaults revisable in review; Keith's review fixes; all in Decisions |
-| M1 | in progress | | small pretrained models on the Mac, ages 3–5; code and stub-model tests done, real grid waits on bucket access and the `story` extra |
+| M1 | in progress | | small pretrained models on the Mac, ages 3–5; code and stub-model tests done; 30 requests built from `v1.1`; real grid to rerun after review fixes |
 | S1 | not started | | KAN-92's scope, built by Diya on KAN-39; M1 delivers the types and the 3–5 preset |
 | S2 | not started | | pure-hash split, one pair per book, cross-source dedupe, shared `fk_grade` (review F1–F5); helper moves to `src/primer/data` with KAN-120 |
 | S2b | not started | | runs on the hash-sampled pool, not 1.8M rows |
@@ -956,6 +959,24 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
   for an unmaintained backend. So the local store is `sqlite:///.local-data/mlflow.db`, with
   artifacts in `.local-data/mlartifacts`. Both are git-ignored, both are still local, and both still
   get re-logged to the shared server. Found by a smoke run before the grid, not by a failed grid.
+- **2026-11-15** — **M1 changes after the self-review of `9f11f0a`.** The first real grid was stopped
+  after 2 of 12 configurations, because these change what is generated and how it is scored. Its 2
+  partial runs are not results.
+  - **Inclusion counts pages only.** A target word used only in the title is never read on a page.
+  - **A request that returned no story scores zero words,** whatever its drafts contained. A draft
+    refused as unsafe can no longer count as included.
+  - **Age cycles within each source.** One cycle over the round-robin had locked age to source, so
+    the `age` and `source` slices measured the same thing.
+  - **The prompt states the target reading level** ("kindergarten" below grade 1), which the plan's
+    S3 always intended.
+  - **New selection filter, `max_raw_safety_flag_rate: 0.2`** (provisional). The
+    returned-violation filter cannot exclude a run while the writer's own guardrail is the judge.
+  - **With no eligible configuration, `metrics.json` reports no `overall` keys and the grid exits 2.**
+    The baseline is still reported.
+  - **Logging.** `metrics.json` and the charts are logged as a `grid-summary` MLflow run. Every run
+    logs the whole config as params, plus `dvc/<dataset>` tags.
+  - **Grammar-constrained decoding is deferred in M1** (KAN-39 asks for it). M1 samples freely and
+    retries on invalid JSON, and the grid's valid-JSON rate measures how much constraint is needed.
 
 ## Verified facts
 
@@ -1058,6 +1079,14 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
    - Option A cannot work until the readability owner defines that mapping: invert the fit, train the
      scorer on FK directly, or change the interface.
    - *Decides:* member 3 (readability). This plan's option B does not depend on it.
+9. **A single-model `evaluate.py` CLI and the golden adapter** (self-review F14, 2026-11-15).
+   `python -m primer.story.evaluate --model --split --out` still raises `NotImplementedError`; in M1
+   the grid writes `metrics.json`. *Recommended:* build it with S5. **Needs a Jira issue: not opened,
+   waiting on Diya's go-ahead.**
+10. **The slice metric name in `model-development` §2** (self-review F15). §2 prescribes
+    `slice/<key>=<value>/<metric>`, but MLflow refuses `=`, so the grid logs `slice/<key>_<value>/<metric>`
+    (the illustration area hit the same limit). *Recommended:* fix the convention once for every area.
+    **Needs a Jira issue: not opened, waiting on Diya's go-ahead.**
 
 ## Out of scope
 

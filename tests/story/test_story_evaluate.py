@@ -51,12 +51,21 @@ def test_failures_count_against_inclusion_instead_of_vanishing():
     assert summary["mean_attempts"] == 2.0
 
 
-def test_a_failed_request_is_scored_on_its_last_parsed_story():
-    """Every attempt misses "cat" but uses "ball": the request contributes 1 of 2 words."""
+def test_a_failed_request_scores_zero_even_if_a_draft_had_some_words():
+    """Every attempt misses "cat" but uses "ball"; nothing was returned, so 0 of 2 words count."""
     backend = ScriptedBackend([story_json(["Pip has a ball.", "Pip naps.", "Pip eats.", "The end."])])
     summary = summarise(run_requests(LLMStoryWriter(backend=backend, max_attempts=2), [vreq(0)]))
     assert summary["success_rate"] == 0.0
-    assert summary["target_word_inclusion"] == 0.5
+    assert summary["target_word_inclusion"] == 0.0
+
+
+def test_a_draft_refused_as_unsafe_does_not_count_as_included():
+    """Review F4: the draft had every word but failed safety every time; it must score zero."""
+    unsafe = story_json([*GOOD_PAGES, "A gun went bang."])
+    writer = LLMStoryWriter(backend=ScriptedBackend([unsafe]), max_attempts=2)
+    summary = summarise(run_requests(writer, [vreq(0)]))
+    assert summary["success_rate"] == 0.0
+    assert summary["target_word_inclusion"] == 0.0
 
 
 def test_raw_flags_count_attempts_and_an_independent_judge_measures_returned_stories():

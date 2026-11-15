@@ -1,8 +1,8 @@
 """Checks on one story against its request: the numbers every metric is built from.
 
 `contains_target_word` is the same rule as `primer.evaluation.golden.contains_target_word`, copied
-rather than imported because this runs on the request path; `tests/story/test_checks.py` asserts the
-two agree on a shared table, so `target_word_inclusion` here means what the gate means.
+rather than imported because this runs on the request path; `tests/story/test_checks_and_prompts.py`
+asserts the two agree on a shared table, so `target_word_inclusion` here means what the gate means.
 """
 
 from __future__ import annotations
@@ -28,9 +28,12 @@ def contains_target_word(text: str, target: str) -> bool:
 
 
 def missing_target_words(story: Story, target_words: tuple[str, ...]) -> tuple[str, ...]:
-    """Target words the story (title or pages) does not use."""
-    text = " ".join((story.title, *story.pages))
-    return tuple(word for word in target_words if not contains_target_word(text, word))
+    """Target words the story's **pages** do not use.
+
+    Pages only, not the title: `Story.text` is what serving illustrates, narrates and safety-checks,
+    and what the area tests mean by inclusion. A word used only in the title is never read on a page.
+    """
+    return tuple(word for word in target_words if not contains_target_word(story.text, word))
 
 
 @dataclass(frozen=True)

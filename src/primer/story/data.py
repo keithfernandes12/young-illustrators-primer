@@ -68,7 +68,8 @@ def books_from_frames(pages: pd.DataFrame, stories: pd.DataFrame) -> pd.DataFram
     """One row per book: picture books from `pages`, TinyStories from `stories` (steps 1 and 3).
 
     Returns columns book_key, source, book_id, title, pages (tuple of str), text, text_hash, license,
-    attribution, split. A duplicate dropped across sources is counted in ``attrs["dropped_duplicates"]``.
+    attribution, split. Dropped exact duplicates are counted in ``attrs``: ``dropped_duplicates`` (all),
+    ``dropped_cross_source`` and ``dropped_within_source``.
     """
     rows: list[dict[str, Any]] = []
     if not pages.empty:
@@ -90,18 +91,24 @@ def books_from_frames(pages: pd.DataFrame, stories: pd.DataFrame) -> pd.DataFram
     books = pd.DataFrame(rows, columns=["source", "book_id", "title", "pages", "text", "license", "attribution"])
     if books.empty:
         books = books.assign(book_key=[], text_hash=[], split=[])
-        books.attrs["dropped_duplicates"] = 0
+        books.attrs.update(dropped_duplicates=0, dropped_cross_source=0, dropped_within_source=0)
         return books
     books["book_key"] = [book_key(s, b) for s, b in zip(books["source"], books["book_id"])]
     books["text_hash"] = books["text"].map(text_hash)
     rank = {source: i for i, source in enumerate(SOURCE_ORDER)}
     books["_rank"] = books["source"].map(lambda s: rank.get(s, len(rank)))
     books = books.sort_values(["_rank", "book_key"], kind="stable")
-    before = len(books)
-    books = books.drop_duplicates("text_hash", keep="first").drop(columns="_rank")
+    # Count the two kinds of duplicate apart (review F10): one whose kept copy is in another source,
+    # and one repeated within its own source (two TinyStories with the same text).
+    duplicate = books.duplicated("text_hash", keep="first")
+    kept_source = books.drop_duplicates("text_hash", keep="first").set_index("text_hash")["source"]
+    cross = duplicate & (books["text_hash"].map(kept_source) != books["source"])
+    books = books[~duplicate].drop(columns="_rank")
     books["split"] = books["book_key"].map(split_of_book)
     books = books.reset_index(drop=True)
-    books.attrs["dropped_duplicates"] = before - len(books)
+    books.attrs["dropped_duplicates"] = int(duplicate.sum())
+    books.attrs["dropped_cross_source"] = int(cross.sum())
+    books.attrs["dropped_within_source"] = int(duplicate.sum() - cross.sum())
     return books
 
 
@@ -196,7 +203,8 @@ def build_validation_requests(
     - Target words prefer `vocabulary` (sight words) and always come from the book's own text.
     - Books are taken round-robin across sources in hash order, so one source cannot fill the set; a
       book that yields fewer than two target words is skipped and the next one is taken.
-    - Ages cycle 3, 4, 5 over the requests actually made.
+    - Ages cycle 3, 4, 5 within each source (starting at a different age per source), so age and
+      source are not confounded.
     """
     val = books[books["split"] == "val"].copy()
     val["level"] = val["text"].map(fk_grade)
@@ -210,6 +218,11 @@ def build_validation_requests(
             if queues[source]:
                 ordered.append(queues[source].pop(0))
     requests: list[ValidationRequest] = []
+    # Age cycles *within each source*, from a different start per source (review F1). A single cycle
+    # over the round-robin would lock age to source -- african_storybook always 3, storyweaver 4,
+    # tinystories 5 -- and the `age` and `source` slices would measure the same thing.
+    offset = {source: i for i, source in enumerate(sorted(queues))}
+    per_source: Counter[str] = Counter()
     for book in ordered:
         if len(requests) >= n:
             break
@@ -217,7 +230,8 @@ def build_validation_requests(
         target = target_words_of(book.text, book.book_key, 2 + index % 2, vocabulary)
         if len(target) < 2:
             continue
-        age = 3 + index % 3
+        age = 3 + (per_source[book.source] + offset[book.source]) % 3
+        per_source[book.source] += 1
         requests.append(ValidationRequest(
             request_id=hashlib.sha1(book.book_key.encode()).hexdigest()[:12],
             book_key=book.book_key, source=book.source, age=age, target_words=target,
@@ -302,7 +316,8 @@ def main(argv: list[str] | None = None) -> int:
         "tinystories_rows_read": len(tiny),
         "books": len(books),
         "books_by_source": {str(k): int(v) for k, v in books["source"].value_counts().sort_index().items()},
-        "dropped_cross_source_duplicates": int(books.attrs["dropped_duplicates"]),
+        "dropped_cross_source_duplicates": int(books.attrs["dropped_cross_source"]),
+        "dropped_within_source_duplicates": int(books.attrs["dropped_within_source"]),
         "val_books_by_source": {str(k): int(v) for k, v in val["source"].value_counts().sort_index().items()},
         "requests": len(requests),
         "requests_by_source": dict(sorted(Counter(r.source for r in requests).items())),

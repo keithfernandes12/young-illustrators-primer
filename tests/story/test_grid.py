@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import re
 import subprocess
@@ -12,7 +13,16 @@ import pytest
 from story_fakes import WordEchoBackend
 
 from primer.story.data import ValidationRequest
-from primer.story.grid import GridConfig, load_config, run_grid, select, write_outputs
+from primer.story.grid import (
+    GridConfig,
+    config_params,
+    dvc_tags,
+    finish,
+    load_config,
+    run_grid,
+    select,
+    write_outputs,
+)
 from primer.story.sensitivity import explain
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -26,6 +36,10 @@ class RecordingLogger:
 
     def log_run(self, name, tags, params, metrics, artifact):
         self.runs.append({"name": name, "tags": tags, "params": params, "metrics": metrics, "artifact": artifact})
+        return f"run-{len(self.runs)}"
+
+    def log_files(self, name, tags, paths):
+        self.runs.append({"name": name, "tags": tags, "files": list(paths)})
         return f"run-{len(self.runs)}"
 
 
@@ -62,7 +76,7 @@ def test_the_shipped_config_is_well_formed():
 
 def test_every_grid_point_is_one_tagged_run():
     logger = RecordingLogger()
-    report = run_grid(small_config(), REQUESTS, backend_for, logger, owner="tester", sha="abc1234")
+    report = run_grid(small_config(), REQUESTS, backend_for, logger, owner="tester", sha="abc1234", clock=itertools.count().__next__)
     assert len(logger.runs) == 4  # 2 models x 2 temperatures x 1 token budget
     for run in logger.runs:
         assert REQUIRED_TAGS <= set(run["tags"]), REQUIRED_TAGS - set(run["tags"])
@@ -76,7 +90,7 @@ def test_every_grid_point_is_one_tagged_run():
 
 def test_the_rule_prefers_fewer_retries_when_inclusion_ties():
     """Both stubs reach 100% inclusion; the 1.5B never needs a retry, so the first tie-breaker picks it."""
-    report = run_grid(small_config(), REQUESTS, backend_for, RecordingLogger(), owner="t", sha="s")
+    report = run_grid(small_config(), REQUESTS, backend_for, RecordingLogger(), owner="t", sha="s", clock=itertools.count().__next__)
     assert report["selected"].startswith("qwen2.5-1.5b")
     assert report["baseline"] == "qwen2.5-0.5b-instruct-t0.7-n64"
     metrics = report["metrics"]
@@ -117,7 +131,7 @@ def test_the_smaller_model_wins_a_complete_tie():
 def test_a_baseline_outside_the_grid_is_an_error():
     config = small_config(baseline={"model": "qwen2.5-0.5b-instruct", "temperature": 0.1, "max_new_tokens": 64})
     with pytest.raises(ValueError, match="baseline"):
-        run_grid(config, REQUESTS, backend_for, RecordingLogger(), owner="t", sha="s")
+        run_grid(config, REQUESTS, backend_for, RecordingLogger(), owner="t", sha="s", clock=itertools.count().__next__)
 
 
 def test_sensitivity_spreads():
@@ -129,7 +143,7 @@ def test_sensitivity_spreads():
 
 
 def test_outputs_are_written(tmp_path):
-    report = run_grid(small_config(), REQUESTS, backend_for, RecordingLogger(), owner="t", sha="s")
+    report = run_grid(small_config(), REQUESTS, backend_for, RecordingLogger(), owner="t", sha="s", clock=itertools.count().__next__)
     written = write_outputs(report, tmp_path)
     metrics = json.loads((tmp_path / "metrics.json").read_text())
     assert metrics["stage"] == "story" and "target_word_inclusion" in metrics["overall"]
@@ -142,7 +156,7 @@ def test_charts_are_drawn_when_matplotlib_is_installed(tmp_path):
     pytest.importorskip("matplotlib", reason="matplotlib comes from the `story` extra; CI omits it")
     from primer.story.charts import write_charts
 
-    report = run_grid(small_config(), REQUESTS, backend_for, RecordingLogger(), owner="t", sha="s")
+    report = run_grid(small_config(), REQUESTS, backend_for, RecordingLogger(), owner="t", sha="s", clock=itertools.count().__next__)
     paths = write_charts(report["runs"], tmp_path)
     assert [p.name for p in paths] == ["comparison.png", "temperature_sweep.png"]
     assert all(p.stat().st_size > 0 for p in paths)
@@ -154,3 +168,78 @@ def test_importing_the_story_area_loads_no_ml_framework():
             "print(sorted(m for m in ('torch', 'transformers', 'mlflow', 'matplotlib') if m in sys.modules))")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=120)
     assert out.stdout.strip() == "[]"
+
+
+def test_the_request_path_does_not_import_primer_data():
+    """Review F13: nothing on the request path may import primer.data (model-development section 2).
+
+    Only the modules serving would load -- not grid or data, which are offline and do import it.
+    """
+    code = ("import sys, primer.story.model, primer.story.writer, primer.story.interface, primer.story.checks; "
+            "print(sorted(m for m in sys.modules if m == 'primer.data' or m.startswith('primer.data.')))")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=120)
+    assert out.stdout.strip() == "[]"
+
+
+def test_a_safety_hungry_configuration_is_not_eligible():
+    """Review Q2: the raw flag rate is the safety filter that can actually exclude a run today."""
+    rule = load_config(CONFIG).raw["selection"]
+    chosen = select([run("tries-unsafe", "small", target_word_inclusion=1.0, raw_safety_flag_rate=0.5),
+                     run("clean", "big", target_word_inclusion=0.8, raw_safety_flag_rate=0.0)], rule, SIZES)
+    assert chosen["name"] == "clean"
+
+
+def test_no_eligible_run_leaves_overall_empty_and_exits_non_zero(tmp_path):
+    """Review F6: the baseline's numbers must never be reported as if a model had been selected."""
+    config = small_config()
+    config.raw["selection"] = config.raw["selection"] | {"min_success_rate": 1.01}  # nothing can pass
+    logger = RecordingLogger()
+    report = run_grid(config, REQUESTS, backend_for, logger, owner="t", sha="s", clock=itertools.count().__next__)
+    assert report["selected"] is None
+    assert report["metrics"]["overall"] == {}
+    assert "target_word_inclusion" in report["metrics"]["not_measured"]
+    assert report["metrics"]["baseline"]["target_word_inclusion"] == 1.0, "the baseline is still reported"
+    assert finish(report, logger, tmp_path, "t", "s", {}) == 2
+
+
+def test_metrics_and_charts_are_logged_as_one_summary_run(tmp_path):
+    """Review F3: metrics.json (and the charts, when drawn) are MLflow artifacts, not only local files."""
+    logger = RecordingLogger()
+    report = run_grid(small_config(), REQUESTS, backend_for, logger, owner="t", sha="s",
+                      clock=itertools.count().__next__)
+    assert finish(report, logger, tmp_path, "t", "s", {"dvc/stories_text": "abc"}) == 0
+    summary = logger.runs[-1]
+    assert summary["name"] == "grid-summary" and summary["tags"]["kind"] == "grid-summary"
+    assert summary["tags"]["dvc/stories_text"] == "abc"
+    assert tmp_path / "metrics.json" in summary["files"]
+
+
+def test_every_run_logs_the_whole_config_and_the_extra_tags():
+    """Review Q3 and the plan's DVC tags: params carry the whole config; extra tags reach every run."""
+    logger = RecordingLogger()
+    run_grid(small_config(), REQUESTS, backend_for, logger, owner="t", sha="s",
+             extra_tags={"dvc/word_lists": "x"}, clock=itertools.count().__next__)
+    for logged in logger.runs:
+        assert json.loads(logged["params"]["config/selection"])["primary"] == "target_word_inclusion"
+        assert "config/models" in logged["params"] and logged["tags"]["dvc/word_lists"] == "x"
+
+
+def test_the_backend_is_created_once_per_model():
+    """Review F11: setdefault called the factory at every grid point."""
+    made: list[str] = []
+
+    def counting(spec):
+        made.append(spec.name)
+        return backend_for(spec)
+
+    run_grid(small_config(), REQUESTS, counting, RecordingLogger(), owner="t", sha="s",
+             clock=itertools.count().__next__)
+    assert sorted(made) == ["qwen2.5-0.5b-instruct", "qwen2.5-1.5b-instruct"]
+
+
+def test_config_params_and_dvc_tags_shapes():
+    params = config_params({"name": "x", "grid": {"temperature": [0.3]}})
+    assert params == {"name": "x", "grid": '{"temperature": [0.3]}'}
+    tags = dvc_tags("v1.1")
+    assert set(tags) == {"dvc/stories_text", "dvc/storybook_pages", "dvc/word_lists"}
+    assert all(re.fullmatch(r"[0-9a-f]{12}|unavailable", v) for v in tags.values())

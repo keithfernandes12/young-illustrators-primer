@@ -3,9 +3,10 @@
 Metric definitions (every rate is in [0, 1]; "requests" means all of them, failures included):
 
 - `first_attempt_valid_json_rate` -- requests whose **first** reply parsed as the story JSON.
-- `target_word_inclusion` -- **the gated key.** Target words used, over target words requested, across
-  all requests. A request that failed every attempt is scored on its last parsed story, or as zero
-  if nothing ever parsed, so failures pull the number down rather than vanishing from it.
+- `target_word_inclusion` -- **the gated key.** Target words used on the returned story's pages, over
+  target words requested, across all requests. A request that returned no story scores **zero**
+  words, whatever its drafts contained: nothing reached the child. So failures pull the number down
+  rather than vanishing from it, and a draft refused as unsafe cannot count as included.
 - `success_rate` -- requests that returned a story (all three retry checks passed).
 - `page_limit_rate`, `sentence_limit_rate` -- among returned stories, those within the age mode's page
   count and sentence/word limits. Measured, never retried on. `format_compliance_rate` is their mean.
@@ -81,8 +82,9 @@ def run_requests(
         start = clock()
         report: WriteReport = writer.write_with_report(request)
         latency = clock() - start
-        scored = report.story or report.last_parsed
-        missing = missing_target_words(scored, request.target_words) if scored else request.target_words
+        # No returned story means no words reached the child (review F4): never score a draft.
+        story = report.story
+        missing = missing_target_words(story, request.target_words) if story else request.target_words
         check = check_story(report.story, request.target_words, mode) if report.story else None
         within = None
         if check is not None and request.reading_level is not None:
@@ -153,14 +155,15 @@ def metrics_file(
 ) -> dict[str, Any]:
     """The contract shape (model-development section 2). `overall` and `baseline` carry only this
     stage's gated keys; everything else goes in `details`, which the gate ignores."""
-    owned = [k for k in OWNED_METRICS if k in overall]
+    # Each side is filtered on its own: an empty `overall` (nothing selected) must not empty the
+    # baseline, which model-development section 2 says is never omitted.
     return {
         "stage": "story",
         "model_uri": model_uri,
         "data_version": data_version,
         "git_sha": git_sha,
-        "overall": {k: overall[k] for k in owned},
-        "baseline": {k: baseline[k] for k in owned if k in baseline},
+        "overall": {k: overall[k] for k in OWNED_METRICS if k in overall},
+        "baseline": {k: baseline[k] for k in OWNED_METRICS if k in baseline},
         "slices": slices,
         "details": details,
         "not_measured": [k for k in OWNED_METRICS if k not in overall],

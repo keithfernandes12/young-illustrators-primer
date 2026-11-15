@@ -30,9 +30,10 @@ def test_word_matching_agrees_with_the_gate(text, target):
     assert contains_target_word(text, target) == gate_contains(text, target)
 
 
-def test_missing_words_look_at_title_and_pages():
+def test_a_word_only_in_the_title_is_missing():
+    """The child reads the pages; a target word only in the title is never read (review F2)."""
     story = Story(pages=("The dog runs.",), title="A cat")
-    assert missing_target_words(story, ("cat", "dog", "nap")) == ("nap",)
+    assert missing_target_words(story, ("cat", "dog", "nap")) == ("cat", "nap")
 
 
 def _story(n_pages: int, page: str = "Pip sees a ball.") -> Story:
@@ -76,3 +77,17 @@ def test_the_prompt_carries_the_request_and_names_topics_not_words():
     assert "weapons" in system, "the avoid-list topics must be in the prompt"
     assert " gun" not in system and "sword" not in system, "the avoid words themselves must not be"
     assert '"pages"' in system, "the JSON shape must be in the prompt"
+
+
+@pytest.mark.parametrize("level,phrase", [(0.0, "kindergarten"), (1.0, "US grade 1"), (1.5, "US grade 1.5")])
+def test_the_prompt_tells_the_model_the_target_level(level, phrase):
+    """Review Q1: the level is measured against the request, so the model must be told it."""
+    request = StoryRequest(prompt="", age=4, target_words=("ball",), reading_level=level)
+    _, user = (m["content"] for m in build_messages(request, LEARN_TO_READ, load_avoid_list()))
+    assert f"Reading level: {phrase} or easier." in user
+
+
+def test_no_level_means_no_level_line():
+    request = StoryRequest(prompt="", age=4, target_words=("ball",))
+    _, user = (m["content"] for m in build_messages(request, LEARN_TO_READ, load_avoid_list()))
+    assert "Reading level" not in user

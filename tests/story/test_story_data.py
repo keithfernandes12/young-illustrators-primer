@@ -61,8 +61,17 @@ def test_an_exact_duplicate_across_sources_keeps_the_picture_book():
     stories = stories_frame([("tinystories", "3", "\n\n".join(SIMPLE)), ("tinystories", "4", "A cat naps.")])
     books = books_from_frames(pages, stories)
     assert books.attrs["dropped_duplicates"] == 1
+    assert books.attrs["dropped_cross_source"] == 1 and books.attrs["dropped_within_source"] == 0
     assert set(books["source"]) == {"african_storybook", "tinystories"}
     assert "tinystories/3" not in set(books["book_key"])
+
+
+def test_a_duplicate_within_one_source_is_not_counted_as_cross_source():
+    """Review F10: two TinyStories with the same text are a within-source duplicate."""
+    stories = stories_frame([("tinystories", "1", "A cat naps."), ("tinystories", "2", "A cat naps.")])
+    books = books_from_frames(pages_frame({}), stories)
+    assert len(books) == 1
+    assert books.attrs["dropped_within_source"] == 1 and books.attrs["dropped_cross_source"] == 0
 
 
 def test_the_split_uses_split_ofs_exact_hash():
@@ -157,11 +166,38 @@ def test_books_above_the_level_cut_are_never_used():
     assert build_validation_requests(books, n=30) == []
 
 
+def test_age_is_not_locked_to_source():
+    """Review F1: one age cycle over the round-robin gave each source a single age."""
+    requests = build_validation_requests(_corpus(), n=18)
+    ages_by_source: dict[str, list[int]] = {}
+    for request in requests:
+        ages_by_source.setdefault(request.source, []).append(request.age)
+    assert len(ages_by_source) == 3
+    # A source with at least three requests must see every age; one with two must see two ages.
+    for source, ages in ages_by_source.items():
+        assert len(set(ages)) == min(3, len(ages)), (source, ages)
+
+
 def test_a_book_without_enough_words_is_skipped_not_counted():
-    """Skipping a book takes the next one, so short books cannot shrink the set below n."""
-    books = _corpus()
-    full = build_validation_requests(books, n=10)
-    assert len(full) == 10
+    """Review F5: books with fewer than two usable target words must be skipped, and the next book
+    taken, so they cannot shrink the set below n. The short books here have no eligible word at all
+    ("The end." / "I am."), so the skip path really runs; turning `continue` into `break` fails this."""
+    # Distinct texts (the digits keep them apart under the exact dedupe) with at most one usable word:
+    # "end" is the only eligible word in "The end 7.", and "I am 7." has none.
+    pages = pages_frame({("storyweaver", f"storyweaver-{i}"): [f"The end {i}."] for i in range(60)}
+                        | {("african_storybook", f"asp-{i}"): ["Ama runs to the farm.", f"Ama feeds hen {i}.",
+                                                               "The hen is happy."] for i in range(60)})
+    stories = stories_frame([("tinystories", str(i), f"I am {i}.") for i in range(60)]
+                            + [("tinystories", str(100 + i), f"Tom has a big dog {i}. The dog runs to Tom.")
+                               for i in range(60)])
+    books = books_from_frames(pages, stories)
+    short = {key for key, text in zip(books["book_key"], books["text"])
+             if text.startswith(("The end ", "I am "))}
+    val_short = short & set(books.loc[books["split"] == "val", "book_key"])
+    assert val_short, "the fixture must put some short books in val, or this test proves nothing"
+    requests = build_validation_requests(books, n=8)
+    assert len(requests) == 8
+    assert not {r.book_key for r in requests} & short
 
 
 def test_smallest_files_picks_by_size_and_keeps_generations():

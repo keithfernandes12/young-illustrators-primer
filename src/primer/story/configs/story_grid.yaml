@@ -45,7 +45,13 @@ baseline:
 selection:
   # 1. Hard filters. A config is eligible only if both hold.
   min_success_rate: 0.8                 # a story returned within max_attempts for >= 80% of requests
+  # Zero by construction while the judge is the writer's own guardrail; it starts to bite once an
+  # independent classifier (member 3's) is passed as the judge. Kept so that day needs no rule change.
   max_returned_safety_violation_rate: 0.0
+  # The filter that bites today: a configuration whose drafts trip the avoid-list on more than 1 in 5
+  # attempts keeps trying to write unsafe content for 3-5 year olds, even if the retries catch it.
+  # Provisional (review Q2), revisable once real flag rates are seen.
+  max_raw_safety_flag_rate: 0.2
   # 2. Primary metric: the gated key.
   primary: target_word_inclusion
   # 3. Within this margin of the best primary score, prefer, in order:

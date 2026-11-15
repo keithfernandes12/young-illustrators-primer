@@ -18,10 +18,12 @@ are injectable, which is how `tests/story/test_grid.py` runs the whole grid with
 from __future__ import annotations
 
 import argparse
+import hashlib
 import itertools
 import json
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -63,6 +65,10 @@ class RunLogger(Protocol):
         """Record one run; return its id."""
         ...
 
+    def log_files(self, name: str, tags: dict[str, str], paths: Sequence[Path]) -> str:
+        """Record a run holding `paths` as artifacts (the grid's metrics.json and charts); return its id."""
+        ...
+
 
 class MlflowLogger:
     """Logs to MLflow. Imported lazily: `mlflow` comes from the `story` extra.
@@ -91,6 +97,14 @@ class MlflowLogger:
             self._mlflow.log_dict(artifact, "results.json")
             return str(active.info.run_id)
 
+    def log_files(self, name: str, tags: dict[str, str], paths: Sequence[Path]) -> str:
+        with self._mlflow.start_run(run_name=name) as active:
+            self._mlflow.set_tags(tags)
+            for path in paths:
+                self._mlflow.log_artifact(str(path), artifact_path=path.parent.name if path.parent.name == "charts"
+                                          else None)
+            return str(active.info.run_id)
+
 
 def git_sha() -> str:
     try:
@@ -114,7 +128,11 @@ def _flat_metrics(summary: dict[str, float | None], slices: list[dict[str, Any]]
 def select(runs: Sequence[dict[str, Any]], rule: dict[str, Any], size_rank: dict[str, int]) -> dict[str, Any] | None:
     """Apply the config's selection rule. Returns the chosen run, or None if no run is eligible.
 
-    1. Eligible: `success_rate >= min_success_rate` and `returned_safety_violation_rate <= max_...`.
+    1. Eligible: `success_rate >= min_success_rate`, `returned_safety_violation_rate <= max_...` and
+       `raw_safety_flag_rate <= max_raw_safety_flag_rate`. The returned-violation filter is zero by
+       construction while the judge is the writer's own guardrail, so on its own it could never
+       exclude a run (review Q2); the raw flag rate -- how often the model *tried* to write something
+       unsafe -- is the filter that bites until an independent classifier exists.
     2. Best `primary` metric.
     3. Among eligible runs within `tie_margin` of the best, order by each tie-breaker in turn
        (higher is better, except `p95_latency_s` and `model_size_rank`, where lower is better).
@@ -122,7 +140,8 @@ def select(runs: Sequence[dict[str, Any]], rule: dict[str, Any], size_rank: dict
     eligible = [r for r in runs
                 if (r["metrics"].get("success_rate") or 0.0) >= rule["min_success_rate"]
                 and (r["metrics"].get("returned_safety_violation_rate") or 0.0)
-                <= rule["max_returned_safety_violation_rate"]]
+                <= rule["max_returned_safety_violation_rate"]
+                and (r["metrics"].get("raw_safety_flag_rate") or 0.0) <= rule.get("max_raw_safety_flag_rate", 1.0)]
     if not eligible:
         return None
     primary = rule["primary"]
@@ -143,6 +162,29 @@ def select(runs: Sequence[dict[str, Any]], rule: dict[str, Any], size_rank: dict
     return min(contenders, key=key)
 
 
+def config_params(raw: dict[str, Any]) -> dict[str, str]:
+    """The whole config as MLflow params (review Q3; model-development section 2): scalars as text,
+    lists and mappings (models, grid, baseline, selection rule) as JSON."""
+    return {key: value if isinstance(value, str) else json.dumps(value, sort_keys=True)
+            for key, value in raw.items()}
+
+
+def dvc_tags(data_version: str) -> dict[str, str]:
+    """`dvc/<dataset>` tags: a short SHA-1 of each data pointer file as committed at the `data-<version>`
+    git tag, which pins the exact object versions the data came from. "unavailable" if git cannot
+    show it (no such tag in this clone)."""
+    tags = {}
+    for dataset in ("stories_text", "storybook_pages", "word_lists"):
+        try:
+            out = subprocess.run(["git", "show", f"data-{data_version}:data/{dataset}.dvc"], cwd=ROOT,
+                                 capture_output=True, check=False, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            tags[f"dvc/{dataset}"] = "unavailable"
+            continue
+        tags[f"dvc/{dataset}"] = hashlib.sha1(out.stdout).hexdigest()[:12] if out.returncode == 0 else "unavailable"
+    return tags
+
+
 def run_grid(
     config: GridConfig,
     requests: Sequence[ValidationRequest],
@@ -150,17 +192,26 @@ def run_grid(
     logger: RunLogger,
     owner: str,
     sha: str,
+    extra_tags: dict[str, str] | None = None,
+    clock: Callable[[], float] = time.perf_counter,
 ) -> dict[str, Any]:
-    """Run every grid point, log each, select, and return the full report (nothing written to disk)."""
+    """Run every grid point, log each, select, and return the full report (nothing written to disk).
+
+    `clock` times each request; tests pass a fake one so latency, and anything chosen by latency, is
+    deterministic (review F12).
+    """
     raw = config.raw
     backends: dict[str, ChatBackend] = {}
     runs: list[dict[str, Any]] = []
+    base_params = config_params(raw)
     for spec, temperature, max_new_tokens in config.points():
-        backend = backends.setdefault(spec.name, backend_for(spec))
+        if spec.name not in backends:  # one backend per model, created once (review F11)
+            backends[spec.name] = backend_for(spec)
+        backend = backends[spec.name]
         settings = GenerationSettings(temperature=temperature, max_new_tokens=max_new_tokens,
                                       top_p=float(raw["top_p"]), seed=int(raw["seed"]))
         writer = LLMStoryWriter(backend=backend, settings=settings, max_attempts=int(raw["max_attempts"]))
-        results = run_requests(writer, requests)
+        results = run_requests(writer, requests, clock=clock)
         summary = summarise(results)
         slices = slice_metrics(results, summarise)
         params = {"model": spec.name, "temperature": temperature, "max_new_tokens": max_new_tokens,
@@ -168,9 +219,10 @@ def run_grid(
                   "max_attempts": raw["max_attempts"], "n_requests": len(requests)}
         tags = {"stage": "story", "owner": owner, "data_version": str(raw["data_version"]), "git_sha": sha,
                 "base_model": f"{spec.repo}@{spec.revision}", "gate_group": "story", "where": "local",
-                "level_source": str(raw["level_source"])}
+                "level_source": str(raw["level_source"]), **(extra_tags or {})}
         name = f"{spec.name}-t{temperature}-n{max_new_tokens}"
-        run_id = logger.log_run(name, tags, params, _flat_metrics(summary, slices),
+        run_id = logger.log_run(name, tags, {**{f"config/{k}": v for k, v in base_params.items()}, **params},
+                                _flat_metrics(summary, slices),
                                 {"results": [asdict(r) for r in results], "slices": slices})
         runs.append({"name": name, "run_id": run_id, "params": params, "metrics": summary, "slices": slices})
 
@@ -182,13 +234,20 @@ def run_grid(
                      and r["params"]["max_new_tokens"] == int(base["max_new_tokens"])), None)
     if baseline is None:
         raise ValueError("the baseline configuration is not one of the grid points")
-    reference = chosen or baseline
-    model = next(m for m in config.models if m.name == reference["params"]["model"])
+    # With no eligible run, `overall` stays empty, so the gate sees the story keys as missing rather
+    # than reading the baseline's numbers as if a model had been selected (review F6).
+    if chosen is not None:
+        model = next(m for m in config.models if m.name == chosen["params"]["model"])
+        model_uri, overall, slices = f"hf://{model.repo}@{model.revision}", chosen["metrics"], chosen["slices"]
+    else:
+        model_uri, overall, slices = "none: no configuration passed the selection rule", {}, []
     metrics = metrics_file(
-        model_uri=f"hf://{model.repo}@{model.revision}", data_version=str(raw["data_version"]), git_sha=sha,
-        overall=reference["metrics"], baseline=baseline["metrics"], slices=reference["slices"],
-        details={"selected": chosen["name"] if chosen else None, "selected_run_id": chosen and chosen["run_id"],
-                 "baseline_config": baseline["name"], "metrics": reference["metrics"],
+        model_uri=model_uri, data_version=str(raw["data_version"]), git_sha=sha,
+        overall=overall, baseline=baseline["metrics"], slices=slices,
+        details={"selected": chosen["name"] if chosen else None,
+                 "selected_run_id": chosen["run_id"] if chosen else None,
+                 "baseline_config": baseline["name"], "baseline_run_id": baseline["run_id"],
+                 "metrics": chosen["metrics"] if chosen else None, "baseline_metrics": baseline["metrics"],
                  "selection_rule": raw["selection"]},
     )
     return {"runs": runs, "selected": chosen["name"] if chosen else None, "baseline": baseline["name"],
@@ -221,9 +280,29 @@ def main(argv: list[str] | None = None) -> int:
     requests = read_requests(args.requests or Path(config.raw["requests"]))
     logger = MlflowLogger(str(config.raw["mlflow_tracking_uri"]), str(config.raw["experiment"]),
                           config.raw.get("mlflow_artifact_location"))
-    report = run_grid(config, requests, HFChatBackend, logger, owner=args.owner, sha=git_sha())
-    for path in write_outputs(report, Path(config.raw["out"])):
+    sha = git_sha()
+    tags = dvc_tags(str(config.raw["data_version"]))
+    report = run_grid(config, requests, HFChatBackend, logger, owner=args.owner, sha=sha, extra_tags=tags)
+    return finish(report, logger, Path(config.raw["out"]), args.owner, sha, tags)
+
+
+def finish(report: dict[str, Any], logger: RunLogger, out: Path, owner: str, sha: str,
+           extra_tags: dict[str, str]) -> int:
+    """Write the outputs, log them as one `grid-summary` run (review F3), print the outcome.
+
+    Exits 2 when no configuration passed the selection rule, so a script cannot mistake that for success.
+    """
+    paths = write_outputs(report, out)
+    summary_tags = {"stage": "story", "owner": owner, "git_sha": sha, "gate_group": "story", "where": "local",
+                    "kind": "grid-summary", "selected": str(report["selected"]), "baseline": report["baseline"],
+                    **extra_tags}
+    summary_id = logger.log_files("grid-summary", summary_tags, paths)
+    for path in paths:
         print(path)
+    print(f"summary run: {summary_id}")
+    if report["selected"] is None:
+        print(f"no configuration passed the selection rule (baseline: {report['baseline']})")
+        return 2
     print(f"selected: {report['selected']} (baseline: {report['baseline']})")
     return 0
 
