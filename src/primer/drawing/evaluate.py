@@ -1,8 +1,18 @@
-"""Evaluate the drawing model. CLI: --model --split --out metrics.json.
+"""Evaluate the drawing model.
+
+**Top-5 accuracy (KAN-38, slice S6c)**:
+``python -m primer.drawing.evaluate --model src/primer/drawing/configs/drawing_baseline.yaml
+--version v1.1 --split test --out drawing_metrics.json``, then
+``check_gate.py --metrics drawing_metrics.json --only drawing``. Every drawing of S6b2's split is
+rendered by ``render_strokes`` and scored through the encoder as an upload would be.
 
 Writes the shape in ``primer.evaluation.contract``: ``overall`` carries this stage's gated keys,
-``baseline`` is what the model must beat and is never omitted, ``slices`` carries the per-slice
-breakdown. ``primer.evaluation.golden`` merges these into the file the release gate reads.
+``baseline`` is what the model must beat and is never omitted -- chance, 5 of 345 -- and ``slices``
+carries the per-country breakdown. The gated key is repeated at the top level so the release gate
+can read this file directly; see ``metrics_file`` for why it is not merged into ``golden.py``'s.
+
+**This is top-5 on rendered Quick, Draw!**, the gate's number and not the product's: every drawing
+in v1.1 was already recognised by Quick, Draw!'s own model, and nothing here is a child's upload.
 
 **Preprocessing stability (KAN-109, slice S6c2)** lives here too, run as
 ``python -m primer.drawing.evaluate stability --version v1.1 --out stability.json``. It scores the
@@ -30,7 +40,7 @@ import statistics
 import sys
 import time
 from collections import Counter
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
@@ -182,6 +192,17 @@ def describe_run(config: Any, device: str, dtype: str, base: PrepareConfig | Non
     every preprocessing setting each variant used. ``config_dir`` is left out: it is a path on one
     person's machine and says nothing about the score.
     """
+    return {
+        **_scored_under(config, device, dtype),
+        "preprocessing": {
+            name: {**asdict(prepare), "crops_to_box": crops}
+            for name, (prepare, crops) in variant_settings(base).items()
+        },
+    }
+
+
+def _scored_under(config: Any, device: str, dtype: str) -> dict[str, Any]:
+    """The device, dtype, scoring settings and prompts a number was taken under."""
     prompts = config.prompts()
     scoring = {key: value for key, value in asdict(config).items() if key != "config_dir"}
     return {
@@ -190,10 +211,6 @@ def describe_run(config: Any, device: str, dtype: str, base: PrepareConfig | Non
         "scoring": scoring,
         "prompt_count": len(prompts),
         "prompts_sha256": hashlib.sha256("\n".join(prompts).encode()).hexdigest(),
-        "preprocessing": {
-            name: {**asdict(prepare), "crops_to_box": crops}
-            for name, (prepare, crops) in variant_settings(base).items()
-        },
     }
 
 
@@ -268,16 +285,234 @@ def _stability(argv: list[str]) -> int:
     return 0
 
 
+# ------------------------------------------------------------------------------- accuracy (S6c)
+
+#: The gated metric reads the top five guesses. A literal, not ``DrawingConfig.top_k``: that field
+#: is how many candidates a `Character` carries, and widening it must not widen the metric.
+TOP_K = 5
+STAGE = "drawing"
+
+
+class ScoringEncoder(Protocol):
+    def encode(self, image: bytes, prompts: Sequence[str]) -> Any: ...
+
+
+def top5_hits(
+    drawings: Iterable[tuple[bytes, int]],
+    encoder: ScoringEncoder,
+    prompts: Sequence[str],
+    progress: Any = None,
+) -> list[bool]:
+    """For each ``(png, label index)``, whether the label is among the encoder's top five.
+
+    Compared by vocabulary **index**, never by string: the data spells three labels in lower case
+    where the vocabulary capitalises them, and a string comparison would score those as misses.
+    Ties keep vocabulary order (``scored``), so the same scores give the same hits on every run.
+    """
+    hits: list[bool] = []
+    for image, label in drawings:
+        ranking = scored(encoder.encode(image, prompts).confidences).ranking
+        hits.append(label in ranking[:TOP_K])
+        if progress is not None:
+            progress(len(hits))
+    if not hits:
+        raise ValueError("no drawings to evaluate")
+    return hits
+
+
+def chance_baseline(vocabulary_size: int) -> dict[str, Any]:
+    """Top-5 accuracy of guessing five labels at random: what any recogniser must beat.
+
+    Not Quick, Draw!'s own recogniser, which would be the natural rival: every v1.1 drawing has
+    ``recognized=True``, so its rate on this set is 1.0 by selection, not by skill.
+    """
+    if vocabulary_size < 1:
+        raise ValueError("the vocabulary is empty")
+    return {
+        "drawing_top5_acc": round(min(TOP_K, vocabulary_size) / vocabulary_size, 4),
+        "kind": f"chance: {TOP_K} labels of {vocabulary_size} guessed uniformly at random",
+    }
+
+
+def _accuracy(hits: Sequence[bool]) -> float:
+    return round(sum(hits) / len(hits), 4)
+
+
+def accuracy_by_slice(hits: Sequence[bool], groups: Mapping[str, Sequence[str]]) -> list[dict[str, Any]]:
+    """``drawing_top5_acc`` per value of each slice key. ``groups[key][i]`` is drawing *i*'s value.
+
+    Each slice carries ``judged``: False below ``SMALL_SLICE`` drawings, so it is reported, not
+    judged -- 194 countries over 63,310 drawings leaves most of them small.
+    """
+    from primer.drawing.slices import SMALL_SLICE
+
+    slices: list[dict[str, Any]] = []
+    for key, values in groups.items():
+        if len(values) != len(hits):
+            raise ValueError(f"slice key {key!r} has {len(values)} values for {len(hits)} drawings")
+        members: dict[str, list[bool]] = {}
+        for value, hit in zip(values, hits, strict=True):
+            members.setdefault(value, []).append(hit)
+        slices.extend(
+            {
+                "key": key,
+                "value": value,
+                "n": len(group),
+                "judged": len(group) >= SMALL_SLICE,
+                "metrics": {"drawing_top5_acc": _accuracy(group)},
+            }
+            for value, group in sorted(members.items())
+        )
+    return slices
+
+
+def metrics_file(
+    hits: Sequence[bool], groups: Mapping[str, Sequence[str]], vocabulary_size: int, **provenance: Any
+) -> dict[str, Any]:
+    """The ``primer.evaluation.contract`` shape, plus the gated key at the top level.
+
+    ``check_gate.py`` looks keys up at the top level, so ``overall`` alone would read as ``metric
+    missing``; the key is repeated there so this file can be gated directly with ``--only
+    drawing``. There is deliberately no ``fake_models`` key: the gate reads that flag for the
+    whole file, which is why a real number is not merged into ``golden.py``'s fake-scored one.
+    """
+    overall = {"drawing_top5_acc": _accuracy(hits), "drawings": len(hits)}
+    return {
+        "stage": STAGE,
+        "drawing_top5_acc": overall["drawing_top5_acc"],
+        "overall": overall,
+        "baseline": chance_baseline(vocabulary_size),
+        "slices": accuracy_by_slice(hits, groups),
+        **provenance,
+    }
+
+
+def _git_sha() -> str:
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=False, timeout=10
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    return result.stdout.strip() or "unknown"
+
+
+def accuracy_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="evaluate", description="drawing_top5_acc over a rendered Quick, Draw! split (S6c)"
+    )
+    parser.add_argument(
+        "--model", required=True, type=Path, help="a DrawingConfig yaml, e.g. configs/drawing_baseline.yaml"
+    )
+    parser.add_argument("--version", required=True, help="the frozen primer-data version, e.g. v1.1")
+    parser.add_argument(
+        "--split",
+        default="test",
+        choices=("val", "test"),
+        help="never train: a number over the drawings the model learns from measures memory",
+    )
+    parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument(
+        "--device",
+        choices=("cpu", "cuda"),
+        default=None,
+        help="default: cuda if available, else cpu. Recorded in the output: bf16 on cuda and fp32 on "
+        "cpu rank near-ties differently, so two numbers compare only on the same device and dtype",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="score only the first N drawings (a timing probe, never a result)",
+    )
+    return parser
+
+
+def _evaluate_accuracy(argv: list[str]) -> int:
+    """The CLI: every drawing of a split, rendered and scored the way an upload is."""
+    from primer.data import catalog
+    from primer.data.storage import Store
+    from primer.drawing.data import check_frame, label_index, split_frames
+    from primer.drawing.model import DrawingConfig, SiglipEncoder
+    from primer.drawing.render import render_strokes_png
+    from primer.drawing.slices import SLICE_KEYS, slice_values
+
+    parser = accuracy_parser()
+    args = parser.parse_args(argv)
+    if not args.out.resolve().parent.is_dir():
+        parser.error(
+            f"--out's folder does not exist: {args.out.parent}; the run takes minutes, so say so now"
+        )
+    if args.limit is not None and args.limit < 1:
+        parser.error("--limit must be at least 1")
+
+    config = DrawingConfig.from_yaml(args.model)
+    labels = config.labels()
+    prompts = config.prompts()
+    index = label_index(labels)
+
+    store = Store()
+    frame = catalog.read_dataset("drawings", store=store, sources=["quickdraw"], version=args.version)
+    if frame.empty:
+        raise ValueError(f"version {args.version!r} holds no Quick, Draw! drawings")
+    check_frame(frame, labels)
+    # The split's membership function itself, so these are exactly `read_dataset`'s drawings.
+    part = split_frames(frame)[args.split].reset_index(drop=True)
+    if args.limit is not None:
+        part = part.head(args.limit)
+
+    def drawings() -> Iterable[tuple[bytes, int]]:
+        # Rendered to PNG and handed to the encoder as bytes: the encoder decodes, composites and
+        # runs `prepare_drawing` exactly as it does for an upload, so this is the product's path
+        # from the bytes onwards. At the shipped settings `prepare_drawing` returns a rendered
+        # canvas unchanged, so this is also the image `read_dataset` would hand to training.
+        for row in part.itertuples():
+            yield render_strokes_png(json.loads(row.strokes)), index[row.label.casefold()]
+
+    def progress(done: int) -> None:
+        if done % 5000 == 0 or done == len(part):
+            print(
+                f"{done}/{len(part)} scored, {time.perf_counter() - start:.0f}s", file=sys.stderr, flush=True
+            )
+
+    start = time.perf_counter()
+    encoder = SiglipEncoder(config, device=args.device)
+    hits = top5_hits(drawings(), encoder, prompts, progress)
+    groups = {key: list(slice_values(part, key)) for key in SLICE_KEYS}
+    result = metrics_file(
+        hits,
+        groups,
+        len(labels),
+        model_uri=str(args.model),
+        encoder=config.encoder,
+        encoder_revision=config.encoder_revision,
+        data_version=args.version,
+        split=args.split,
+        limit=args.limit,
+        over="rendered Quick, Draw! (recognized=True only), not children's uploads",
+        license=sorted(set(part["license"])),
+        attribution=sorted(set(part["attribution"])),
+        git_sha=_git_sha(),
+        seconds=round(time.perf_counter() - start, 1),
+        **_scored_under(config, str(encoder.device), encoder.dtype_name or "unknown"),
+        preprocessing=asdict(encoder.prepare or default_prepare_config()),
+    )
+    args.out.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    judged = sum(1 for s in result["slices"] if s["judged"])
+    print(
+        f"wrote {args.out}: drawing_top5_acc={result['drawing_top5_acc']} over {len(hits)} drawings "
+        f"(chance {result['baseline']['drawing_top5_acc']}; {judged} of {len(result['slices'])} slices judged)"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["stability"]:
         return _stability(argv[1:])
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", required=True)
-    parser.add_argument("--split", default="test")
-    parser.add_argument("--out", required=True)
-    parser.parse_args(argv)
-    raise NotImplementedError("drawing/evaluate.py is a stub")
+    return _evaluate_accuracy(argv)
 
 
 if __name__ == "__main__":
