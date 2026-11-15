@@ -401,7 +401,8 @@ it — S6b3 ships the samplers, and S6b4 can only ever add a stratum.
 renderer, with S6b1's paper/crayon augmentation applied at training time only.
 
 - **Why separate** — it is the first slice that needs frozen data on disk, which S6b does not.
-- **Acceptance** — the loader returns the three splits for a pinned version, no record appears in
+- **Acceptance** — `read_dataset(version, split)` returns each of a pinned version's three splits
+  (one per call; `build_splits` makes all three from a frame already read), no record appears in
   two splits, and augmentation is off for val and test.
 - **Depends on** — S6b, and **S6b1** for the augmentation. **Jira** — KAN-38.
 

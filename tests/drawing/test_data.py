@@ -483,3 +483,162 @@ def test_an_item_really_goes_through_render_then_augment_then_prepare(monkeypatc
     calls.clear()
     built["test"][0]
     assert calls == ["render_strokes", "prepare_drawing"], "evaluation is never augmented"
+
+
+# ----------------------------------------------------- what an item and a record carry, field by field
+
+
+def test_the_label_an_item_trains_on_is_the_label_its_record_names():
+    """Training reads `split[i][1]`; the record is the audit trail. They must be the same label."""
+    whole = RenderedSplit(frame(9), "test", LABELS, augment=False)
+
+    for i in range(len(whole)):
+        record = whole.record(i)
+        assert whole[i][1] == record.label_index == LABELS.index(record.label)
+    assert {whole[i][1] for i in range(len(whole))} == {0, 1, 2}, "use every label, or this proves little"
+
+
+def test_every_field_of_a_record_is_that_rows_own():
+    licences = [f"licence-{i}" for i in range(6)]
+    credits = [f"credit-{i}" for i in range(6)]
+    rows = frame(6, license=licences, attribution=credits)
+    whole = RenderedSplit(rows, "test", LABELS, augment=False)
+
+    for i in range(6):
+        assert whole.record(i) == data.DrawingRecord(
+            record_id=f"quickdraw:{i}",
+            source_id=str(5_000_000_000 + i),
+            label=LABELS[i % len(LABELS)],
+            label_index=i % len(LABELS),
+            license=f"licence-{i}",
+            attribution=f"credit-{i}",
+        )
+
+
+def test_iterating_yields_every_item_in_order():
+    whole = RenderedSplit(frame(5), "test", LABELS, augment=False)
+
+    walked = list(whole)
+
+    assert len(walked) == len(whole) == 5
+    for i, (image, label) in enumerate(walked):
+        assert np.array_equal(image, whole[i][0]) and label == whole[i][1]
+
+
+# ------------------------------------------------------------------- an override is honoured, not dropped
+
+
+def test_a_split_config_passed_in_is_the_one_used():
+    other = replace(data.default_split_config(), salt="a-different-salt")
+    rows = frame(300)
+
+    assert data.split_frames(rows, other)["train"]["source_id"].tolist() != (
+        data.split_frames(rows)["train"]["source_id"].tolist()
+    )
+    default_sizes = {k: len(v) for k, v in build_splits(rows, labels=LABELS).items()}
+    other_sizes = {k: len(v) for k, v in build_splits(rows, labels=LABELS, config=other).items()}
+    assert default_sizes != other_sizes
+
+
+def test_a_render_config_passed_in_is_the_one_used():
+    shipped = preprocess.default_prepare_config().render
+    thick = replace(shipped, line_width=shipped.line_width + 4)
+
+    plain = RenderedSplit(frame(3), "test", LABELS, augment=False)[0][0]
+    drawn = RenderedSplit(frame(3), "test", LABELS, augment=False, render=thick)[0][0]
+
+    assert not np.array_equal(plain, drawn)
+
+
+def test_a_prepare_config_passed_in_is_the_one_used():
+    base = preprocess.default_prepare_config()
+    # A smaller output size: a clean black-on-white square survives greyscale or binarising
+    # unchanged, so only a setting that moves the shape shows the config reached `prepare_drawing`.
+    variant = replace(base, render=replace(base.render, size=112))
+
+    plain = build_splits(frame(), labels=LABELS)["test"][0][0]
+    changed = build_splits(frame(), labels=LABELS, prepare=variant)["test"][0][0]
+    direct = RenderedSplit(frame(3), "test", LABELS, augment=False, prepare=variant)[0][0]
+
+    assert plain.shape == (224, 224, 3)
+    assert changed.shape == direct.shape == (112, 112, 3)
+
+
+def test_an_augmentation_config_passed_in_is_the_one_used():
+    base = preprocess.default_augment_config()
+    quiet = replace(
+        base,
+        wobble_probability=0.0,
+        erasure_probability=0.0,
+        ink_colour_probability=0.0,
+        fill_probability=0.0,
+        lighting_probability=0.0,
+    )
+
+    default = build_splits(frame(), labels=LABELS, seed=1)["train"][0][0]
+    configured = build_splits(frame(), labels=LABELS, seed=1, augmentation=quiet)["train"][0][0]
+    direct = RenderedSplit(frame(), "train", LABELS, augment=True, seed=1, augmentation=quiet)[0][0]
+
+    assert not np.array_equal(default, configured)
+    assert np.array_equal(configured, direct)
+
+
+def test_read_dataset_passes_its_seed_on(store):
+    seeded = read_dataset("vt", "train", store=store, seed=7)
+
+    assert seeded.seed == 7
+    assert seeded.item_seed(0) == RenderedSplit(frame(), "train", LABELS, augment=True, seed=7).item_seed(0)
+    assert seeded.item_seed(0) != read_dataset("vt", "train", store=store).item_seed(0)
+
+
+# ------------------------------------------------------------------------- the data's own spelling
+
+
+def test_a_data_label_in_capitals_matches_a_lower_case_vocabulary_entry():
+    """The other direction from `the eiffel tower`: the match is case-insensitive both ways."""
+    shouting = frame(30, label=["CAT", "House", "TREE"] * 10)
+
+    for split in build_splits(shouting, labels=LABELS).values():
+        for i in range(len(split)):
+            assert split.record(i).label_index == LABELS.index(split.record(i).label.casefold())
+    with pytest.raises(ValueError, match="not in the recogniser's vocabulary"):
+        build_splits(frame(30, label=["Dragon"] * 30), labels=LABELS)
+
+
+def test_only_the_quickdraw_source_of_a_version_is_read(tmp_path):
+    local = Store(tmp_path.as_posix())
+    quick = "processed/drawings/source=quickdraw/batch=20261010T000000Z.parquet"
+    other = "processed/drawings/source=amateur/batch=20261010T000000Z.parquet"
+    local.write_parquet(quick, frame(12))
+    local.write_parquet(other, frame(12, label=["dragon"] * 12))
+    local.write_json(
+        "metadata/versions/vm.json",
+        {
+            "tag": "vm",
+            "datasets": {
+                "drawings": {
+                    "sources": {
+                        "quickdraw": {"files": [{"path": quick}]},
+                        "amateur": {"files": [{"path": other}]},
+                    }
+                }
+            },
+        },
+    )
+
+    total = sum(len(read_dataset("vm", split, store=local)) for split in data.SPLITS)
+
+    assert total == 12, "another source's drawings are not Quick, Draw! drawings"
+
+
+def test_a_version_with_no_quickdraw_rows_says_so(tmp_path):
+    local = Store(tmp_path.as_posix())
+    path = "processed/drawings/source=quickdraw/batch=20261010T000000Z.parquet"
+    local.write_parquet(path, frame().iloc[0:0])
+    local.write_json(
+        "metadata/versions/ve.json",
+        {"tag": "ve", "datasets": {"drawings": {"sources": {"quickdraw": {"files": [{"path": path}]}}}}},
+    )
+
+    with pytest.raises(ValueError, match="holds no Quick, Draw! drawings"):
+        read_dataset("ve", store=local)
