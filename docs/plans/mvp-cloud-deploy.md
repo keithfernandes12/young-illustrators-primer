@@ -698,8 +698,8 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6b1 | merged | [#31](https://github.com/keithfernandes12/young-illustrators-primer/pull/31) | `prepare_drawing` + `augment_canvas`, numpy only, wired into the encoder; binarising is local after two global thresholds failed on real drawings. Unblocks S6b2 and S6c2. KAN-31 |
 | S6b3 | merged | [#29](https://github.com/keithfernandes12/young-illustrators-primer/pull/29) | strata and two samplers, measured over the real 174,981 rows. KAN-117 |
 | S6b4 | not started | | **spike, person-only**: waits on S6b3, S6a and KAN-24, plus DINOv2 and a captioner that no slice supplies. Can only add a stratum. KAN-117 |
-| S6b2 | in review | [#32](https://github.com/keithfernandes12/young-illustrators-primer/pull/32) | `data.py`: hashed 80/10/10 split of v1.1 (506k/63k/63k), rendered on demand through `render_strokes` → `augment_canvas` (train only) → `prepare_drawing`. Unblocks S6c |
-| S6c | not started | | the gate's number, over rendered Quick, Draw! — not the product's. Ceiling back to 1.0 since KAN-116 merged |
+| S6b2 | merged | [#32](https://github.com/keithfernandes12/young-illustrators-primer/pull/32) | `data.py`: hashed 80/10/10 split of v1.1 (506k/63k/63k), rendered on demand through `render_strokes` → `augment_canvas` (train only) → `prepare_drawing`. Unblocks S6c |
+| S6c | in review | | baseline `drawing_top5_acc` **0.4956** over all 63,310 rendered test drawings (GPU, bf16): gate FAIL against 0.85, chance 0.0145. The gate's number, not the product's. KAN-38 |
 | S6c2 | merged | [#33](https://github.com/keithfernandes12/young-illustrators-primer/pull/33) | 1,000 frozen drawings (unstratified), four variants: top-1 moves 25% / 50% / 41% between adjacent variants; over half the drawings come out `squiggle`. Reproduces exactly. KAN-109 |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); still waits on S6b2 (#32) and S6c. Reads S6c2's stability figures |
 | S6e | merged | [#35](https://github.com/keithfernandes12/young-illustrators-primer/pull/35) | `sheet.py`: Florence-2 + SAM 2.1 + ViTPose beside SigLIP 2; every field filled on 82/82 real sheets; two figures found as two on 12/20. Unblocks KAN-42 |
@@ -814,6 +814,32 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   - Every device loads the pinned fp16 files, upcast to fp32 on CPU, because the fp32 files are not
     cached and an offline CPU run could not fetch them.
   - Read errors drop the path, which can be the child's file name.
+- **2026-11-15 — S6c: "the golden split" in S6c's title means S6b2's `test` split, not
+  `configs/golden/`.** The slice body says "over S6b's test split", and the golden set has only a
+  `drawing_label` per scenario, no images, so it cannot be scored by a real recogniser. The number is
+  top-5 over `split_frames(read v1.1)["test"]`, the same membership `read_dataset("v1.1", "test")` uses.
+- **2026-11-15 — S6c: the drawing metrics file is gated directly, not merged through `golden.py`.**
+  `evaluate.py` writes the contract shape (`overall` / `baseline` / `slices`) and repeats
+  `drawing_top5_acc` at the top level, because `check_gate.py` looks keys up there, and the file is
+  gated with `--only drawing`. Merging into `golden.py`'s output was rejected: `check_gate.py` reads
+  `fake_models` for the **whole file**, so a merged file either reports the real drawing number as
+  `FAKE-…` or, without the flag, certifies the fake story, safety and readability numbers as real.
+  `golden.py` is unchanged. Reversible: when a second area has a real number, a merge that carries
+  provenance per key replaces this.
+- **2026-11-15 — S6c: the `baseline` is chance, 5/345 = 0.0145.** `evaluate.py` says `baseline` is
+  "what the model must beat", but the model scored here *is* S6a's baseline. The speech stage writes
+  `baseline == overall` when a run is its own baseline. That would make the field say nothing here.
+  Quick, Draw!'s own recogniser cannot serve either: every v1.1 drawing has `recognized=True`, so it
+  scores 1.0 by selection. Chance is the floor any recogniser must clear. S6d's run passes S6c's
+  `overall` as what it must beat.
+- **2026-11-15 — S6c scores each drawing as an upload, once.** Each test drawing is rendered to PNG
+  by `render_strokes_png` and handed to `SiglipEncoder.encode` as bytes, which decodes, composites
+  and runs `prepare_drawing` exactly as for a child's upload. `RenderedSplit[i]` was not fed to the
+  encoder: it has already run `prepare_drawing`, so passing it on would preprocess twice. At the
+  shipped settings `prepare_drawing` returns a rendered canvas unchanged (S6b1), so the tower sees
+  the same pixels training will. Labels are compared by vocabulary index (`data.label_index`,
+  case-insensitive), never by string. The cut is a literal 5 (`evaluate.TOP_K`), not
+  `DrawingConfig.top_k`.
 
 ## Verified facts
 
@@ -1415,6 +1441,40 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   separates is "exactly 3:4 or narrower" from "everything else", which is a mode indicator rather
   than an orientation one. A fixed edge at 1.0 would give a genuine orientation split; a quantile
   edge cannot. Whether that is worth having is the open question on this slice.
+- **2026-11-15 — S6c: S6a's zero-shot baseline scores `drawing_top5_acc` = 0.4956 and fails the
+  0.85 gate.** Measured with `python -m primer.drawing.evaluate --model
+  src/primer/drawing/configs/drawing_baseline.yaml --version v1.1 --split test --device cuda` over
+  **every** drawing of S6b2's test split, **63,310**, read from `gs://young-illustrators-primer-data`.
+  No sample, so no sampler applies. Taken on the **RTX 4060 in bf16** at encoder revision `75de2d55`,
+  prompts sha256 `9b82e482…`. It ran in 757 s, 0.012 s per drawing including render and PNG
+  round-trip. The code was commit `b5e7294`. `check_gate.py --only drawing` on the file prints
+  `FAIL drawing_top5_acc >= 0.85: actual=0.4956`, a verdict rather than `metric missing`. The chance
+  baseline is 0.0145. Not in MLflow: there is no host (KAN-107).
+  - **What the number is over.** Top-5 on **rendered** Quick, Draw!: the gate's number, not the
+    product's. Every v1.1 drawing has `recognized=True`, meaning Quick, Draw!'s own model already
+    named it, so this set is easier than raw sketches. On children's drawings, S6c2 measured this
+    same baseline's top-1 moving 25–50% between preprocessing variants alone, with 51–55% of
+    drawings coming out `squiggle`. That is not accuracy, but it says 0.4956 is not a floor for the
+    product.
+  - **`squiggle` again.** On a random 300 of these drawings (seed 0, a diagnostic, not the
+    result), `squiggle` was the top-1 for 82 (27%), and that 300 scored 0.52 top-5.
+  - **Per country.** 165 countries appear. 54 have at least `SMALL_SLICE` (100) drawings and are
+    judged; they hold 61,350 of the 63,310. Judged slices run from 0.4333 (BE, n=210) to 0.6471
+    (CL, n=102). The largest are US 0.4774 (n=28,557), GB 0.4689, CA 0.4753, DE 0.5143 and AU
+    0.5246. Differences of that size over a few hundred drawings are within noise, and nothing here
+    is adjusted for label mix per country.
+  - **Device and dtype matter for S6d.** bf16 on GPU ranks near-ties differently from fp32 on CPU:
+    S6a's `house` scored 0.2451 against 0.3026. S6d's comparison has to be taken with `--device
+    cuda` (bf16) to be like for like. S6c2's stability figures were taken on CPU in fp32.
+  - **First attempt, for the record.** A `--limit 300` timing probe scored 0.0033, below chance. The
+    split frame is ordered by label, and its first 300 rows are all `the eiffel tower` (192) and
+    `the great wall of china` (108). Hypothesis: the pipeline was broken. Result: it was not; the
+    labels are hard, and a random 300 scored 0.52. `--limit` takes the first N rows, which is why
+    its help text says "never a result".
+  - **The golden ceiling, re-counted.** `configs/golden/scenarios.jsonl` holds 80 book scenarios
+    over 16 distinct `drawing_label`s. All 16 are in the 345, case-insensitively and exactly, so a
+    flawless recogniser reaches 1.0. That is a property of the golden set, not of this number,
+    which is not taken over it.
 
 ## Open questions
 
