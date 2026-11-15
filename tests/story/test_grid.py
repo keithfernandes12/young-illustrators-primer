@@ -248,6 +248,30 @@ def test_a_changed_requests_file_changes_its_hash(tmp_path):
     assert requests_tags(first, 4)["tinystories_files"] == "unknown", "no manifest beside it"
 
 
+def test_main_wires_the_requests_tags_into_every_run(tmp_path, monkeypatch):
+    """The wiring in grid.main, not just the helpers: every logged run carries the requests file's
+    hash. MlflowLogger and HFChatBackend are swapped for the recording logger and the stub model."""
+    import yaml
+
+    from primer.story import grid
+
+    requests_path = tmp_path / "requests.jsonl"
+    write_requests(REQUESTS, requests_path)
+    config = small_config().raw | {"requests": str(requests_path), "out": str(tmp_path / "out"),
+                                   "max_requests": 3}
+    config_path = tmp_path / "grid.yaml"
+    config_path.write_text(yaml.safe_dump(config))
+    logger = RecordingLogger()
+    monkeypatch.setattr(grid, "MlflowLogger", lambda *args, **kwargs: logger)
+    monkeypatch.setattr(grid, "HFChatBackend", backend_for)
+
+    assert grid.main(["--config", str(config_path), "--owner", "t"]) == 0
+    expected = requests_tags(requests_path, 3)["requests_sha256"]
+    assert logger.runs and all(run["tags"]["requests_sha256"] == expected for run in logger.runs)
+    assert all(run["tags"]["requests_used"] == "3" for run in logger.runs)
+    assert requests_path in logger.runs[-1]["files"], "the summary run carries the requests file"
+
+
 def test_every_run_logs_the_whole_config_and_the_extra_tags():
     """Review Q3 and the plan's DVC tags: params carry the whole config; extra tags reach every run."""
     logger = RecordingLogger()

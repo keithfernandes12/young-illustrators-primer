@@ -453,8 +453,8 @@ S2 runs these steps in this order. The order matters: dedupe before the split, g
 
 ## Slices
 
-Every slice is tracked on **KAN-39**. There are no sub-tasks (Decisions, 2026-11-14), so each
-slice's branch, commits and PR carry `KAN-39`.
+Every slice is tracked on **KAN-39** (Decisions, 2026-11-14), so each slice's branch, commits and PR
+carry `KAN-39`. The exception is S2, which has its own issue, **KAN-127** (Decisions, 2026-11-15).
 
 ### S0 · This plan
 
@@ -1147,6 +1147,17 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
   - **Implication, unchanged:** the case for a larger model, word-forcing constrained decoding and
     the fine-tune. A word-matching rule that accepts inflections ("jumped" for "jump") is a product
     question, not something to change quietly to raise a number. Raised in the PR #36 reply.
+- **2026-11-15** — *Correction to the hand-check breakdown in the entry above* (found by an
+  independent check of the diff). The breakdown listed 7 outcomes for 8 requests and mixed requests
+  with words. Corrected, all counted per request (one attempt each, 1.5B at 0.7):
+  - 2 requests produced invalid JSON;
+  - 1 request used every target word;
+  - 5 requests each missed one word: **1 inflected** ("jump" written as "jumped" or "jumping") and
+    **4 absent**.
+
+  The entry above said 3 absent. The fourth, "here", was falsely counted as inflected because the
+  check's prefix test matched "her". The conclusion stands, a little stronger: inflection is one
+  cause, and most missed words are absent.
 
 ## Open questions
 

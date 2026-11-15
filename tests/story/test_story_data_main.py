@@ -24,7 +24,8 @@ from primer.story.data import (
     target_words_of,
 )
 
-#: Rows for the fake sight-word lists: two levels in the Learn to Read set, and two outside it.
+#: Rows for the fake sight-word lists: eight words at Learn to Read levels (Dolch pre-primer and
+#: grade 1, Fry 100 and 300), and four outside them (Dolch grades 2 and 3, Fry 400 and 900).
 WORDS = [
     ("dolch", "play", "pre-primer"), ("dolch", "jump", "pre-primer"), ("dolch", "funny", "pre-primer"),
     ("dolch", "little", "pre-primer"), ("dolch", "yellow", "pre-primer"), ("dolch", "ride", "grade1"),
@@ -73,7 +74,7 @@ def _write(store: Store, rel: str, df: pd.DataFrame) -> dict:
     return {"path": rel, "size": len(df) * 100, "generation": "1"}
 
 
-def fake_bucket(tmp_path) -> Store:
+def fake_bucket(tmp_path, word_lists: pd.DataFrame | None = None) -> Store:
     """A local store holding a v1.1 version: 120 picture books, two TinyStories files and the lists.
 
     The picture books use list words ("play", "jump", "under", ...) so requests can draw from the
@@ -106,7 +107,8 @@ def fake_bucket(tmp_path) -> Store:
             _write(store, "processed/storybook_pages/source=storyweaver/batch=1.parquet", pages)]}}},
         "stories_text": {"sources": {"tinystories": {"files": [big, small]}}},
         "word_lists": {"sources": {"sight_words": {"files": [
-            _write(store, "processed/word_lists/source=sight_words/batch=1.parquet", word_lists_frame())]}}},
+            _write(store, "processed/word_lists/source=sight_words/batch=1.parquet",
+                   word_lists_frame() if word_lists is None else word_lists)]}}},
     }}
     store.write_json("metadata/versions/v1.1.json", record)
     return store
@@ -134,6 +136,18 @@ def test_main_builds_requests_from_the_pinned_subset_and_writes_the_manifest(tmp
         assert set(request.target_word_lists) <= {"dolch", "fry"}, "hard filter: never a book word"
         assert not {"always", "because", "example", "machine"} & set(request.target_words)
         assert "/b" not in request.book_key, "nothing from the large TinyStories file"
+
+
+def test_main_refuses_to_build_requests_without_the_learn_to_read_words(tmp_path):
+    """An empty vocabulary would silently turn the hard filter off; main must stop instead."""
+    only_hard_words = word_lists_frame()
+    only_hard_words = only_hard_words[~only_hard_words["level"].isin(LEARN_TO_READ_LEVELS)]
+    fake_bucket(tmp_path, word_lists=only_hard_words)
+    out = tmp_path / "out" / "requests.jsonl"
+    with pytest.raises(SystemExit) as stopped:
+        main(["--data-uri", str(tmp_path / "bucket"), "--version", "v1.1", "--n", "6", "--out", str(out)])
+    assert stopped.value.code != 0
+    assert not out.exists(), "no requests may be written without the filter"
 
 
 def test_read_dataset_needs_an_explicit_store_and_reads_the_same_subset(tmp_path):

@@ -134,7 +134,8 @@ class ValidationRequest:
     license: str | None
     attribution: str | None
     #: Where each target word came from, in the same order: a word list's `list_name` ("dolch",
-    #: "fry"), or "book" when the book had too few list words and the word is from its own text.
+    #: "fry"), or "book" when no vocabulary was given and the word is from the book's own text. With a
+    #: vocabulary (the hard Learn to Read filter) it is never "book".
     target_word_lists: tuple[str, ...] = ()
 
     def to_request(self) -> StoryRequest:
@@ -349,7 +350,12 @@ def main(argv: list[str] | None = None) -> int:
     books, tiny_files, tiny_rows = load_books(store, args.version, args.tinystories_files)
     lists = read("word_lists", store, sources=["sight_words"], version=args.version)
     vocabulary, list_credits = learn_to_read_vocabulary(lists)
-    requests = build_validation_requests(books, n=args.n, vocabulary=vocabulary or None)
+    if not vocabulary:
+        # An empty list would silently turn the hard Learn to Read filter off and let requests take
+        # any word from their (up to grade 3) source books. Refuse instead.
+        parser.error(f"no Learn to Read words in word_lists/sight_words at {args.version}; "
+                     "refusing to build 3-5 requests without the hard filter")
+    requests = build_validation_requests(books, n=args.n, vocabulary=vocabulary)
     write_requests(requests, args.out)
 
     val = books[books["split"] == "val"]
