@@ -68,6 +68,9 @@ REQUIRED = ("record_id", "source_id", "label", "strokes", "license", "attributio
 
 #: The two columns AGENTS.md requires on every record; they must hold text, not merely be present.
 PROVENANCE = ("license", "attribution")
+#: Columns that must hold non-blank text. `source_id` decides the split and is hashed as a string, so
+#: a float `0.0` would land in a different split than `"0"`; `label` is case-folded for the lookup.
+TEXT_REQUIRED = ("source_id", "label", *PROVENANCE)
 
 Image = npt.NDArray[np.uint8]
 
@@ -127,6 +130,22 @@ def split_of(source_id: str, config: SplitConfig | None = None) -> str:
     return "test"
 
 
+def _seed_value(name: str, value: SupportsIndex) -> int:
+    """``value`` as a non-negative int, refused here rather than on the first item read.
+
+    ``numpy.random.SeedSequence`` accepts only non-negative integers and says so in its own words
+    at the first ``split[i]``, possibly hours into a run; a float or a negative seed is wrong from
+    the moment it is passed.
+    """
+    try:
+        number = operator.index(value)
+    except TypeError:
+        raise TypeError(f"{name} must be an integer, not {value!r}") from None
+    if number < 0:
+        raise ValueError(f"{name} must be non-negative, not {number}")
+    return number
+
+
 @dataclass(frozen=True)
 class DrawingRecord:
     """What an item is, beside its pixels: identity, label, and the licence it carries."""
@@ -140,7 +159,12 @@ class DrawingRecord:
 
 
 class RenderedSplit(Sequence[tuple[Image, int]]):
-    """One split's drawings, rendered on demand. ``split[i]`` is ``(image, label_index)``."""
+    """One split's drawings, rendered on demand. ``split[i]`` is ``(image, label_index)``.
+
+    Nothing is cached, so anything that visits every item renders every item: ``split[:]``,
+    ``x in split``, ``split.index`` and ``split.count`` (inherited from ``Sequence``) hold or
+    re-render a whole split -- about 500k canvases for ``train``. Iterate, or index one at a time.
+    """
 
     def __init__(
         self,
@@ -167,7 +191,7 @@ class RenderedSplit(Sequence[tuple[Image, int]]):
         index = label_index(labels)
         self.split = split
         self.augment = augment
-        self.seed = seed
+        self.seed = _seed_value("seed", seed)
         self.epoch = 0
         self._frame = frame.reset_index(drop=True)
         self._label_index = self._frame["label"].str.casefold().map(index).astype(int).to_numpy()
@@ -180,7 +204,7 @@ class RenderedSplit(Sequence[tuple[Image, int]]):
 
     def set_epoch(self, epoch: int) -> None:
         """Give later epochs different augmentations of the same drawings, reproducibly."""
-        self.epoch = epoch
+        self.epoch = _seed_value("epoch", epoch)
 
     def item_seed(self, index: int) -> int:
         """The augmentation seed for item ``index`` in the current epoch."""
@@ -255,7 +279,7 @@ def label_index(labels: Sequence[str]) -> dict[str, int]:
 
 
 def is_usable_text(value: object) -> bool:
-    """A provenance value that says something: a string with a non-space character in it.
+    """A value that says something: a string with a non-space character in it.
 
     ``None``, ``NaN`` and ``pd.NA`` are not strings, so they fail here along with numbers, and
     ``""`` or ``"   "`` would reach ``DrawingRecord`` as a licence nobody can read.
@@ -268,11 +292,11 @@ def check_frame(frame: pd.DataFrame, labels: Sequence[str]) -> None:
     missing = [column for column in REQUIRED if column not in frame.columns]
     if missing:
         raise ValueError(f"drawings frame lacks {missing}")
-    for column in ("record_id", "source_id", "label", "strokes"):
+    for column in ("record_id", "strokes"):
         nulls = int(frame[column].isna().sum())
         if nulls:
             raise ValueError(f"{nulls} drawings have no {column}; every record must carry one")
-    for column in PROVENANCE:
+    for column in TEXT_REQUIRED:
         # A plain count, not `~series.map(...)`: on a zero-row split `map` returns object dtype and
         # `~` fails, and a categorical column has no `~` at all.
         unusable = sum(not is_usable_text(value) for value in frame[column])

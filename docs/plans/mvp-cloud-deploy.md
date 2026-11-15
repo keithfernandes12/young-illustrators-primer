@@ -1228,7 +1228,9 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   non-text `license` / `attribution` be refused, not only null ones; the earlier "present on every
   row" was a null check alone, so it was re-measured. `read_dataset("v1.1", split)` for all three
   splits (train 506,324, val 63,112, test 63,310 = **632,746**, 35 s including the bucket read):
-  **0** rows blank or not text in either column, each column holding one distinct value
+  **0** rows blank or not text in either column (and, after a later review round made `source_id`
+  and `label` require text too, 0 refused there: all 632,746 still load), each provenance column
+  holding one distinct value
   (`CC-BY-4.0`; `Quick, Draw! Dataset, Google Creative Lab`). So the check refuses no row of the
   version this slice trains on. On each split `record(-1)` and `record(-n)` were accepted and
   `record(-n - 1)` raised `IndexError`.
@@ -1303,6 +1305,15 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   threshold, not a global one, and its cropped row cannot run through the encoder at all —
   `Encoder.encode(bytes, prompts)` has no way to pass a box, so either the box travels through
   that seam or S6c2 calls `prepare_drawing` itself before encoding (raised on KAN-109).
+- **What S6b2 hands to S6d.** Found in review of #32, none a defect in the loader as shipped.
+  *Epochs:* `RenderedSplit.set_epoch` changes the dataset in the process that calls it, so a
+  multi-worker `DataLoader` with `persistent_workers=True` never sees the new epoch; S6d should
+  rebuild the workers each epoch or carry the epoch in the sampler. *Reads:* `read_dataset`
+  re-reads and re-checks the whole version (about 15 s plus the frame check) for every split asked
+  for, so three splits are three reads; a caller-supplied frame or a cache would avoid it once a
+  training run wants all three. *Seeds:* an item's seed is 32 bits, so about 29 pairs of the 506k
+  train items share one in an epoch, which is harmless but should not be mistaken for
+  independence. Not raised on a Jira issue yet; S6d's owner decides.
 - **Where does EXIF orientation get applied?** A phone JPEG with Orientation=6 reaches
   `prepare_drawing` unrotated, as it reached the tower before this slice. The standard fix,
   `PIL.ImageOps.exif_transpose` at the decode site, is decode rather than preprocessing, but the

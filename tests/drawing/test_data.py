@@ -136,6 +136,42 @@ def test_an_epoch_reproduces_and_the_next_one_differs():
     assert np.array_equal(train[0][0], first)
 
 
+def test_each_item_has_its_own_augmentation_and_each_run_seed_its_own():
+    """Same canvas everywhere, so any difference in pixels comes from the seed alone."""
+    train = splits(seed=7)["train"]
+    other = splits(seed=8)["train"]
+
+    assert len({train.item_seed(i) for i in range(len(train))}) == len(train)
+    assert train.item_seed(0) != other.item_seed(0)
+    assert any(not np.array_equal(train[0][0], train[i][0]) for i in range(1, 6)), "items share a seed"
+    assert not np.array_equal(train[0][0], other[0][0]), "the run seed does nothing"
+    train.set_epoch(1)
+    assert train.item_seed(0) != splits(seed=7)["train"].item_seed(0)
+
+
+@pytest.mark.parametrize(
+    ("seed", "error"),
+    [(-1, ValueError), (1.5, TypeError), ("3", TypeError), (None, TypeError)],
+)
+def test_a_seed_that_numpy_would_refuse_later_is_refused_now(seed, error):
+    with pytest.raises(error, match="seed"):
+        RenderedSplit(frame(), "train", LABELS, augment=True, seed=seed)
+    train = splits()["train"]
+    with pytest.raises(error, match="epoch"):
+        train.set_epoch(seed)
+
+
+def test_numpy_integers_are_accepted_as_a_seed_and_an_epoch():
+    train = RenderedSplit(frame(), "train", LABELS, augment=True, seed=np.int64(5))
+    train.set_epoch(np.int32(2))
+
+    plain = RenderedSplit(frame(), "train", LABELS, augment=True, seed=5)
+    plain.set_epoch(2)
+
+    assert train.epoch == 2 and train.seed == 5
+    assert train.item_seed(0) == plain.item_seed(0)
+
+
 def test_labels_index_the_recognisers_vocabulary():
     built = build_splits(frame(), labels=LABELS)
     for split in built.values():
@@ -232,7 +268,11 @@ def test_a_drawing_the_renderer_refuses_raises_naming_its_record():
         (frame(attribution=[None] * 60), "no attribution"),
         (frame(label=["dragon"] * 60), "not in the recogniser's vocabulary"),
         (frame(label=[None] * 60), "no label"),
+        (frame(label=[1] * 60), "no label"),
         (frame(record_id=[None] * 60), "no record_id"),
+        (frame(source_id=[None] * 60), "no source_id"),
+        (frame(source_id=[0.0] * 60), "no source_id"),
+        (frame(source_id=[""] * 60), "no source_id"),
     ],
 )
 def test_a_frame_the_loader_cannot_honour_is_refused_before_rendering(bad, message):
@@ -358,3 +398,25 @@ def test_the_loader_uses_the_one_renderer_and_the_one_preprocessing_path():
     assert data.render_strokes is render.render_strokes
     assert data.augment_canvas is preprocess.augment_canvas
     assert data.prepare_drawing is preprocess.prepare_drawing
+
+
+def test_an_item_really_goes_through_render_then_augment_then_prepare(monkeypatch):
+    """The identity checks above show where the names point; this shows an item calls them, in order."""
+    calls: list[str] = []
+
+    def spy(name, original):
+        def wrapper(*args, **kwargs):
+            calls.append(name)
+            return original(*args, **kwargs)
+
+        return wrapper
+
+    for name in ("render_strokes", "augment_canvas", "prepare_drawing"):
+        monkeypatch.setattr(data, name, spy(name, getattr(data, name)))
+    built = splits()
+
+    built["train"][0]
+    assert calls == ["render_strokes", "augment_canvas", "prepare_drawing"]
+    calls.clear()
+    built["test"][0]
+    assert calls == ["render_strokes", "prepare_drawing"], "evaluation is never augmented"
