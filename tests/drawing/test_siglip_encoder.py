@@ -15,11 +15,16 @@ from __future__ import annotations
 
 import io
 import math
+from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any
 
+import numpy as np
 import pytest
 
+from primer.drawing import model
 from primer.drawing.model import SiglipEncoder, flattened
+from primer.drawing.preprocess import default_prepare_config
 
 torch = pytest.importorskip("torch", reason="torch comes from the `drawing` extra; CI omits it")
 Image = pytest.importorskip("PIL.Image", reason="pillow comes from the `drawing` extra too")
@@ -171,19 +176,21 @@ class CountingTower(StubTower):
 class StubProcessor:
     """Turns prompts into row counts and any bytes into a pixel tensor. No tokeniser, no PIL."""
 
-    def __init__(self):
+    def __init__(self, size: Any = None):
         self.text_kwargs: dict = {}
-        self.image_mode: str | None = None
-        #: The image itself, not just its mode. What reaches the tower is the only place the
-        #: alpha compositing is observable: a dropped alpha channel leaves the mode "RGB" and
-        #: every pixel black, so a mode assertion passes while the drawing is gone.
+        #: The input resolution `load()` checks against `prepare_drawing`'s output. The real
+        #: processor's is a `SizeDict` read by attribute; a plain dict is accepted too.
+        self.image_processor = SimpleNamespace(size=size or SimpleNamespace(height=224, width=224))
+        #: What reached the processor: `prepare_drawing`'s array. The pixels, not just the shape,
+        #: because they are the only place alpha compositing is observable -- a dropped alpha
+        #: channel leaves three channels and every pixel black, so a shape assertion passes while
+        #: the drawing is gone.
         self.image: Any = None
 
     def __call__(self, text=None, images=None, **kwargs):
         if text is not None:
             self.text_kwargs = kwargs
             return Batch({"input_ids": torch.zeros(len(text), 3, dtype=torch.long)})
-        self.image_mode = getattr(images, "mode", None)
         self.image = images
         return Batch({"pixel_values": torch.zeros(1, 3, 8, 8)})
 
@@ -202,9 +209,9 @@ class Batch(dict):
         return super().keys()
 
 
-def stubbed(config, dtype):
+def stubbed(config, dtype, prepare=None):
     """A `SiglipEncoder` with its tower already stubbed, so `load()` is a no-op."""
-    built = SiglipEncoder(config, device="cpu")
+    built = SiglipEncoder(config, device="cpu", prepare=prepare)
     built._model = StubTower(weights=[0.0, 2.0, 0.0, -2.0], dtype=dtype)
     built._processor = StubProcessor()
     built._dtype = dtype
@@ -315,6 +322,58 @@ def test_load_selects_the_dtype_that_goes_with_the_device(config, monkeypatch, d
     assert tower.evaluated, "dropout and the like off; the tower is only ever used for inference"
 
 
+def loading_with(monkeypatch, config, size) -> SiglipEncoder:
+    """A `SiglipEncoder` whose `load()` gets a stub tower and a processor declaring `size`."""
+    import transformers
+
+    processor = StubProcessor()
+    processor.image_processor = SimpleNamespace(size=size)
+    monkeypatch.setattr(transformers.AutoModel, "from_pretrained", lambda name, **kwargs: StubTower([0.0] * 4))
+    monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", lambda name, **kwargs: processor)
+    return SiglipEncoder(config, device="cpu")
+
+
+@pytest.mark.parametrize(
+    "size",
+    [SimpleNamespace(height=256, width=256), {"height": 256, "width": 256}],
+    ids=["size-dict", "plain-dict"],
+)
+def test_load_refuses_a_processor_whose_resolution_is_not_the_prepared_one(config, monkeypatch, size):
+    """`prepare_drawing` is the only resampling only while the two sizes agree; nothing else checks.
+
+    `drawing_render.yaml` marks its `size` provisional, so the checkpoint and the render settings
+    can part. When they do, the processor would resize every prepared drawing a second time.
+    """
+    built = loading_with(monkeypatch, config, size)
+
+    with pytest.raises(ValueError, match="prepared at 224 x 224"):
+        built.load()
+    assert built._model is None, "nothing is published from a refused load"
+
+
+@pytest.mark.parametrize(
+    "size",
+    [SimpleNamespace(height=224, width=224), {"height": 224, "width": 224}],
+    ids=["size-dict", "plain-dict"],
+)
+def test_load_accepts_a_processor_at_the_prepared_resolution(config, monkeypatch, size):
+    """Both shapes a processor's `size` comes in -- the real one is a `SizeDict`, read by attribute."""
+    built = loading_with(monkeypatch, config, size)
+
+    built.load()
+
+    assert built._model is not None
+
+
+@pytest.mark.parametrize("size", [None, {"shortest_edge": 224}, SimpleNamespace(max_num_patches=256)])
+def test_a_processor_with_no_fixed_square_is_refused_for_what_it_is(config, monkeypatch, size):
+    """Shortest-edge and patch-budget processors have no resolution to set `size` to."""
+    built = loading_with(monkeypatch, config, size)
+
+    with pytest.raises(ValueError, match="no fixed height x width"):
+        built.load()
+
+
 def test_the_pixels_are_cast_to_the_towers_dtype(half, png):
     """Without the cast, the first matmul on CUDA raises "mat1 and mat2 must have the same dtype".
 
@@ -345,7 +404,50 @@ def test_the_drawing_is_converted_to_three_channels(encoder, png):
     """The tower expects RGB, and a child's drawing arrives as anything from 1-bit to RGBA."""
     encoder.encode(png, PROMPTS)
 
-    assert encoder._processor.image_mode == "RGB", "the 8-bit greyscale fixture was converted"
+    seen = encoder._processor.image
+    assert seen.shape == (224, 224, 3), "the 8-bit greyscale fixture was converted"
+    assert seen.dtype == np.uint8
+
+
+def test_the_tower_sees_the_drawing_through_prepare_drawing(encoder, png, monkeypatch):
+    """KAN-31: decode and composite at the call site, then the one preprocessing path."""
+    calls = []
+    real = model.prepare_drawing
+
+    def recording(image, config=None, **kwargs):
+        calls.append((image.shape, config))
+        return real(image, config, **kwargs)
+
+    monkeypatch.setattr(model, "prepare_drawing", recording)
+    encoder.encode(png, PROMPTS)
+
+    assert calls == [((8, 8, 3), None)], "the composited RGB array, with the shipped settings"
+
+
+def test_a_wide_drawing_reaches_the_tower_padded_rather_than_squashed(encoder):
+    """The processor resizes straight to a square; `prepare_drawing` gets there first."""
+    wide = Image.new("RGB", (8, 4), (255, 255, 255))
+    wide.putpixel((3, 1), (0, 0, 0))
+    encoder.encode(as_png(wide), PROMPTS)
+
+    # Each source pixel is a 28px block, the drawing's four rows sit in rows 56-167, and the mark
+    # (source row 1) in rows 84-111. Squashed instead, source row 1 would be rows 56-111.
+    seen = encoder._processor.image
+    assert seen.shape == (224, 224, 3)
+    assert (seen[:56] == 255).all() and (seen[-56:] == 255).all(), "paper above and below"
+    assert seen[100, 100].tolist() == [0, 0, 0], "the mark"
+    assert seen[60, 100].tolist() == [255, 255, 255], "where the squash would have put the mark"
+
+
+def test_the_encoder_prepares_with_the_settings_it_was_given(config):
+    """How S6c2 runs its variants: a `PrepareConfig` handed to the encoder reaches every drawing."""
+    greyscale = replace(default_prepare_config(), greyscale=True)
+    built = stubbed(config, torch.float32, prepare=greyscale)  # through the constructor, as S6c2 will
+    red = Image.new("RGB", (8, 8), (255, 0, 0))
+
+    built.encode(as_png(red), PROMPTS)
+
+    assert (built._processor.image == 76).all(), "BT.601 luma of pure red, on all three channels"
 
 
 def test_encode_returns_a_unit_length_embedding(encoder, png):
@@ -446,9 +548,11 @@ def test_encode_composites_before_the_tower_sees_the_drawing(encoder, transparen
     encoder.encode(transparent_png, PROMPTS)
     seen = encoder._processor.image
 
-    assert seen.mode == "RGB"
-    assert seen.getpixel((0, 0)) == (255, 255, 255)
-    assert seen.getpixel((1, 1)) == (0, 0, 0)
+    # The 4x4 fixture reaches the tower enlarged to 224x224, so each source pixel is a 56px block:
+    # source (1, 1), the ink, is rows and columns 56-111.
+    assert seen.shape == (224, 224, 3)
+    assert seen[0, 0].tolist() == [255, 255, 255]
+    assert seen[80, 80].tolist() == [0, 0, 0]
 
 
 # ------------------------------------------------------------------ one transfer per vector
