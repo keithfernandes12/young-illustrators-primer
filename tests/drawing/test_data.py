@@ -280,6 +280,29 @@ def test_the_public_constructor_refuses_a_frame_without_provenance_too(split, ba
         RenderedSplit(bad, split, LABELS, augment=False)
 
 
+def test_a_split_with_no_drawings_is_valid():
+    """A small version hashes nothing into one of the three splits; that is an empty split, not an error."""
+    for count in (1, 3, 10):
+        built = build_splits(frame(count), labels=LABELS)
+        assert sum(len(split) for split in built.values()) == count
+        assert any(len(split) == 0 for split in built.values())
+
+    empty = RenderedSplit(frame().iloc[0:0], "test", LABELS, augment=False)
+    assert len(empty) == 0 and list(empty) == []
+    with pytest.raises(IndexError):
+        empty[0]
+
+
+@pytest.mark.parametrize("column", ["license", "attribution"])
+def test_provenance_held_as_a_categorical_is_judged_by_its_values(column):
+    usable = frame(**{column: pd.Categorical(["usable"] * 60)})
+    blank = frame(**{column: pd.Categorical(["usable"] * 59 + [""])})
+
+    assert len(build_splits(usable, labels=LABELS)["train"]) > 0
+    with pytest.raises(ValueError, match=f"1 drawings have no {column}"):
+        build_splits(blank, labels=LABELS)
+
+
 @pytest.mark.parametrize("column", ["license", "attribution"])
 def test_one_blank_row_among_good_ones_is_still_counted(column):
     bad = frame(**{column: ["usable"] * 57 + ["", "  ", None]})

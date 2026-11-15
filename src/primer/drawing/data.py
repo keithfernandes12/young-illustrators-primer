@@ -187,7 +187,7 @@ class RenderedSplit(Sequence[tuple[Image, int]]):
         state = np.random.SeedSequence([self.seed, self.epoch, index]).generate_state(1)
         return int(state[0])
 
-    def position(self, index: SupportsIndex) -> int:
+    def _position(self, index: SupportsIndex) -> int:
         """``index`` as a position in ``0 <= position < len(self)``, or ``IndexError``.
 
         Negative indices count from the end, but only down to ``-len(self)``: normalising first and
@@ -204,7 +204,7 @@ class RenderedSplit(Sequence[tuple[Image, int]]):
         return position
 
     def record(self, index: SupportsIndex) -> DrawingRecord:
-        index = self.position(index)
+        index = self._position(index)
         row = self._frame.iloc[index]
         return DrawingRecord(
             record_id=str(row["record_id"]),
@@ -218,7 +218,7 @@ class RenderedSplit(Sequence[tuple[Image, int]]):
     def __getitem__(self, index: Any) -> Any:
         if isinstance(index, slice):
             return [self[i] for i in range(*index.indices(len(self)))]
-        index = self.position(index)
+        index = self._position(index)
         row = self._frame.iloc[index]
         try:
             canvas = render_strokes(json.loads(row["strokes"]), self._render)
@@ -273,7 +273,9 @@ def check_frame(frame: pd.DataFrame, labels: Sequence[str]) -> None:
         if nulls:
             raise ValueError(f"{nulls} drawings have no {column}; every record must carry one")
     for column in PROVENANCE:
-        unusable = int((~frame[column].map(is_usable_text)).sum())
+        # A plain count, not `~series.map(...)`: on a zero-row split `map` returns object dtype and
+        # `~` fails, and a categorical column has no `~` at all.
+        unusable = sum(not is_usable_text(value) for value in frame[column])
         if unusable:
             raise ValueError(
                 f"{unusable} drawings have no {column} (missing, blank or not text); every record "
