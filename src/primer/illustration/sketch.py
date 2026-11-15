@@ -112,7 +112,7 @@ def prepare_sketch(data: bytes, size: int = 512) -> Image.Image:
     if ImageStat.Stat(gray).mean[0] <= paper:
         gray = ImageOps.invert(gray)
         paper = 255 - paper
-    threshold = paper + max(MIN_STROKE_CONTRAST, (_percentile(gray, 0.999) - paper) / 2)
+    threshold = paper + max(MIN_STROKE_CONTRAST, (_percentile(gray, 0.99) - paper) / 2)
     strokes = gray.point(lambda value: 255 if value >= threshold else 0)
 
     if strokes.histogram()[255] > strokes.width * strokes.height * MAX_STROKE_SHARE:
