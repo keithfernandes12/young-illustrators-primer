@@ -334,7 +334,21 @@ class SiglipEncoder:
         self._text_cache = (wanted, features)
         return features
 
-    def encode(self, image: bytes, prompts: Sequence[str]) -> Encoding:
+    def encode(
+        self,
+        image: bytes,
+        prompts: Sequence[str],
+        *,
+        prepare: PrepareConfig | None = None,
+        box: object = None,
+    ) -> Encoding:
+        """Score ``image`` against ``prompts``.
+
+        ``prepare`` overrides the encoder's own settings for this call and ``box`` crops to an
+        annotated character first; both go straight to ``prepare_drawing``. They exist for
+        evaluation (S6c2's variants), so a variant is a setting of the one preprocessing path
+        rather than a second path built beside it. The product passes neither.
+        """
         import io
 
         import torch
@@ -351,7 +365,7 @@ class SiglipEncoder:
         # canvases too. It hands the processor a square at the processor's own resolution, so the
         # processor's resize -- which would otherwise squash a non-square upload -- has nothing
         # left to do.
-        pixels = prepare_drawing(np.asarray(drawing), self.prepare)
+        pixels = prepare_drawing(np.asarray(drawing), prepare or self.prepare, box=box)
         # The dtype as well as the device. The processor always returns float32 `pixel_values`, and
         # `BatchFeature.to(device)` moves them without casting, so on CUDA -- where the tower is in
         # reduced precision -- the first matmul raises "mat1 and mat2 must have the same dtype".

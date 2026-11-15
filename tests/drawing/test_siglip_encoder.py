@@ -450,6 +450,20 @@ def test_the_encoder_prepares_with_the_settings_it_was_given(config):
     assert (built._processor.image == 76).all(), "BT.601 luma of pure red, on all three channels"
 
 
+def test_a_call_can_override_the_settings_and_crop_to_a_box(encoder):
+    """S6c2's variants: per-call settings and the annotated box, through the one path."""
+    page = Image.new("RGB", (8, 8), (255, 255, 255))
+    for x in range(2, 4):
+        for y in range(2, 4):
+            page.putpixel((x, y), (255, 0, 0))
+
+    encoder.encode(as_png(page), PROMPTS, prepare=replace(default_prepare_config(), greyscale=True), box=(2, 2, 2, 2))
+
+    assert (encoder._processor.image == 76).all(), "greyscaled, and cropped to the red square alone"
+    encoder.encode(as_png(page), PROMPTS)
+    assert encoder._processor.image[0, 0].tolist() == [255, 255, 255], "the override did not stick"
+
+
 def test_encode_returns_a_unit_length_embedding(encoder, png):
     """The KAN-71 cache key is the normalised image feature, not the raw one."""
     embedding = encoder.encode(png, PROMPTS).embedding
