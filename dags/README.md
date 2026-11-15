@@ -37,6 +37,9 @@ african_storybook  ingest → validate → preprocess ─┘
   validates it against `configs/schemas/<dataset>.json` with Great Expectations, and compares it
   with the previous profile. Schema **errors fail the run**; drift is a warning. Results go to
   `metadata/profiles/` and `metadata/anomalies/` (see the [data README](../src/primer/data/README.md#statistics-schema-and-anomalies)).
+  Long text columns (stories, strokes) are streamed for their statistics rather than loaded, so the
+  check on all of `v1.1` (about 2.65M rows) peaks at **about 2.8 GB** and takes about 30 s
+  (measured on a laptop, 2026-11-14). Before KAN-91 it needed 11.9 GB and was killed inside Airflow.
 - **Alerts:** any failed task emails `PRIMER_ALERT_EMAILS` with the task, run and error (schema
   errors included); drift warnings are emailed by `check_data`. When `summarize` fails because a
   source did, it only logs, since that source task has already sent its alert; when it fails on its

@@ -283,18 +283,118 @@ def test_one_broken_dataset_does_not_stop_the_others_or_the_report(store, tmp_pa
     schemas = tmp_path / "schemas"
     _write(store, frame(), "20261001T000000Z")
     profiling.write_schemas(store, schemas_dir=schemas, datasets=("readability",))
-    real_read = profiling.read_dataset
+    real_load = profiling.load_dataset
 
-    def read(dataset, store):
+    def load(store, dataset, min_lengths=None):
         if dataset == "drawings":
             raise OSError("corrupt parquet")
-        return real_read(dataset, store)
+        return real_load(store, dataset, min_lengths)
 
-    monkeypatch.setattr(profiling, "read_dataset", read)
+    monkeypatch.setattr(profiling, "load_dataset", load)
     report = profiling.check_datasets(store, run_id="r", schemas_dir=schemas, datasets=("drawings", "readability"))
     assert [(a["dataset"], a["check"]) for a in report["anomalies"]] == [("drawings", "check_failed")]
     assert report["datasets"]["readability"]["errors"] == 0
     assert store.exists("metadata/anomalies/r.json")
+
+
+# ------------------------------------------------------------------ long text (KAN-91)
+#
+# 1.8M stories made Great Expectations need over 7 GB, so long text columns are checked from exact
+# statistics gathered a chunk at a time instead. These tests pin that the results do not change.
+
+def _write_stories(store, df, parts=2):
+    """Write ``df`` as several TinyStories batches, an incremental source, so every file is read."""
+    for i, chunk in enumerate(np.array_split(np.arange(len(df)), parts)):
+        store.write_parquet(f"processed/stories_text/source=tinystories/batch=2026100{i + 1}T000000Z.parquet",
+                            df.iloc[chunk].reset_index(drop=True))
+
+
+def stories(n=120):
+    df = frame(n)
+    df.loc[3, "text"] = pd.NA                     # a missing story, allowed by the schema below
+    df.loc[5, "text"] = "short " + "x" * 400       # lengths differ, so min/max/mean are tested
+    return df
+
+
+def test_long_text_never_reaches_great_expectations(store, tmp_path, monkeypatch):
+    schemas = tmp_path / "schemas"
+    _write_stories(store, stories())
+    profiling.write_schemas(store, schemas_dir=schemas, datasets=("stories_text",))
+    seen = []
+    real = profiling._gx_ready
+    monkeypatch.setattr(profiling, "_gx_ready", lambda df: seen.append(list(df.columns)) or real(df))
+
+    report = profiling.check_datasets(store, run_id="r", save=False, schemas_dir=schemas, datasets=("stories_text",))
+
+    assert report["errors"] == 0
+    assert seen and all("text" not in columns for columns in seen)
+    assert all("word_count" in columns for columns in seen)   # the other columns still go through GX
+
+
+def test_streamed_profile_matches_the_in_memory_profile(store, monkeypatch):
+    monkeypatch.setattr(profiling, "TEXT_BATCH_ROWS", 7)   # many chunks per file, so merging is exercised
+    df = stories()
+    _write_stories(store, df, parts=3)
+
+    loaded = profiling.load_dataset(store, "stories_text")
+
+    assert set(loaded.text) == {"text"}                     # only the long column is streamed
+    assert "text" not in loaded.frame.columns
+    assert loaded.profile() == profiling.profile_frame(df)
+    assert list(loaded.profile()["columns"]) == list(df.columns)
+
+
+def test_a_text_column_missing_from_one_file_counts_as_null_there(store):
+    df = stories()
+    first, second = df.iloc[:60].reset_index(drop=True), df.iloc[60:].reset_index(drop=True)
+    store.write_parquet("processed/stories_text/source=tinystories/batch=20261001T000000Z.parquet", first)
+    store.write_parquet("processed/stories_text/source=tinystories/batch=20261002T000000Z.parquet",
+                        second.drop(columns="text"))   # an older batch written before the column existed
+
+    loaded = profiling.load_dataset(store, "stories_text")
+
+    assert loaded.text["text"].nulls == 60 + int(first["text"].isna().sum())
+    assert loaded.profile() == profiling.profile_frame(pd.concat([first, second.drop(columns="text")],
+                                                                 ignore_index=True))
+
+
+@pytest.mark.parametrize("change, expected", [
+    (lambda df: df, set()),
+    (lambda df: df.assign(text=df["text"].where(df.index > 20)),
+     {("expect_column_values_to_not_be_null", "text")}),
+    (lambda df: df.assign(text=df["text"].mask(df.index == 0, "")),
+     {("expect_column_value_lengths_to_be_between", "text")}),
+    (lambda df: df.drop(columns="text"), {("expect_table_columns_to_match_set", None),   # and the column's
+                                           ("expect_column_values_to_not_be_null", "text"),  # own checks,
+                                           ("expect_column_value_lengths_to_be_between", "text")}),  # as GX does
+    (lambda df: df.assign(notes="note " * 60), {("expect_table_columns_to_match_set", None)}),
+], ids=["clean", "too_many_nulls", "one_empty_story", "text_missing", "extra_long_column"])
+def test_long_text_contract_breaks_match_the_full_frame_check(tmp_path, context, change, expected):
+    from primer.data.storage import Store
+
+    schema = profiling.infer_schema("stories_text", profiling.profile_frame(stories()))
+    df = change(stories())
+    store = Store((tmp_path / "data").as_posix())
+    _write_stories(store, df)
+    loaded = profiling.load_dataset(store, "stories_text", min_lengths=profiling.min_lengths(schema))
+
+    streamed = {(a.check, a.column) for a in profiling.validate(loaded.frame, schema, context, loaded.text)}
+    full = {(a.check, a.column) for a in profiling.validate(df, schema, context)}
+
+    assert streamed == full == expected
+
+
+def test_a_categorical_column_that_turns_into_long_text_is_an_error(tmp_path, context):
+    from primer.data.storage import Store
+
+    schema = profiling.infer_schema("stories_text", profiling.profile_frame(stories()))
+    assert "allowed" in schema["columns"]["source"]
+    store = Store((tmp_path / "data").as_posix())
+    _write_stories(store, stories().assign(source="tinystories " * 30))
+    loaded = profiling.load_dataset(store, "stories_text", min_lengths=profiling.min_lengths(schema))
+
+    found = {(a.check, a.column) for a in profiling.validate(loaded.frame, schema, context, loaded.text)}
+    assert ("expect_column_values_to_be_in_set", "source") in found
 
 
 def test_an_unreadable_previous_profile_is_skipped(store):

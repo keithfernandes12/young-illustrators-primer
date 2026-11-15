@@ -19,6 +19,12 @@ For every processed dataset, after each pipeline run:
 
 ``check_datasets`` runs all four and returns the anomalies. The Airflow DAG fails the run on
 errors and emails the anomalies (see ``alerts.py``).
+
+**Long text stays out of memory** (``load_dataset``, KAN-91). A text column whose mean length is
+over ``LONG_TEXT`` (stories, Quick, Draw! strokes) is never held whole: it is read a chunk at a time
+for exact statistics (nulls, lengths), and its contract (not null, not empty) is checked from those.
+Every other column is read in full and validated by Great Expectations as before. Given all 1.8M
+stories, Great Expectations alone needed over 7 GB and was killed inside Airflow.
 """
 
 from __future__ import annotations
@@ -35,7 +41,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from primer.data.catalog import DATASETS, read_dataset
+from primer.data.catalog import DATASETS, dataset_files
 from primer.data.config import REPO_ROOT
 from primer.data.storage import Store
 
@@ -51,8 +57,9 @@ OPEN_COLUMNS = {"batch_id", "translator"}  # new batches and new names arrive wi
 # Free-text credits a source may legitimately leave empty: a book with no "# " title line, an
 # empty "* Illustration: []" credit, an empty caption cell. Empty there is not missing content.
 CREDIT_COLUMNS = {"title", "author", "illustrator", "translator", "image_caption"}
-LONG_TEXT = 200              # mean length above this: skip distinct counting (stories, strokes)
+LONG_TEXT = 200              # mean length above this: skip distinct counting, and stream it (stories, strokes)
 TOP_VALUES = 10
+TEXT_BATCH_ROWS = 50_000     # rows per chunk when streaming long text; sets memory use, never results
 
 # Drift thresholds (warnings, not errors).
 ROW_DROP = 0.05              # rows fell by more than 5%
@@ -125,6 +132,126 @@ def profile_column(series: pd.Series) -> dict[str, Any]:
 
 def profile_frame(df: pd.DataFrame) -> dict[str, Any]:
     return {"rows": len(df), "columns": {col: profile_column(df[col]) for col in df.columns}}
+
+
+# ------------------------------------------------------------------ loading without the long text
+
+@dataclass
+class TextStats:
+    """Exact statistics of one text column, gathered a chunk at a time."""
+
+    rows: int = 0
+    nulls: int = 0
+    total_length: int = 0
+    min_length: int | None = None
+    max_length: int | None = None
+    too_short: int = 0       # non-null values shorter than the schema's ``min_length``
+
+    @property
+    def non_null(self) -> int:
+        return self.rows - self.nulls
+
+    @property
+    def mean_length(self) -> float:
+        return self.total_length / self.non_null if self.non_null else 0.0
+
+    def profile(self) -> dict[str, Any]:
+        """The entry ``profile_column`` gives a long text column, from the statistics alone."""
+        nf = self.nulls / self.rows
+        return {"kind": "string", "null_fraction": _sig(nf, direction="down" if nf > 0.5 else "up"),
+                "mean_length": self.mean_length, "min_length": self.min_length, "max_length": self.max_length}
+
+
+def _is_text(field_type) -> bool:
+    import pyarrow as pa
+
+    return bool(pa.types.is_string(field_type) or pa.types.is_large_string(field_type)
+                or getattr(pa.types, "is_string_view", lambda _: False)(field_type))
+
+
+def _scan_text(store: Store, paths: list[str], min_lengths: dict[str, int]) -> tuple[dict[str, TextStats], int,
+                                                                                   list[str]]:
+    """Statistics of every text column across ``paths``, one chunk in memory at a time.
+
+    Also returns the total row count and every column name in file order. A column missing from
+    some files counts as null there, as it would in the concatenated frame.
+    """
+    import pyarrow.compute as pc
+    import pyarrow.parquet as pq
+
+    stats: dict[str, TextStats] = {}
+    columns: list[str] = []
+    rows = 0
+    for path in paths:
+        with store.fs.open(store.path(path), "rb") as fh:
+            parquet = pq.ParquetFile(fh)
+            rows += parquet.metadata.num_rows
+            columns += [f.name for f in parquet.schema_arrow if f.name not in columns]
+            names = [f.name for f in parquet.schema_arrow if _is_text(f.type)]
+            for batch in parquet.iter_batches(batch_size=TEXT_BATCH_ROWS, columns=names) if names else ():
+                for name in names:
+                    column = batch.column(name)
+                    lengths = pc.utf8_length(column)
+                    s = stats.setdefault(name, TextStats())
+                    s.rows += len(column)
+                    s.nulls += column.null_count
+                    if column.null_count == len(column):
+                        continue
+                    low, high = pc.min(lengths).as_py(), pc.max(lengths).as_py()
+                    s.total_length += pc.sum(lengths).as_py()
+                    s.min_length = low if s.min_length is None else min(s.min_length, low)
+                    s.max_length = high if s.max_length is None else max(s.max_length, high)
+                    if name in min_lengths:
+                        s.too_short += pc.sum(pc.less(lengths, min_lengths[name])).as_py() or 0
+    for s in stats.values():
+        s.nulls += rows - s.rows    # files without the column
+        s.rows = rows
+    return stats, rows, columns
+
+
+@dataclass
+class LoadedDataset:
+    """A dataset with its long text columns held as statistics only."""
+
+    frame: pd.DataFrame              # every column except the long text ones
+    text: dict[str, TextStats]       # the long text columns
+    rows: int
+    columns: list[str]               # every column, in file order
+
+    def profile(self) -> dict[str, Any]:
+        """Equal to ``profile_frame`` of the whole dataset (tested), without loading the long text."""
+        return {"rows": self.rows, "columns": {
+            name: self.text[name].profile() if name in self.text else profile_column(self.frame[name])
+            for name in self.columns}}
+
+
+def load_dataset(store: Store, dataset: str, min_lengths: dict[str, int] | None = None) -> LoadedDataset:
+    """Read a dataset like ``read_dataset`` does, except that text columns averaging over
+    ``LONG_TEXT`` characters are streamed for statistics instead of loaded.
+
+    ``min_lengths`` (from the schema, see ``min_lengths``) lets the stream also count values that
+    are too short, so the contract can be checked without the text.
+    """
+    import pyarrow.parquet as pq
+
+    paths = [p for group in dataset_files(store, dataset).values() for p in group]
+    scanned, rows, columns = _scan_text(store, paths, min_lengths or {})
+    text = {name: s for name, s in scanned.items() if s.non_null and s.mean_length > LONG_TEXT}
+    frames = []
+    for path in paths:
+        with store.fs.open(store.path(path), "rb") as fh:
+            keep = [name for name in pq.read_schema(fh).names if name not in text]
+            fh.seek(0)
+            # pd.read_parquet, as Store.read_parquet uses, so the dtypes match read_dataset's
+            frames.append(pd.read_parquet(fh, columns=keep))
+    frame = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    return LoadedDataset(frame, text, rows, columns)
+
+
+def min_lengths(schema: dict[str, Any] | None) -> dict[str, int]:
+    """The schema's minimum text lengths, for ``load_dataset`` to count values below them."""
+    return {name: spec["min_length"] for name, spec in (schema or {}).get("columns", {}).items()
+            if "min_length" in spec}
 
 
 # ------------------------------------------------------------------ schema
@@ -250,8 +377,15 @@ def gx_context():
     return context
 
 
-def validate(df: pd.DataFrame, schema: dict[str, Any], context=None) -> list[Anomaly]:
-    """Run the schema's Great Expectations suite on ``df``; each failed expectation is an error."""
+def validate(df: pd.DataFrame, schema: dict[str, Any], context=None,
+             text: dict[str, TextStats] | None = None) -> list[Anomaly]:
+    """Run the schema's Great Expectations suite on ``df``; each failed expectation is an error.
+
+    ``text`` holds the long text columns that ``load_dataset`` left out of ``df``. Their part of
+    the contract is checked from those statistics instead (``text_contract``), with the same check
+    names, and the column-set expectation covers only the columns actually in ``df``.
+    """
+    text = text or {}
     context = context or gx_context()
     source = context.data_sources.get("primer")
     name = schema["dataset"]
@@ -260,8 +394,9 @@ def validate(df: pd.DataFrame, schema: dict[str, Any], context=None) -> list[Ano
     asset = source.add_dataframe_asset(name=name)
     batch = asset.add_batch_definition_whole_dataframe("all").get_batch(
         batch_parameters={"dataframe": _gx_ready(df)})
-    result = batch.validate(build_suite(schema))
-    anomalies = []
+    in_frame = {**schema, "columns": {k: v for k, v in schema["columns"].items() if k not in text}}
+    result = batch.validate(build_suite(in_frame))
+    anomalies = text_contract(schema, text)
     for r in result.results:
         if r.success:
             continue
@@ -278,6 +413,41 @@ def validate(df: pd.DataFrame, schema: dict[str, Any], context=None) -> list[Ano
             detail += f": {r.exception_info.get('exception_message')}"
         anomalies.append(Anomaly(schema["dataset"], "error", cfg.type, cfg.kwargs.get("column"), detail))
     return anomalies
+
+
+def text_contract(schema: dict[str, Any], text: dict[str, TextStats]) -> list[Anomaly]:
+    """The schema's expectations for long text columns, decided from exact statistics.
+
+    The same rules ``build_suite`` gives Great Expectations: the non-null share must reach
+    ``mostly``, a ``not_all_null`` column needs one value, and no value may be shorter than
+    ``min_length``. A column the schema doesn't have breaks the column set; one the schema expects to
+    be numeric or categorical (``min``, ``allowed``) has turned into long text, which also breaks it.
+    """
+    dataset, out = schema["dataset"], []
+    for name, s in text.items():
+        spec = schema["columns"].get(name)
+        if spec is None:
+            out.append(Anomaly(dataset, "error", "expect_table_columns_to_match_set", None,
+                               f"expect_table_columns_to_match_set: unexpected column {name!r}"))
+            continue
+        non_null = s.non_null / s.rows
+        if spec["max_null_fraction"] < 1.0:
+            mostly = _sig(1.0 - spec["max_null_fraction"], direction="down")
+            if non_null < mostly:
+                out.append(Anomaly(dataset, "error", "expect_column_values_to_not_be_null", name,
+                                   f"expect_column_values_to_not_be_null: {100 * (1 - non_null):.2f}% unexpected"))
+        elif spec.get("not_all_null") and s.non_null == 0:
+            out.append(Anomaly(dataset, "error", "expect_column_values_to_not_be_null", name,
+                               "expect_column_values_to_not_be_null: 100.00% unexpected"))
+        if "min_length" in spec and s.too_short:
+            out.append(Anomaly(dataset, "error", "expect_column_value_lengths_to_be_between", name,
+                               f"expect_column_value_lengths_to_be_between: {100 * s.too_short / s.non_null:.2f}% "
+                               f"unexpected (shorter than {spec['min_length']})"))
+        for key, check in (("min", "expect_column_values_to_be_between"), ("allowed", "expect_column_values_to_be_in_set")):
+            if key in spec:
+                out.append(Anomaly(dataset, "error", check, name,
+                                   f"{check}: the column is now long text (mean length {s.mean_length:.0f})"))
+    return out
 
 
 def range_warnings(schema: dict[str, Any], profile: dict[str, Any],
@@ -372,10 +542,11 @@ def _check_dataset(store: Store, dataset: str, run_id: str, created_at: str, sav
     Returns its profile (None if it has no rows and was never profiled, e.g. a source not yet run
     in this data root), its anomalies, and the GX context, created on first use.
     """
-    df = read_dataset(dataset, store)
+    schema = load_schema(dataset, schemas_dir)
+    data = load_dataset(store, dataset, min_lengths(schema))
     out_path = f"{PROFILES_DIR}/{dataset}/{_safe(run_id)}.json"
     prev = previous_profile(store, dataset, exclude=out_path)
-    if df.empty:
+    if data.rows == 0:
         if not prev:
             return None, [], context
         # Not saved as a profile, so the last good one stays the baseline and every empty run errors.
@@ -383,9 +554,9 @@ def _check_dataset(store: Store, dataset: str, run_id: str, created_at: str, sav
                 [Anomaly(dataset, "error", "empty_dataset", None,
                          f"no rows; the last check with data ({prev.get('run_id')}) had {prev.get('rows', 0):,}")],
                 context)
-    log.info("Checking %s (%s rows)", dataset, f"{len(df):,}")
-    profile = {"dataset": dataset, "run_id": run_id, "created_at": created_at, **profile_frame(df)}
-    schema = load_schema(dataset, schemas_dir)
+    log.info("Checking %s (%s rows%s)", dataset, f"{data.rows:,}",
+             f"; streaming {', '.join(data.text)}" if data.text else "")
+    profile = {"dataset": dataset, "run_id": run_id, "created_at": created_at, **data.profile()}
     anomalies: list[Anomaly] = []
     if schema is None:
         anomalies.append(Anomaly(dataset, "error", "no_schema", None,
@@ -393,7 +564,7 @@ def _check_dataset(store: Store, dataset: str, run_id: str, created_at: str, sav
                                  "run `primer-data profile --write-schemas` and commit it"))
     else:
         context = context or gx_context()
-        anomalies += validate(df, schema, context) + range_warnings(schema, profile, prev)
+        anomalies += validate(data.frame, schema, context, data.text) + range_warnings(schema, profile, prev)
     if prev:
         anomalies += drift(dataset, prev, profile)
     if save:
@@ -446,10 +617,10 @@ def write_schemas(store: Store | None = None, schemas_dir: Path = SCHEMAS_DIR,
     schemas_dir.mkdir(parents=True, exist_ok=True)
     written = []
     for dataset in datasets:
-        df = read_dataset(dataset, store)
-        if df.empty:
+        data = load_dataset(store, dataset)
+        if data.rows == 0:
             continue
-        schema = json.loads(json.dumps(infer_schema(dataset, profile_frame(df)), default=_json_default))
+        schema = json.loads(json.dumps(infer_schema(dataset, data.profile()), default=_json_default))
         path = schemas_dir / f"{dataset}.json"
         if path.exists():
             # Keep the old date when nothing else changed, so an unchanged contract has no diff.
