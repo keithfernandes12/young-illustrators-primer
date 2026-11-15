@@ -52,21 +52,30 @@ def scribble_style_sketch() -> bytes:
 # --- Synthetic multi-page books, for the consistency score (KAN-105) -------------------------------
 #
 # Rendered pages and parent-approved references for a handful of books whose right answer is known by
-# construction. They are what `IllustratorModel.consistency()` will be tested on once it calls the
-# stage 6 scorer (KAN-103), and they assume nothing about that scorer: no embedder, no threshold. Each
-# book records only what any correct scorer has to conclude, and `expect_pass` is None where the team
-# has not yet decided what that is.
+# construction. They are what `IllustratorModel.consistency()` will be tested on once it calls
+# `primer.illustration.consistency.scorer.ConsistencyScorer` (wiring: KAN-105), and they assume
+# nothing about that scorer: no embedder, no threshold. Each book records only what any correct scorer
+# has to conclude, and `expect_pass` is None where the team has not yet decided what that is.
 #
-# `expect_pass` is the verdict once a threshold exists. `ConsistencyScorer` (#24) gives no verdict
-# until KAN-104 sets one, so a test that needs pass or fail builds the scorer with an explicit
-# threshold and an embedder that sees the picture: real CLIP B/32 behind the `consistency` extra, or
-# a test embedder that reads decoded pixels. Not `FakeEmbedder`: it counts the PNG's compressed bytes,
-# so these books score within 0.01 of each other and its verdicts would follow the zlib and Pillow
-# versions, not the characters. With no references, `score()` returns 0.0; what `consistency()` and
-# `build_book()` do then is the open KAN-105 question.
+# Which embedder for which test:
+# - Plumbing tests -- which references reach `score()`, the approval filter, page order, one embed
+#   call per book -- can use `scorer.FakeEmbedder`. It is cheap and deterministic.
+# - Pass/fail and weakest-page tests need an embedder that can tell Pip from Zog: real CLIP B/32
+#   behind the `consistency` extra, or a test embedder that reads the decoded character pixels.
+#   `FakeEmbedder` cannot: it counts the PNG's compressed bytes, so these books score within 0.01 of
+#   each other and its verdicts would follow the zlib and Pillow versions, not the characters.
+# `expect_pass` is the verdict once a threshold exists; `ConsistencyScorer` gives none until KAN-104
+# sets one, so a verdict test passes an explicit threshold. With no references `score()` returns 0.0;
+# what `consistency()` and `build_book()` do then is the open KAN-105 question.
 #
 # Characters are storybook-style renders, not crayon: the reference a page is scored against is the
-# approved `reference_image_ref`, never the child's crop.
+# approved `reference_image_ref`, never the child's crop. References are character sheets on plain
+# white; pages put the character in a scene. That mirrors the product, and it is the property a real
+# scorer needs: judge the character, not the setting. The character covers roughly a tenth of the
+# image, so any whole-image pixel statistic mostly measures the background -- a colour histogram
+# scores every book about 0.01 with these scenes, and about 0.99 (wrong character included) with
+# plain backgrounds instead. Neutralising the scenes would only hide that; an embedder that attends to
+# the character gets every verdict here right either way.
 
 
 @dataclass(frozen=True)
@@ -151,7 +160,8 @@ class SyntheticBook:
     page_looks: tuple[Look, ...]
     #: What a correct score must conclude. None: the team has not decided (see the KAN-105 question).
     expect_pass: bool | None
-    #: The page a scorer should name as weakest, when exactly one page is wrong.
+    #: The page a scorer should name as weakest, when exactly one page is wrong. None when no single
+    #: page stands out: every page is right, or every page is equally wrong.
     weakest_page: int | None = None
 
 
@@ -169,6 +179,7 @@ def _book(
     expect_pass: bool | None,
     weakest_page: int | None = None,
     same_pose: bool = False,
+    conditioned_on: list[int] | None = None,
 ) -> SyntheticBook:
     characters = []
     for label, look, approved in references:
@@ -180,8 +191,10 @@ def _book(
             continue
         ref = _write(directory, render(look))
         characters.append(character.approve(ref) if approved else replace(character, reference_image_ref=ref))
-    # Each page is conditioned on the character it shows, as IP-Adapter would record it.
-    identity = {look: c.identity_key for (_, look, _), c in zip(references, characters, strict=True)}
+    # `identity` records what IP-Adapter was *conditioned on*, never what the page came out showing.
+    # A drift is exactly "conditioned on Pip, drew Zog", so a page's identity must not give that away:
+    # only the pixels may. Pages are conditioned on the first character unless a book says otherwise.
+    conditioned_on = conditioned_on or [0] * len(pages)
     illustrations = []
     for index, look in enumerate(pages):
         x, y, scale, background = POSES[0] if same_pose else POSES[index % len(POSES)]
@@ -192,7 +205,7 @@ def _book(
                 alt_text=f"page {index}",
                 subject="creature",
                 conditioned_on_sketch=True,
-                identity=identity.get(look),
+                identity=characters[conditioned_on[index]].identity_key if characters else None,
             )
         )
     return SyntheticBook(tuple(characters), illustrations, tuple(pages), expect_pass, weakest_page)
@@ -214,9 +227,14 @@ def synthetic_books(tmp_path) -> dict[str, SyntheticBook]:
         "one_page_drifts": _book(
             tmp_path, [("pip", PIP, True)], [PIP, PIP, ZOG, PIP], expect_pass=False, weakest_page=2
         ),
-        # Two approved characters, alternating. Each page matches its closest reference, so it passes.
+        # Two approved characters, alternating, each page conditioned on the one it is about. Each page
+        # matches its closest reference, so it passes.
         "two_characters": _book(
-            tmp_path, [("pip", PIP, True), ("zog", ZOG, True)], [PIP, ZOG, PIP, ZOG], expect_pass=True
+            tmp_path,
+            [("pip", PIP, True), ("zog", ZOG, True)],
+            [PIP, ZOG, PIP, ZOG],
+            expect_pass=True,
+            conditioned_on=[0, 1, 0, 1],
         ),
         # A reference exists but no parent approved it. Undecided: see the KAN-105 question.
         "unapproved_reference": _book(tmp_path, [("pip", PIP, False)], [PIP] * 4, expect_pass=None),
