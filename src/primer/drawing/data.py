@@ -160,6 +160,9 @@ class RenderedSplit(Sequence[tuple[Image, int]]):
                 f"augmentation is for training only; {split} is scored as the renderer draws it, "
                 "or the evaluation measures the augmentation"
             )
+        # Here as well as in `build_splits` / `read_dataset`: this is a public constructor, and a
+        # frame handed to it directly must not reach `record()` without provenance.
+        check_frame(frame, labels)
         index = label_index(labels)
         self.split = split
         self.augment = augment

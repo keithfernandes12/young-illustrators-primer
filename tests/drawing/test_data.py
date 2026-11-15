@@ -213,6 +213,26 @@ def test_provenance_that_is_blank_or_not_text_is_refused(column, value):
         build_splits(bad, labels=LABELS)
 
 
+@pytest.mark.parametrize("split", data.SPLITS)
+@pytest.mark.parametrize(
+    ("bad", "message"),
+    [
+        (frame().drop(columns=["license"]), "lacks"),
+        (frame(license=[None] * 60), "no license"),
+        (frame(attribution=[None] * 60), "no attribution"),
+        (frame(license=["  "] * 60), "no license"),
+        (frame(attribution=[""] * 60), "no attribution"),
+        (frame(license=[7] * 60), "no license"),
+        (frame(label=["dragon"] * 60), "not in the recogniser's vocabulary"),
+        (frame(label=[None] * 60), "no label"),
+    ],
+)
+def test_the_public_constructor_refuses_a_frame_without_provenance_too(split, bad, message):
+    """`RenderedSplit(...)` is public; building one directly is not a way round the checks."""
+    with pytest.raises(ValueError, match=message):
+        RenderedSplit(bad, split, LABELS, augment=False)
+
+
 @pytest.mark.parametrize("column", ["license", "attribution"])
 def test_one_blank_row_among_good_ones_is_still_counted(column):
     bad = frame(**{column: ["usable"] * 57 + ["", "  ", None]})
