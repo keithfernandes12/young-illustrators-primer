@@ -1447,7 +1447,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   **every** drawing of S6b2's test split, **63,310**, read from `gs://young-illustrators-primer-data`.
   No sample, so no sampler applies. Taken on the **RTX 4060 in bf16** at encoder revision `75de2d55`,
   prompts sha256 `9b82e482…`. It ran in 757 s, 0.012 s per drawing including render and PNG
-  round-trip. The code was commit `b5e7294`. `check_gate.py --only drawing` on the file prints
+  round-trip. The run started from an uncommitted tree identical to commit `b5e7294`, which the file records as its `git_sha`. `check_gate.py --only drawing` on the file prints
   `FAIL drawing_top5_acc >= 0.85: actual=0.4956`, a verdict rather than `metric missing`. The chance
   baseline is 0.0145. Not in MLflow: there is no host (KAN-107).
   - **What the number is over.** Top-5 on **rendered** Quick, Draw!: the gate's number, not the

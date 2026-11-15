@@ -162,6 +162,21 @@ def test_the_file_is_the_contract_shape_with_the_gated_key_also_at_the_top():
     assert set(evaluate.OWNED_METRICS) <= set(result["overall"])
 
 
+def test_a_limited_probe_cannot_be_gated(tmp_path):
+    path = tmp_path / "probe.json"
+    path.write_text(json.dumps(_file([True] * 10, whole_split=False)), encoding="utf-8")
+
+    run = subprocess.run(
+        [sys.executable, str(CHECK_GATE), "--metrics", str(path), "--only", "drawing"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert "metric missing" in run.stdout
+    assert "GATE_RESULT: FAIL" in run.stdout
+
+
 def test_the_file_never_claims_to_be_fake_scored():
     # check_gate reads `fake_models` for the whole file; a real number must not carry it.
     assert "fake_models" not in _file([True])
@@ -185,6 +200,84 @@ def test_the_release_gate_returns_a_verdict_on_this_file_not_metric_missing(tmp_
 
 
 # --------------------------------------------------------------------------------------------- CLI
+
+
+def _stub_world(monkeypatch, frame: pd.DataFrame, winner: str) -> list[object]:
+    """The bucket and the tower replaced; rendering, splitting and label mapping stay real."""
+    from primer.data import catalog, storage
+    from primer.drawing import model
+
+    labels = model.DrawingConfig.from_yaml().labels()
+    devices: list[object] = []
+
+    class FakeEncoder:
+        def __init__(self, config, device=None):
+            devices.append(device)
+            self.device = device or "auto-picked"
+            self.dtype_name = "bfloat16" if device == "cuda" else "float32"
+            self.prepare = None
+
+        def encode(self, image, prompts):
+            assert image.startswith(b"\x89PNG"), "the encoder gets PNG bytes, as an upload"
+            scores = [0.1] * len(prompts)
+            scores[labels.index(winner)] = 0.9
+            return SimpleNamespace(confidences=scores)
+
+    monkeypatch.setattr(catalog, "read_dataset", lambda *args, **kwargs: frame)
+    monkeypatch.setattr(storage, "Store", lambda: SimpleNamespace(uri="gs://bucket"))
+    monkeypatch.setattr(model, "SiglipEncoder", FakeEncoder)
+    return devices
+
+
+def _test_split_frame(rows: int) -> pd.DataFrame:
+    """``rows`` drawings whose source ids the real split function puts in ``test``."""
+    from primer.drawing.data import split_of
+
+    ids = [f"s{i}" for i in range(rows * 30) if split_of(f"s{i}") == "test"][:rows]
+    half = rows // 2
+    return pd.DataFrame(
+        {
+            "record_id": [f"r-{i}" for i in ids],
+            "source_id": ids,
+            # The data's lower-case spelling; the vocabulary's is `The Eiffel Tower`.
+            "label": ["the eiffel tower"] * half + ["zigzag"] * (rows - half),
+            "strokes": json.dumps([[[0, 50, 100], [0, 80, 20]]]),
+            "country_code": ["US"] * half + ["GB"] * (rows - half),
+            "license": "CC-BY-4.0",
+            "attribution": "Quick, Draw!",
+        }
+    )
+
+
+def test_the_cli_scores_the_test_split_end_to_end(monkeypatch, tmp_path):
+    devices = _stub_world(monkeypatch, _test_split_frame(6), winner="The Eiffel Tower")
+    out = tmp_path / "m.json"
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    code = evaluate.main(
+        ["--model", str(model_yaml), "--version", "v1.1", "--device", "cuda", "--out", str(out)]
+    )
+
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert code == 0 and devices == ["cuda"]
+    # Eiffel is top-1 (a hit despite the case); `zigzag` sits far down a tie-broken ranking.
+    assert result["drawing_top5_acc"] == 0.5 and result["overall"]["drawings"] == 6
+    assert {s["value"]: s["metrics"]["drawing_top5_acc"] for s in result["slices"]} == {"GB": 0.0, "US": 1.0}
+    assert result["device"] == "cuda" and result["dtype"] == "bfloat16"
+    assert result["split"] == "test" and result["data_version"] == "v1.1" and result["limit"] is None
+    assert result["license"] == ["CC-BY-4.0"] and result["attribution"] == ["Quick, Draw!"]
+
+
+def test_a_limited_cli_run_writes_no_gated_key(monkeypatch, tmp_path):
+    _stub_world(monkeypatch, _test_split_frame(6), winner="The Eiffel Tower")
+    out = tmp_path / "probe.json"
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    evaluate.main(["--model", str(model_yaml), "--version", "v1.1", "--limit", "2", "--out", str(out)])
+
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert "drawing_top5_acc" not in result
+    assert result["overall"] == {"drawing_top5_acc": 1.0, "drawings": 2} and result["limit"] == 2
 
 
 def test_the_cli_refuses_the_training_split():

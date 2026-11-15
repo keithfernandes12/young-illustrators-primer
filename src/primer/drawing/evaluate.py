@@ -367,7 +367,12 @@ def accuracy_by_slice(hits: Sequence[bool], groups: Mapping[str, Sequence[str]])
 
 
 def metrics_file(
-    hits: Sequence[bool], groups: Mapping[str, Sequence[str]], vocabulary_size: int, **provenance: Any
+    hits: Sequence[bool],
+    groups: Mapping[str, Sequence[str]],
+    vocabulary_size: int,
+    *,
+    whole_split: bool = True,
+    **provenance: Any,
 ) -> dict[str, Any]:
     """The ``primer.evaluation.contract`` shape, plus the gated key at the top level.
 
@@ -375,11 +380,16 @@ def metrics_file(
     missing``; the key is repeated there so this file can be gated directly with ``--only
     drawing``. There is deliberately no ``fake_models`` key: the gate reads that flag for the
     whole file, which is why a real number is not merged into ``golden.py``'s fake-scored one.
+
+    With ``whole_split=False`` (a ``--limit`` probe) the top-level key is left out, so the gate
+    says ``metric missing`` rather than passing or failing -- and never certifies an MLflow run
+    -- on a few hundred drawings that are not even a random sample of the split.
     """
     overall = {"drawing_top5_acc": _accuracy(hits), "drawings": len(hits)}
+    gated = {"drawing_top5_acc": overall["drawing_top5_acc"]} if whole_split else {}
     return {
         "stage": STAGE,
-        "drawing_top5_acc": overall["drawing_top5_acc"],
+        **gated,
         "overall": overall,
         "baseline": chance_baseline(vocabulary_size),
         "slices": accuracy_by_slice(hits, groups),
@@ -485,6 +495,7 @@ def _evaluate_accuracy(argv: list[str]) -> int:
         hits,
         groups,
         len(labels),
+        whole_split=args.limit is None,
         model_uri=str(args.model),
         encoder=config.encoder,
         encoder_revision=config.encoder_revision,
@@ -502,7 +513,7 @@ def _evaluate_accuracy(argv: list[str]) -> int:
     args.out.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     judged = sum(1 for s in result["slices"] if s["judged"])
     print(
-        f"wrote {args.out}: drawing_top5_acc={result['drawing_top5_acc']} over {len(hits)} drawings "
+        f"wrote {args.out}: drawing_top5_acc={result['overall']['drawing_top5_acc']} over {len(hits)} drawings "
         f"(chance {result['baseline']['drawing_top5_acc']}; {judged} of {len(result['slices'])} slices judged)"
     )
     return 0
