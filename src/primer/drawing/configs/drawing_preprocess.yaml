@@ -1,0 +1,102 @@
+# How a drawing is prepared for the recogniser, in both directions (KAN-31, plan slice S6b1).
+# `preprocess.py` reads this.
+#
+# `inference` is what happens to every drawing the recogniser scores -- an upload, a photograph, or
+# a rendered Quick, Draw! canvas. `training` is the paper-and-crayon augmentation applied to a
+# rendered canvas at training time only, so the model has seen something like an upload before it
+# meets one. Both are here, in one file, for the reason both live in one module: a measured number
+# is only comparable with another taken at the same settings, and two files that drift would make
+# it a comparison between preprocessing paths rather than models.
+#
+# Three values are deliberately NOT here: `size`, `ink` and `background` are read from
+# `drawing_render.yaml`, so the inference output lands on exactly the canvas the renderer draws and
+# binarising lands on exactly its two levels. Copying them would be the drift this file exists to
+# prevent. (The plan says only `size` carries over; `ink` and `background` do too, because
+# "binarise to the renderer's black-on-white convention" names them. `padding` and `source_grid`
+# do not -- they are stroke-space concepts with no meaning for a photograph.)
+name: drawing-preprocess
+
+inference:
+  # Collapse colour to luma (ITU-R BT.601, the weights Pillow's `convert("L")` uses) and repeat it
+  # on all three channels, so the recogniser's input shape does not change with this setting.
+  #
+  # `false` is NOT a decision that the recogniser should see colour. It is what S6a ships today --
+  # the encoder has always handed the tower RGB -- and this slice keeps that behaviour. Whether the
+  # recogniser sees colour or greyscale is the KAN-38 owner's call, informed by S6c2's stability
+  # figures, and it is made by changing this line.
+  greyscale: false
+  # Map every pixel to the renderer's `ink` or `background`, at the output resolution. Requires
+  # `greyscale: true`: binarising discards colour whatever this file says, so a config claiming
+  # colour and binarisation together is refused rather than silently read one way. `false` for the
+  # same reason as above.
+  binarise: false
+  # How binarising decides: a pixel is ink when it is more than `binarise_offset` darker than the
+  # mean of the square around it, `binarise_window` of `size` across (28px at 224). A local
+  # threshold, because two global ones were measured on real Amateur Drawings and both turned the
+  # photograph's lighting into ink (`preprocess._marks` has the numbers). 1/8 and 15% are Bradley
+  # and Roth's published defaults, not tuned here: nothing has measured which values suit
+  # children's drawings, and S6c2 is the first slice that could.
+  binarise_window: 0.125
+  binarise_offset: 0.15
+
+training:
+  # Each operation fires independently with its probability, from its own random stream, so turning
+  # one off does not reshuffle the others. None of these numbers is a measurement: they are a first
+  # guess at what a parent's photograph of a crayon drawing looks like, and nothing has checked them
+  # against a real upload. S6c2 measures only the inference direction, so until a slice compares an
+  # augmented canvas with a real one, treat the whole section as unproven.
+
+  # Line wobble: displace the drawing along a smooth random field, the way a hand does not follow a
+  # ruler. Peak displacement in pixels, and the field's wavelength in pixels.
+  wobble_probability: 0.5
+  wobble_amplitude: 2.0
+  wobble_wavelength: 48.0
+
+  # Partial erasure: lift the ink inside up to `erasure_patches` rectangles, each at most
+  # `erasure_size` of the canvas side, to between 60% and 100% -- gaps, smudges and rubbed-out
+  # lines.
+  erasure_probability: 0.3
+  erasure_patches: 3
+  erasure_size: 0.2
+
+  # Ink colour: draw with a crayon from this palette instead of black. RGB, 0-255.
+  ink_colour_probability: 0.6
+  ink_colours:
+    - [200, 30, 40]
+    - [30, 70, 180]
+    - [30, 140, 60]
+    - [240, 140, 20]
+    - [120, 50, 160]
+    - [90, 60, 30]
+
+  # Colour fill: colour in part of the drawing's enclosed area, translucently, the way a child
+  # colours inside the lines. Opacity is drawn between the two bounds.
+  fill_probability: 0.4
+  fill_opacity_min: 0.3
+  fill_opacity_max: 0.8
+  fill_colours:
+    - [250, 210, 60]
+    - [120, 190, 240]
+    - [240, 130, 150]
+    - [140, 210, 120]
+    - [250, 170, 90]
+
+  # Paper: a tint from this palette, low-frequency mottling (`paper_texture`, peak levels) and
+  # per-pixel grain (`paper_grain`, standard deviation in levels). Always applied: there is no
+  # untextured paper in a photograph.
+  paper_tints:
+    - [255, 255, 255]
+    - [250, 246, 235]
+    - [242, 242, 242]
+    - [246, 240, 225]
+  paper_texture: 6.0
+  paper_grain: 3.0
+
+  # Lighting: darken towards one side by up to `lighting_gradient`, lose up to `lighting_exposure`
+  # of the brightness and up to `lighting_contrast` of the contrast (all fractions), as an indoor
+  # phone photograph does. Darken-and-flatten only: brightening clipped white paper back to white,
+  # so the operation fired and did nothing (`_light` has the measurement).
+  lighting_probability: 0.5
+  lighting_gradient: 0.35
+  lighting_exposure: 0.15
+  lighting_contrast: 0.25

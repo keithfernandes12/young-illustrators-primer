@@ -31,9 +31,11 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any, Protocol
 
+import numpy as np
 import yaml
 
 from primer.drawing.interface import Candidate, Character, DrawingAnalysis
+from primer.drawing.preprocess import PrepareConfig, prepare_drawing
 
 CONFIG_DIR = Path(__file__).parent / "configs"
 CONFIG_PATH = CONFIG_DIR / "drawing_baseline.yaml"
@@ -219,9 +221,14 @@ class SiglipEncoder:
     should know which of the two it is holding.
     """
 
-    def __init__(self, config: DrawingConfig, device: str | None = None) -> None:
+    def __init__(
+        self, config: DrawingConfig, device: str | None = None, prepare: PrepareConfig | None = None
+    ) -> None:
         self.config = config
         self.device = device
+        #: How a decoded drawing becomes the tower's input (`preprocess.prepare_drawing`). None is
+        #: the shipped `drawing_preprocess.yaml`; S6c2 passes its variants here.
+        self.prepare = prepare
         self._model: Any = None
         self._processor: Any = None
         self._dtype: Any = None
@@ -307,11 +314,17 @@ class SiglipEncoder:
         # 1-bit PNG to an RGBA screenshot. Composited rather than converted -- see `flattened`,
         # where dropping alpha is the difference between a drawing and a black square.
         drawing = flattened(Image.open(io.BytesIO(image)), self.config.alpha_background)
+        # Decode and composite stop here; everything after them is `prepare_drawing`, the one
+        # inference preprocessing path (KAN-31), which the training loader applies to rendered
+        # canvases too. It hands the processor a square at the processor's own resolution, so the
+        # processor's resize -- which would otherwise squash a non-square upload -- has nothing
+        # left to do.
+        pixels = prepare_drawing(np.asarray(drawing), self.prepare)
         # The dtype as well as the device. The processor always returns float32 `pixel_values`, and
         # `BatchFeature.to(device)` moves them without casting, so on CUDA -- where the tower is in
         # reduced precision -- the first matmul raises "mat1 and mat2 must have the same dtype".
         # The CPU path never sees it, which is why a CPU smoke run cannot prove the GPU one.
-        inputs = self._processor(images=drawing, return_tensors="pt").to(self.device, self._dtype)
+        inputs = self._processor(images=pixels, return_tensors="pt").to(self.device, self._dtype)
         with torch.no_grad():
             raw = pooled(self._model.get_image_features(**inputs))
             normalised = l2_normalised(raw, torch.finfo(raw.dtype).tiny)
