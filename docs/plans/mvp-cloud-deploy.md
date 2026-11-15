@@ -237,29 +237,39 @@ with the other `S6b*` slices rather than after S6b2 because all of them are abou
 model rather than about a model.
 
 - **Why separate** — `quickdraw` picks rows by `max_per_category: 2000`, "first N". Quick, Draw! is
-  pre-partitioned by category so that is harmless; Amateur Drawings is one undifferentiated pile of
+  pre-partitioned by category so the damage is bounded to within-category order, which nobody has
+  checked either; Amateur Drawings is one undifferentiated pile of
   ~178,000 uploads, where "first N" inherits Meta's upload order and whatever it correlates with.
   Every consumer of this corpus needs the answer — KAN-111's `humanoid` class if it is accepted,
   and S6c2's stability sample either way — so it is built once, before either.
-- **Stage 1, free** — strata from columns the parquet already holds and nothing reads:
-  `original_width`/`original_height` (the size *before* Meta's 512 px resize) separate a photograph
-  from a scan from a digital canvas; `bbox_area / (width × height)` is framing; segmentation `area`
-  is figure complexity. **Not `n_keypoints`** — `schemas.py` records it as "17 for every Amateur
-  Drawings row today", so it is a constant and cannot stratify anything; it is named here only so
-  nobody reaches for it again. **This is the baseline the later stages must beat** — if embeddings
-  find nothing the metadata did not, that is the finding and the slice stops.
+- **Stage 1, free** — strata from what the parquet already holds and nothing reads:
+  `original_width`/`original_height` (the size *before* Meta's 512 px resize) plausibly separate a
+  photograph from a scan from a digital canvas; `bbox_width × bbox_height` against `width × height`
+  is framing — derived, not a stored column, there is no `bbox_area`; segmentation `area` is figure
+  complexity. **Not `n_keypoints`** — `schemas.py` records it as "17 for every Amateur Drawings row
+  today", so it is a constant and cannot stratify anything; named here only so nobody reaches for
+  it again. That those columns really do separate capture modes is an assumption nobody has
+  checked, and confirming or refuting it is part of what this stage reports. **It is the baseline
+  stages 3–4 have to beat.**
 - **Stage 2, the gate** — the caption-quality check
   `docs/briefs/drawing-recognition-model-candidates.md` already asks for and nobody has run: 2–3
-  captioners over ~50 drawings. **If captions come back uniformly generic, stage 4 is vacuous and
-  must not be run.** That is not a failure; it is the captioner reporting it cannot see this
-  domain, which S6e needs to know before committing to the same model.
+  captioners over ~50 drawings. **If captions come back uniformly generic, stages 3 *and* 4 must
+  not run** — not stage 4 alone, because stage 3 is the expensive one and clusters nobody can
+  caption cannot be validated. That is not a failure; it is the captioner reporting it cannot see
+  this domain, which S6e needs to know before committing to the same model.
 - **Stage 3, person-launched for now** — embed and cluster with **both** candidate encoders
-  (SigLIP 2's tower, already vendored but circular since it is the model being trained; and DINOv2,
-  an independent view). 178,000 images × 2 encoders at S6a's measured 0.12 s warm is about **12
-  hours** on this machine's CPU wheel, so **an agent must not run stage 3 to completion here**:
-  either a person launches it, or it runs on a documented random subsample — 20,000 is ample for
-  finding modes — and the Verified fact says which. With a CUDA build it is an estimated 20–60
-  minutes and this gate lifts; see the GPU fact below.
+  (SigLIP 2's tower, pinned and measured in S6a but circular since it is the model being trained;
+  and DINOv2, an independent view). 178,000 images × 2 encoders at 0.12 s is about **12 hours** on
+  this machine's CPU wheel. That 0.12 s is S6a's measured warm `analyse` for SigLIP — image encode
+  plus the cached 345-prompt comparison — and is **assumed** for DINOv2, which has never been run
+  here. `docs/adrs/bounded-local-training-for-agents.md` governs *training* and does not reach an
+  embedding sweep, so this bound rests on its own footing: a half-day job on the project's only
+  machine, with no checkpointing and no partial result, is not something an unattended agent should
+  start. **An agent must not run stage 3 to completion here.** Either a person launches it, or it
+  runs on a documented random subsample and the Verified fact says which — 20,000 is ample for
+  finding modes but is ~80 minutes across both encoders, so an agent-sized draw is nearer **7,000**
+  (~28 minutes). With a CUDA build the full sweep is an estimated 20–60 minutes, which would let
+  this gate be revisited.
 - **Stage 4, caption the groups** — caption centroid-nearest and boundary members **separately**,
   ~50 of each per cluster. At k ≈ 20 that is 20 clusters × 50 × 2 positions × 2 encoders ≈ **4,000
   captions**, not 178,000; `k` is recorded as a Decision and this arithmetic moves with it. Report
@@ -275,18 +285,32 @@ model rather than about a model.
   cross-corpus shortcut test KAN-111 needs: this clusters *within* Amateur Drawings and never
   touches a render, so it can report whether capture mode dominates this corpus — useful — but it
   cannot establish what a two-class model would key on. That test belongs to KAN-111.
-- **Acceptance, stop paths included** — the strata exist, and **two** samplers over them:
+- **Acceptance, always** — the stage 1 strata exist, with **two** samplers over them:
   uniform-per-stratum for training (coverage, so rare modes are learned rather than averaged away)
   and proportional for evaluation (fidelity, because an eval set's job is to predict production).
   A test asserts each returns the distribution it claims; conflating them biases a measurement
-  silently, which is why the split is in the acceptance rather than left to the caller. **If stage
-  1 wins or stage 2's gate fires, that is the whole deliverable** — there are no clusters, the
-  verdict goes in a Verified fact, and the slice is complete. An acceptance demanding a cluster id
-  would make every stop path unshowable and stall a `loop-worker` run on a slice that had done
-  exactly what it was asked.
+  silently, which is why the split is in the acceptance rather than left to the caller. Stage 2's
+  verdict is recorded **whether it passed or fired**, since S6e needs it either way, and the
+  photographed/scanned/digital mix is reported, which answers an Open question below.
+- **Acceptance, and then one of three endings.** They are genuinely different, and an acceptance
+  that blurs them stalls a `loop-worker` run on a slice that did exactly what it was asked:
+
+| Ending | Clusters | Deliverable |
+|---|---|---|
+| Stage 2's gate fired | never computed | the verdict, as a Verified fact |
+| Stages 3–4 ran, metadata baseline held | computed, not adopted | the comparison, as a Verified fact; no sidecar published |
+| Stages 3–4 ran and beat the baseline | adopted | the cluster-id sidecar, and a Decision naming the encoder, the method and `k` |
+
 - **Testing** — a one-valued stratum column fails the sampler test (the `n_keypoints` case); a
   proportional draw from a deliberately skewed fixture reproduces the skew while a uniform draw
-  flattens it; a stop-path fixture with no cluster ids still satisfies the acceptance.
+  flattens it; a fixture with no cluster ids still satisfies the always-clauses.
+- **What this slice needs that no slice provides** — DINOv2 and a captioner are external models
+  that nothing in this plan delivers and neither is in `pyproject.toml`; stage 2 exists partly to
+  vet the captioner *before* S6e commits to one. `scikit-learn>=1.5` is already a core dependency,
+  so stage 1's strata and both samplers — the whole always-true part of the acceptance — are
+  CI-coverable with no extra, while stages 3–4 are not. S6b1 argues at length for staying
+  `numpy`-only so CI covers it; this slice cannot make that claim for its later stages and should
+  not imply it.
 - **The cluster id is a sidecar, not a schema change** — `CHARACTER_DRAWINGS` is a frozen processed
   schema whose DVC pointer is a `gs://` path, so a new column means a re-run and a new data
   version. Write the ids to a separate artefact keyed by `record_id`, carrying `license` and
@@ -295,7 +319,8 @@ model rather than about a model.
 - **Privacy** — children's drawings. Montages stay on local scratch, never in the repository or
   logs, per AGENTS.md. **Captions need the same care**: children write their names on drawings and
   a captioner with OCR ability may transcribe them, so scrub before recording anything.
-- **Depends on** — S6a for the SigLIP tower, KAN-24's ingest. Not S6b or S6b1: this reads source
+- **Depends on** — S6a for the SigLIP tower and KAN-24's ingest, plus the two external models
+  named above, which no slice supplies. Not S6b or S6b1: this reads source
   images, not rendered strokes. **Jira** — KAN-117.
 
 ### S6b2 · Rendered QuickDraw split for the recogniser
@@ -337,7 +362,8 @@ the `primer.evaluation.contract` shape, and report the gated key per slice as we
 *size: medium*
 
 `src/primer/drawing/evaluate.py`: measure how far the preprocessing path moves the recogniser's
-answer on real children's drawings, using the Amateur Drawings corpus. **No labels, and none are needed** — what is measured is how
+answer on real children's drawings, using the Amateur Drawings
+corpus. **No labels, and none are needed** — what is measured is how
 often the prediction changes between variants, not whether it is right.
 
 - **Why separate** — S6c measures rendered Quick, Draw!, while every input the product receives is
@@ -368,8 +394,10 @@ often the prediction changes between variants, not whether it is right.
   expect thinner margins here, which is the point.)
 - **Sample: 1,000 drawings, drawn once with a recorded seed and frozen by id.** Amateur Drawings
   holds ~178,000; scoring all of them under four variants is ~712,000 forward passes, which at
-  S6a's measured 0.12 s warm on CPU is about 24 hours — past what
-  `docs/adrs/bounded-local-training-for-agents.md` lets an agent spend. 1,000 is roughly 8 minutes
+  S6a's measured 0.12 s warm on CPU is about 24 hours. That is longer than any unattended agent
+  run should take on the project's only machine — `bounded-local-training-for-agents.md` sets a
+  30-minute wall clock but governs *training*, so it is the precedent
+  here rather than the rule. 1,000 is roughly 8 minutes
   and resolves a change rate to about ±3 points at 95%, finer than any effect worth acting on here.
   Freezing the ids matters as much as the size: S6d re-measures this statistic on the same
   drawings, and a redrawn sample makes the two incomparable.
@@ -393,7 +421,8 @@ often the prediction changes between variants, not whether it is right.
   finding rather than a failure, and one KAN-111 needs. It is not accuracy either way, so it does
   not close the distance between the gate's number and the product's. That distance also spans a
   change of corpus and subject matter, which none of these variants decomposes.
-- **Depends on** — S6a, **S6b1**, and **S6b3** for the proportional sampler. Not S6c: both slices write `evaluate.py`, but that is merge
+- **Depends on** — S6a, **S6b1**, and **S6b3** for the proportional sampler. Not S6c: both slices
+  write `evaluate.py`, but that is merge
   ordering rather than a dependency — the file already imports `primer.evaluation.contract` and
   derives `OWNED_METRICS` from it, so there is no contract shape for S6c to establish first. Adding
   the edge would also put this slice behind S6b2 and the whole QuickDraw split, which it never
@@ -406,7 +435,7 @@ often the prediction changes between variants, not whether it is right.
 | Binarised to black on white | photography, lighting, paper texture | none |
 | Cropped to the annotated box, then binarised | framing | the dataset's `bbox_*` |
 
-**Each row differs from the one above it by exactly one *operation*, and that is the point of the
+**Each row differs from the one above it by exactly one *operation*** — that is the point of the
 column.** An earlier draft folded cropping and binarisation into a single row, which made its
 figure a combined effect attributable to neither — report pairs of adjacent rows, or name the
 combination explicitly when reporting a non-adjacent pair.
@@ -638,7 +667,10 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   CI does not install". **The Decision's reasoning survives unchanged** — the renderer avoids an
   image library so the whole strokes-to-bytes path runs in CI, which installs `.[dev]` only, and
   that is about what CI installs rather than about what is declared. The follow-on question below
-  ("add `pillow` to the extra once S6a lands it") is therefore already answered and closed.
+  ("add `pillow` to the extra once S6a lands it") is **half** answered: `pillow` is in the extra,
+  but its second half is not — `tests/drawing/test_render.py` still skips on
+  `importorskip("PIL.Image")`, so the decoder check still arrives by accident rather than being
+  opt-in. The question stays open on that half.
 - **2026-11-14** — The drawing stage takes over **KAN-87** (`render_strokes`), which was assigned
   elsewhere and unstarted since 2026-11-08 — no branch, no PR, no `render_strokes` in the tree. It
   is the hard dependency of every measured slice in S6, so leaving it where it was left S6c and S6d
@@ -905,7 +937,9 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   it would present as an unexplained plateau just below the gate. Tracked as KAN-116.
 - **2026-11-15 — Superseded: the cap above is gone, KAN-116 is merged.** PR #26 (`cf48752`,
   2026-11-14 23:38Z) regenerated the scenarios, replacing `boat` with `sailboat` and `kite` with
-  `cloud`. Re-counted on `origin/main`: the file holds 100 scenarios, all carrying a `drawing_label`, of which `golden.py` scores the **80 `kind: book`** ones — the same population as the fact above. 16 distinct values across them,
+  `cloud`. Re-counted on `origin/main`: the file holds 100 scenarios, all carrying a
+  `drawing_label`, of which `golden.py` scores the **80 `kind: book`** ones — the same population
+  as the fact above. 16 distinct values across them,
   **none absent from `quickdraw_categories.txt`**, so the ceiling is 1.0 and the 0.85 gate has its
   full headroom back. The fact above stayed in this branch for 42 minutes after #26 merged
   because the branch is cut from `375d0cd` and never saw it — which is the lesson worth keeping:
@@ -926,10 +960,12 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   `2.15.0+cpu` with `torch.version.cuda` `None` and `torch.cuda.is_available()` `False`. The cause
   is packaging, not hardware: the `drawing` extra asks for `torch>=2.4` with no build, and PyPI's
   default index serves the CPU wheel on Windows; a CUDA build needs
-  `--index-url https://download.pytorch.org/whl/cu124` and roughly 2.5 GB. That remedy is **untested** — neither the channel's coverage of torch 2.15 nor the download size was checked. **Every "CPU-only" figure
+  `--index-url https://download.pytorch.org/whl/cu124` and roughly 2.5 GB. That remedy is
+  **untested** — neither the channel's coverage of torch 2.15 nor the download size was checked.
+  **Every "CPU-only" figure
   in the facts above is therefore a property of this environment, not a limit of this machine** —
   including S6d being unrunnable and the measured VRAM figure AGENTS.md asks for being
-  unobtainable. Both are one install away.
+  unobtainable. Both would be one install away if the remedy works, which nobody has tried.
 
 ## Open questions
 
@@ -996,7 +1032,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   | Corpus | Real children | How it was captured | Subjects the 345 can name | Gives an accuracy number? |
   |---|---|---|---|---|
   | Quick, Draw!, rendered | no — adults, 20s timer | drawn in a browser | all 345 | yes, and it is the gate's |
-  | Amateur Drawings | yes | **uploads, mix unknown** | **none** — human figures only | no |
+  | Amateur Drawings | yes | **uploads, mix unknown** | **none today** — human figures only | **only if the `humanoid` class above is accepted** |
   | kiddraw (KAN-110) | yes, ages 2–10 | natively digital, museum kiosk | 44 of its 48 | yes, if the licence clears |
 
   The four kiddraw categories that fail to map are `bowl`, `person`, `lamp` and `bottle` — the
