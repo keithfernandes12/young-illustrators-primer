@@ -1493,7 +1493,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
     of 63,310 is 0.8499605 and rounds to a passing 0.85. An empty `--version` and a
     `prompt_template` without `{label}` are refused before any bucket or weights are read. The
     0.4956 above is unchanged: it was the four-place display of the same hits. Once the arguments
-    parse, the previous run's `--out` file is moved to `<out>.previous` before any other refusal or
+    parse, the previous run's `--out` file is moved to `<out>.previous` (the first free `.previous.N` if that is taken) before any other refusal or
     load, so a run that dies cannot leave an old result at `--out` for `check_gate` to read, and a
     probe reusing the path does not destroy a full-split result; only a file with `"stage":
     "drawing"` is moved, anything else is refused untouched. The result is written beside and

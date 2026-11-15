@@ -391,7 +391,11 @@ def metrics_file(
     """
     overall = {"drawing_top5_acc": _accuracy(hits), "drawings": len(hits)}
     top_level = {"drawing_top5_acc": overall["drawing_top5_acc"]} if gated else {}
-    # Provenance first, so a caller's keyword can never overwrite a computed value below it.
+    reserved = {"stage", "drawing_top5_acc", "gate_eligible", "overall", "baseline", "slices", "fake_models"}
+    if clash := reserved & provenance.keys():
+        # Not just ordering: with `gated=False` the top-level key is absent, so a provenance key of
+        # that name would survive and put a gate-readable number in an ineligible file.
+        raise ValueError(f"provenance cannot set {sorted(clash)}: the writer owns those keys")
     return {
         **provenance,
         "stage": STAGE,
@@ -425,12 +429,15 @@ def _git_state() -> tuple[str, bool | None]:
         return result.stdout.strip() if result.returncode == 0 else None
 
     sha = git("rev-parse", "--short", "HEAD")
-    status = git("status", "--porcelain")
+    # Scoped to this package (cwd): the run's own output files elsewhere in the repo must not read
+    # as an uncommitted change to the code.
+    status = git("status", "--porcelain", "--", ".")
     return sha or "unknown", (None if status is None else bool(status))
 
 
 def _set_previous_output_aside(parser: argparse.ArgumentParser, out: Path) -> None:
-    """Move the last run's file to ``<out>.previous`` so a run that dies cannot leave it at ``out``.
+    """Move the last run's file to ``<out>.previous`` (or the first free ``.previous.N``) so a run
+    that dies cannot leave it at ``out``.
 
     ``check_gate`` reads only ``out``, so a run that fails, or is refused after this point, leaves
     nothing there to be certified. The old file is kept, not deleted: a 12-minute full-split result
@@ -445,7 +452,14 @@ def _set_previous_output_aside(parser: argparse.ArgumentParser, out: Path) -> No
         previous = None
     if not isinstance(previous, dict) or previous.get("stage") != STAGE:
         parser.error(f"--out {out} exists and is not a previous drawing metrics file; not overwriting it")
-    out.replace(out.with_name(out.name + ".previous"))
+    # A name that cannot collide: `replace` overwrites silently, so a second reuse of --out would
+    # destroy the full-split result the first one had set aside.
+    aside = out.with_name(out.name + ".previous")
+    for attempt in itertools.count(1):
+        if not aside.exists():
+            break
+        aside = out.with_name(f"{out.name}.previous.{attempt}")
+    out.replace(aside)
 
 
 def accuracy_parser() -> argparse.ArgumentParser:

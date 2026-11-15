@@ -150,7 +150,7 @@ def _file(hits: list[bool], gated: bool = True, **provenance: object) -> dict:
 def test_gating_is_a_required_choice_not_a_default():
     # A caller that forgets the flag must fail, not write a file the gate can certify.
     with pytest.raises(TypeError, match="gated"):
-        metrics_file([True], {"country_code": ["US"]}, 345)  # type: ignore[call-arg]
+        metrics_file([True], {"country_code": ["US"]}, 345)
 
 
 def test_the_file_is_the_contract_shape_with_the_gated_key_also_at_the_top():
@@ -204,12 +204,15 @@ def test_the_file_says_whether_it_is_gate_eligible():
     assert probe["gate_eligible"] is False and "drawing_top5_acc" not in probe
 
 
-def test_provenance_cannot_overwrite_a_computed_field():
-    result = _file([True, False], overall="x", slices="y", stage="z", gate_eligible="no")
-
-    assert result["overall"] == {"drawing_top5_acc": 0.5, "drawings": 2}
-    assert result["stage"] == "drawing" and result["gate_eligible"] is True
-    assert isinstance(result["slices"], list)
+@pytest.mark.parametrize("gated", [True, False])
+@pytest.mark.parametrize(
+    "key", ["overall", "slices", "baseline", "stage", "gate_eligible", "drawing_top5_acc", "fake_models"]
+)
+def test_provenance_cannot_set_a_key_the_writer_owns(key, gated):
+    # With gated=False the top-level `drawing_top5_acc` is absent, so ordering alone would let a
+    # provenance key of that name put a gate-readable number into an ineligible file.
+    with pytest.raises(ValueError, match="writer owns"):
+        _file([True, False], gated=gated, **{key: 0.99})
 
 
 def test_the_file_never_claims_to_be_fake_scored():
@@ -394,6 +397,36 @@ def test_a_refused_rerun_does_not_leave_the_previous_file_to_be_gated(tmp_path, 
 
     with pytest.raises((SystemExit, FileNotFoundError)):
         evaluate.main([item for pair in args.items() for item in pair])
+
+    assert not out.exists()
+
+
+def test_reusing_the_path_twice_keeps_every_earlier_result(tmp_path):
+    out = tmp_path / "m.json"
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+    for marker in ("first", "second", "third"):
+        out.write_text(json.dumps({"stage": "drawing", "marker": marker}), encoding="utf-8")
+        with pytest.raises(SystemExit):
+            evaluate.main(["--model", str(model_yaml), "--version", "", "--out", str(out)])
+
+    kept = {json.loads(p.read_text(encoding="utf-8"))["marker"] for p in tmp_path.glob("m.json.previous*")}
+    assert kept == {"first", "second", "third"} and not out.exists()
+
+
+def test_a_crash_while_writing_leaves_nothing_at_out(monkeypatch, tmp_path):
+    _stub_world(monkeypatch, _test_split_frame(6), winner="The Eiffel Tower")
+    out = tmp_path / "m.json"
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+    real_write = Path.write_text
+
+    def half_then_die(self, data, *args, **kwargs):
+        real_write(self, data[: len(data) // 2], *args, **kwargs)
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "write_text", half_then_die)
+
+    with pytest.raises(OSError, match="disk full"):
+        evaluate.main(["--model", str(model_yaml), "--version", "v1.1", "--out", str(out)])
 
     assert not out.exists()
 
