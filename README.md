@@ -59,7 +59,7 @@ Everything lives in the GCS bucket `gs://young-illustrators-primer-data` for the
 
 ## 2. Reproduce it on your machine
 
-You need **Docker Desktop** (or Docker Engine with Compose v2.24+, about 4 GB of memory for Docker) and **git**. No Google Cloud account is needed: by default everything is written to `.local-data/` inside the clone.
+You need **Docker Desktop** (or Docker Engine with Compose v2.24+, about 4 GB of memory for Docker; running against the full bucket needs at least 8 GB for Docker, which is not every machine's default; see [dags/README.md](dags/README.md#run-it)) and **git**. No Google Cloud account is needed: by default everything is written to `.local-data/` inside the clone.
 
 ```bash
 git clone https://github.com/keithfernandes12/young-illustrators-primer.git
@@ -133,7 +133,7 @@ drawings_v11 = read_dataset("drawings", version="v1.1")  # exactly as frozen in 
 **Statistics, schema and anomaly detection** ([`profiling.py`](src/primer/data/profiling.py)). The checks above look at one batch; after every run, `check_data` looks at each dataset as a whole:
 
 - **Statistics:** per column, the null fraction, min/max/mean/std/percentiles for numbers, and length, distinct count and category shares for text, saved to `metadata/profiles/<dataset>/<run_id>.json`.
-- **Schema:** [`configs/schemas/<dataset>.json`](configs/schemas/) is each dataset's contract (exact columns, minimum rows, maximum null fraction, numeric ranges, non-empty text, allowed categories). It is inferred from known-good data with `primer-data profile --write-schemas`, reviewed and committed, so changing what counts as valid data goes through a PR. **Great Expectations** validates every dataset against it; a failure is an **error and fails the run**, as is a dataset that lost all its rows or has no schema. Exceeding the top of a numeric range is only a warning, since growing sources legitimately do.
+- **Schema:** [`configs/schemas/<dataset>.json`](configs/schemas/) is each dataset's contract (exact columns, minimum rows, maximum null fraction, numeric ranges, non-empty text, allowed categories). It is inferred from known-good data with `primer-data profile --write-schemas`, reviewed and committed, so changing what counts as valid data goes through a PR. **Great Expectations** validates every dataset against it (long text columns such as the stories are checked from exact statistics streamed in chunks instead, so they never sit in memory whole; KAN-91); a failure is an **error and fails the run**, as is a dataset that lost all its rows or has no schema. Exceeding the top of a numeric range is only a warning, since growing sources legitimately do.
 - **Drift:** each profile is compared with the previous one. Rows down more than 5%, nulls up more than 5 points, a mean moving more than half a standard deviation (or at all, if it was constant), mean text length changing more than 30%, category shares moving more than 0.15 (total variation distance), or a column crossing between categorical and open-ended is a **warning**.
 - Errors, warnings and failed tasks are **emailed** (section 7). `primer-data profile` runs the same check by hand and only reads.
 

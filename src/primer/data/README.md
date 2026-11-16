@@ -134,6 +134,16 @@ Every processed record keeps its `license` and `attribution`.
 In Airflow, `check_data` runs this after every source: errors fail the run, warnings don't. Both are
 emailed (see `alerts.py` and `PRIMER_ALERT_EMAILS` in `.env.example`), as is any failed task.
 
+**Long text is never loaded whole** (KAN-91). A text column averaging over 200 characters is read
+in batches instead (50,000 rows, though pyarrow may decode a whole row group at once). In `v1.1` that is `stories_text.text`, `readability.text`,
+`drawings.strokes`, and `character_drawings.keypoints` and `segmentation`. The stream gives exact statistics: nulls and
+min/mean/max length, plus how many values are shorter than the schema allows. Its contract (not
+null, not empty) is checked from those statistics; every other column goes through Great
+Expectations as before. The profiles are identical and the same checks fail as when checking the whole
+table; only the wording of a failure's detail and the order of the anomalies can differ (tested, and on
+`v1.1` every regenerated schema came out identical). Measured on all of `v1.1`: peak memory went
+from 11.9 GB to 2.8 GB, and time from 83 s to 32 s.
+
 When a source legitimately changes (a new column, a new source value), re-run
 `primer-data profile --write-schemas`, review the diff, and commit it with the change.
 

@@ -37,6 +37,13 @@ african_storybook  ingest → validate → preprocess ─┘
   validates it against `configs/schemas/<dataset>.json` with Great Expectations, and compares it
   with the previous profile. Schema **errors fail the run**; drift is a warning. Results go to
   `metadata/profiles/` and `metadata/anomalies/` (see the [data README](../src/primer/data/README.md#statistics-schema-and-anomalies)).
+  Long text columns (stories, strokes) are streamed for their statistics rather than loaded, so the
+  check on all of `v1.1` (about 2.65M rows) peaks at **about 3.2 GB inside the scheduler container**
+  and takes about 40 s (2.8 GB and 30 s on a laptop). Measured on 2026-11-14 with Docker given
+  7.6 GB (Docker Desktop's default on that 16 GB laptop), in a one-off container without the rest
+  of Airflow running. On 2026-11-11 the
+  scheduler and DAG processor used about 3.8 GB on their own, so the whole stack peaks near 7 GB.
+  Before KAN-91 the check needed 11.9 GB, and the same container run was killed (exit 137).
 - **Alerts:** any failed task emails `PRIMER_ALERT_EMAILS` with the task, run and error (schema
   errors included); drift warnings are emailed by `check_data`. When `summarize` fails because a
   source did, it only logs, since that source task has already sent its alert; when it fails on its
@@ -67,7 +74,11 @@ git tag data-v1.2
 ## Run it
 
 Needs [Docker Desktop](https://docs.docker.com/get-docker/) (or Docker Engine with Compose v2.24+)
-and about 4 GB of memory for Docker. From the repo root:
+and about 4 GB of memory for Docker in local mode (`.local-data/`, small data). Against the full
+bucket, give Docker **at least 8 GB**: `check_data` on all of `v1.1` brings the stack near 7 GB (see
+`check_data` above). That is not a fixed default: Docker Desktop on Windows (WSL 2) gives Docker
+half the machine's RAM unless `.wslconfig` says otherwise, so an 8 GB laptop gets about 4 GB.
+Check with `docker info --format "{{.MemTotal}}"`. From the repo root:
 
 ```bash
 cp .env.example .env                 # once; on Linux set AIRFLOW_UID to the output of `id -u`
