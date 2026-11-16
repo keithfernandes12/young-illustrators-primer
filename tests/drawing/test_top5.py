@@ -624,3 +624,74 @@ def test_stability_still_routes_to_its_own_subcommand(monkeypatch):
 
     assert evaluate.main(["stability", "--version", "v1.1", "--out", "s.json"]) == 0
     assert seen == [["--version", "v1.1", "--out", "s.json"]]
+
+
+# ------------------------------------------------------------------------------------ MLflow (S6c3)
+
+
+class RecordingTracking:
+    """Stands in for `tracking.log_run`; records what the CLI asked it to log, and when."""
+
+    def __init__(self, out):
+        self.out = out
+        self.calls = []
+
+    def __call__(self, **kwargs):
+        # The file must already be at --out: the run is a copy of it, never the only record.
+        assert self.out.exists(), "--out is written before anything is logged"
+        self.calls.append(kwargs)
+        return "run-1"
+
+
+def test_mlflow_logs_a_copy_of_the_written_file(monkeypatch, tmp_path):
+    from primer.drawing import tracking
+
+    _stub_world(monkeypatch, _test_split_frame(6), winner="The Eiffel Tower")
+    out = tmp_path / "m.json"
+    recorder = RecordingTracking(out)
+    monkeypatch.setattr(tracking, "log_run", recorder)
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    code = evaluate.main(
+        ["--model", str(model_yaml), "--version", "v1.1", "--out", str(out), "--mlflow", "--owner", "m1"]
+    )
+
+    assert code == 0 and len(recorder.calls) == 1
+    call = recorder.calls[0]
+    assert call["kind"] == "accuracy" and call["owner"] == "m1" and call["metrics_path"] == out
+    assert call["result"] == json.loads(out.read_text(encoding="utf-8")), "what is logged is the file"
+    assert call["run_name"] == "s6c-drawing-top5-test"
+
+
+def test_without_mlflow_nothing_is_logged(monkeypatch, tmp_path):
+    from primer.drawing import tracking
+
+    _stub_world(monkeypatch, _test_split_frame(6), winner="The Eiffel Tower")
+    out = tmp_path / "m.json"
+    recorder = RecordingTracking(out)
+    monkeypatch.setattr(tracking, "log_run", recorder)
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    evaluate.main(["--model", str(model_yaml), "--version", "v1.1", "--out", str(out)])
+
+    assert recorder.calls == []
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [["--mlflow"], ["--mlflow", "--owner", " "], ["--mlflow", "--owner", "m1", "--limit", "300"]],
+    ids=["no-owner", "blank-owner", "limit-probe"],
+)
+def test_a_bad_mlflow_request_is_refused_before_anything_is_read(monkeypatch, tmp_path, extra):
+    from primer.data import catalog
+    from primer.drawing import model
+
+    def boom(*args, **kwargs):
+        raise AssertionError("the bucket and the weights must not be touched")
+
+    monkeypatch.setattr(catalog, "read_dataset", boom)
+    monkeypatch.setattr(model, "SiglipEncoder", boom)
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    with pytest.raises(SystemExit):
+        evaluate.main(["--model", str(model_yaml), "--version", "v1.1", "--out", str(tmp_path / "m.json"), *extra])

@@ -403,3 +403,40 @@ def test_anything_but_stability_goes_to_s6cs_accuracy_cli(monkeypatch):
 
     assert evaluate.main(["--model", "m", "--version", "v1.1", "--out", "o.json"]) == 0
     assert seen == [["--model", "m", "--version", "v1.1", "--out", "o.json"]]
+
+
+
+def test_the_stability_summary_records_the_commit_it_ran_at(monkeypatch, tmp_path):
+    import json
+
+    CliWorld(monkeypatch)
+    monkeypatch.setattr(evaluate, "_git_state", lambda: ("abc1234", False))
+
+    code, out = run_cli(tmp_path)
+
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert code == 0 and result["git_sha"] == "abc1234" and result["git_dirty"] is False
+
+
+def test_stability_mlflow_logs_the_written_summary(monkeypatch, tmp_path):
+    import json
+
+    from primer.drawing import tracking
+
+    CliWorld(monkeypatch)
+    calls = []
+    monkeypatch.setattr(tracking, "log_run", lambda **kwargs: calls.append(kwargs) or "run-1")
+
+    code, out = run_cli(tmp_path, "--mlflow", "--owner", "m1")
+
+    assert code == 0 and len(calls) == 1
+    assert calls[0]["kind"] == "stability" and calls[0]["metrics_path"] == out
+    assert calls[0]["result"] == json.loads(out.read_text(encoding="utf-8"))
+
+
+def test_stability_mlflow_without_an_owner_is_refused_before_any_read(monkeypatch, tmp_path):
+    world = CliWorld(monkeypatch)
+
+    with pytest.raises(SystemExit):
+        run_cli(tmp_path, "--mlflow")
+    assert world.devices == [], "the encoder was never built"
