@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from primer.drawing import evaluate, sensitivity
+from primer.drawing import sensitivity
 from primer.drawing.evaluate import scored
 from primer.drawing.render import default_config, render_strokes
 from primer.drawing.sensitivity import (
@@ -187,6 +187,37 @@ def test_the_occlusion_summary_reports_the_median_inked_patches_and_undefined_sh
     assert summary["top3_share_undefined"] == sum(m["top3_share"] is None for m in summary["maps"].values())
     metrics = mlflow_metrics(result)
     assert metrics["sensitivity/occlusion/inked_patches_median"] == summary["inked_patches_median"]
+    assert metrics["sensitivity/occlusion/top3_share_undefined"] == summary["top3_share_undefined"]
+
+
+def test_the_median_inked_patch_count_is_the_median_not_the_maximum():
+    constant = lambda image, prompts: [0.9] + [0.1] * (len(prompts) - 1)
+    short, medium, full = (
+        Drawing(name, [[[0, end], [128, 128]]], 0) for name, end in (("s", 60), ("m", 130), ("f", 255))
+    )
+
+    summary = measure([short, medium, full], constant, PROMPTS, prompt_sets={}, occlude=5)["occlusion"]
+    counts = [summary["maps"][name]["inked_patches"] for name in ("s", "m", "f")]
+
+    assert counts[0] < counts[1] < counts[2], "three different spreads, so median != max"
+    assert summary["inked_patches_median"] == counts[1]
+
+
+def test_only_the_first_occlude_correct_drawings_are_occluded():
+    constant = lambda image, prompts: [0.9] + [0.1] * (len(prompts) - 1)
+
+    summary = measure(drawings(), constant, PROMPTS, prompt_sets={}, occlude=1)["occlusion"]
+
+    assert summary["drawings"] == len(summary["maps"]) == 1
+
+
+def test_a_blank_canvas_has_no_max_drop_rather_than_a_zero():
+    blank = np.full((RENDER.size, RENDER.size), RENDER.background, dtype=np.uint8)
+    constant = lambda image, prompts: [0.9] + [0.1] * (len(prompts) - 1)
+
+    result = occlusion(blank, 0, constant, PROMPTS, RENDER)
+
+    assert result["inked_patches"] == 0 and result["max_drop"] is None and result["top3_share"] is None
 
 
 def test_a_hit_is_the_fifth_place_but_not_the_sixth_and_matches_the_gated_metric():
@@ -458,9 +489,34 @@ def test_the_cli_runs_end_to_end_on_a_stubbed_world(monkeypatch, tmp_path):
     monkeypatch.setattr(catalog, "read_dataset", lambda *a, **k: _val_frame(4))
     monkeypatch.setattr(storage, "Store", lambda: SimpleNamespace(uri="gs://bucket"))
     monkeypatch.setattr(model, "SiglipEncoder", FakeEncoder)
+    monkeypatch.setattr(sensitivity, "_git_state", lambda: ("abc1234", True))
+    logged: dict[str, object] = {}
+
+    class Run:
+        info = SimpleNamespace(run_id="r1")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setitem(
+        sys.modules,
+        "mlflow",
+        SimpleNamespace(
+            set_experiment=lambda name: None,
+            start_run=lambda run_name, tags: logged.__setitem__("tags", tags) or Run(),
+            log_params=lambda params: None,
+            log_metrics=lambda metrics: logged.__setitem__("metrics", metrics),
+            log_artifact=lambda path, artifact_path: None,
+        ),
+    )
     out = tmp_path / "sens.json"
 
-    code = sensitivity.main(["--version", "v1.1", "--sample", "3", "--occlude", "1", "--out", str(out)])
+    code = sensitivity.main(
+        ["--version", "v1.1", "--sample", "3", "--occlude", "1", "--mlflow", "--out", str(out)]
+    )
 
     result = json.loads(out.read_text(encoding="utf-8"))
     assert code == 0 and result["drawings"] == 3 and result["split"] == "val"
@@ -473,8 +529,10 @@ def test_the_cli_runs_end_to_end_on_a_stubbed_world(monkeypatch, tmp_path):
     assert len(compared) == len(sensitivity.PROMPT_TEMPLATES) - 1
     assert not any(shipped in k for k in compared)
     assert result["device"] == "cpu" and result["dtype"] == "float32"
-    # The commit is the package's, with a dirty flag, as S6c records it.
-    assert (result["git_sha"], result["git_dirty"]) == evaluate._git_state()
+    # The commit and dirty flag come from `_git_state`, in the file and in the MLflow tags.
+    assert (result["git_sha"], result["git_dirty"]) == ("abc1234", True)
+    assert logged["tags"]["git_sha"] == "abc1234" and logged["tags"]["git_dirty"] == "True"
+    assert "sensitivity/occlusion/top3_share_undefined" in logged["metrics"]
 
 
 def test_the_shipped_template_is_the_one_every_recorded_figure_was_measured_under():

@@ -129,12 +129,12 @@ interval. Baseline top-5 on the sample is 0.518.
   is less stable than the gated number suggests.
 - **The prompt is a real setting.** The shipped template beats the model card's `This is a photo of
   {label}.` by 4.3 points [2.9, 5.9], and `{label}` alone by 8.5. `a sketch of a {label}.` is
-  within noise of it (-0.9 [-2.1, +0.3]).
+  within noise of it (-0.95 [-2.1, +0.25]).
 - **The answer rests on a few regions.** In occlusion maps of 20 correctly ranked drawings, the
   three most important 32 px patches carry a median 58% of the confidence drop. The share counts
   positive drops only, and a drawing with three or fewer inked patches scores 1.0 trivially. Here
   the median drawing has 25.5 inked patches (range 12–37), so none is trivial, and no map had an
-  undefined share (the code now returns `None` for one and counts it, instead of entering 0.0).
+  undefined share (such a map reports `None`, is counted in `top3_share_undefined`, and is left out of the median).
 - **Partial erasure is too weak to read.** The training erasure removes a median 0.5% of ink; on
   the 202 drawings that lost at least 5%, the change is -2.0 [-5.4, +1.0].
 - **Uncorrected intervals.** About ten 95% intervals are reported with no multiplicity correction;

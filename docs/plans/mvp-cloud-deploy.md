@@ -2,7 +2,7 @@
 title: MVP on Google Cloud — models v0, serving, deploy, gates and monitoring
 type: plan
 created: 2026-11-07
-updated: 2026-11-15
+updated: 2026-11-16
 status: active
 author: rishiparekh
 tags: [mvp, gcp, serving, models, deploy, loops]
@@ -726,7 +726,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6b4 | not started | | **spike, person-only**: waits on S6b3, S6a and KAN-24, plus DINOv2 and a captioner that no slice supplies. Can only add a stratum. KAN-117 |
 | S6b2 | merged | [#32](https://github.com/keithfernandes12/young-illustrators-primer/pull/32) | `data.py`: hashed 80/10/10 split of v1.1 (506k/63k/63k), rendered on demand through `render_strokes` → `augment_canvas` (train only) → `prepare_drawing`. Unblocks S6c |
 | S6c | merged | [#37](https://github.com/keithfernandes12/young-illustrators-primer/pull/37) | baseline `drawing_top5_acc` **0.5436** over all 63,310 rendered test drawings (GPU, bf16) under the prompt `a child's drawing of a {label}.` (switched 2026-11-16; was 0.4956 under the model card's prompt): gate FAIL against 0.85, chance 0.0145. MLflow run `b72bc442`, superseding `c2b68187`, in `yip-drawing`. The gate's number, not the product's. KAN-38 |
-| S6c2 | merged | [#33](https://github.com/keithfernandes12/young-illustrators-primer/pull/33) | 1,000 frozen drawings (unstratified), four variants: top-1 moves 25% / 50% / 41% between adjacent variants; over half the drawings come out `squiggle`. Reproduces exactly. KAN-109 |
+| S6c2 | merged | [#33](https://github.com/keithfernandes12/young-illustrators-primer/pull/33) | 1,000 frozen drawings (unstratified), four variants: under the model card's prompt, top-1 moves 25% / 50% / 41% between adjacent variants and over half the drawings come out `squiggle`; under the shipped prompt (re-measured 2026-11-16) 34% / 66% / 50% and the most common answer is `The Great Wall of China`. Reproduces exactly. KAN-109 |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); S6c merged (#37); must beat 0.5436 under the switched prompt. Reads S6c2's stability figures |
 | S6e | merged | [#35](https://github.com/keithfernandes12/young-illustrators-primer/pull/35) | `sheet.py`: Florence-2 + SAM 2.1 + ViTPose beside SigLIP 2; every field filled on 82/82 real sheets; two figures found as two on 12/20. Unblocks KAN-42 |
 | S6f | in review | [#39](https://github.com/keithfernandes12/young-illustrators-primer/pull/39) | sensitivity: stroke drop, line width, erasure, prompt template, occlusion; paired bootstrap intervals; runs on `val`. Also carries the prompt switch to `a child's drawing of a {label}.` (S6c 0.5436 on `test`, S6c2 re-measured). Re-run under it: strokes -14.7 / -21.8, 7 px -2.5. KAN-38 |
@@ -1684,8 +1684,8 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
     strength stands.
   - **Occlusion:** median `top3_share` 0.58 (was 0.50), median `max_drop` 0.178 (was 0.076). The
     drops are larger in absolute terms because confidences are higher under this prompt. Read
-    the share beside the patch counts, which this run's JSON holds per map and the code now also
-    summarises (`inked_patches_median`): a median of 25.5 inked patches per drawing (range 12–37),
+    the share beside the patch counts, which this run's JSON holds per map and the summary
+    reports as `inked_patches_median`: a median of 25.5 inked patches per drawing (range 12–37),
     so none of the 20 maps is trivially 1.0, and none has an undefined share (`top3_share` is
     `None` when no patch lowers confidence; `top3_share_undefined` counts those, and it was 0
     here). Computed from the run's saved JSON, not re-scored.

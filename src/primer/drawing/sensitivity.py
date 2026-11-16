@@ -200,7 +200,7 @@ def occlusion(
     return {
         "confidence": round(start, 4),
         "inked_patches": len(drops),
-        "max_drop": round(max(drops), 4) if drops else 0.0,
+        "max_drop": round(max(drops), 4) if drops else None,
         "top3_share": round(sum(positive[:3]) / total, 4) if total > 0 else None,
         "grid": grid,
     }
@@ -277,6 +277,7 @@ def measure(
         drawings[i].record_id: occlusion(canvases[i], labels[i], scorer, prompts, render) for i in correct
     }
     shares = [m["top3_share"] for m in maps.values() if m["top3_share"] is not None]
+    max_drops = [m["max_drop"] for m in maps.values() if m["max_drop"] is not None]
     say("occlusion")
 
     return {
@@ -291,9 +292,7 @@ def measure(
             "inked_patches_median": statistics.median(m["inked_patches"] for m in maps.values())
             if maps
             else None,
-            "max_drop_median": round(statistics.median(m["max_drop"] for m in maps.values()), 4)
-            if maps
-            else None,
+            "max_drop_median": round(statistics.median(max_drops), 4) if max_drops else None,
             "maps": maps,
         },
     }
