@@ -1003,6 +1003,15 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
     word.
   - Applies to Learn to Read only. Grow Vocabulary (5–8), when it is built, should deliberately go
     beyond the sight words.
+- **2026-11-15** — **For ages 3–5, target-word matching stays exact: "jumped" does not count for
+  "jump" (Keith, follow-up review of PR #36; answers the question raised in the reply).**
+  - Why: Learn to Read is about recognising the sight word itself, and "jumped" doesn't show the child
+    "jump". The golden gate's `contains_target_word` also requires an exact match, so loosening only
+    the story matcher would make the story metric and the release gate disagree.
+  - So `checks.contains_target_word` is unchanged, and it still agrees with the gate (tested in
+    `test_checks_and_prompts.py`). The inflected miss in the re-run's hand check counts as a miss.
+  - **For Grow Vocabulary (5–8) only:** simple inflections (-s, -ed, -ing) are to be reconsidered,
+    and only together with the gate, so the two never disagree. Not built in M1.
 
 ## Verified facts
 

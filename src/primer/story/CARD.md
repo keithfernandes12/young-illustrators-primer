@@ -75,7 +75,8 @@ results are kept in the plan's Verified facts as a record. They are not this mod
   valid.
 - Learn to Read target words did *not* make inclusion easier, against expectation. A hand check of 8
   requests (1.5B, t 0.7, one attempt each) found 2 invalid JSON, 1 with every word, and 5 that each
-  missed one word. Of those 5 words, 1 was inflected (a requested "jump" written as "jumped") and 4
+  missed one word. Of those 5 words, 1 was inflected (a requested "jump" written as "jumped"; it counts
+  as a miss, because matching stays exact for ages 3–5, as decided with Keith in the plan's Decisions) and 4
   were absent. With 20 requests, the drop from 0.36 to 0.20 is about 3 requests.
 - No returned story kept every sentence to 10 words or fewer. FK means are 2.5–4.6 against targets of
   0–1.
