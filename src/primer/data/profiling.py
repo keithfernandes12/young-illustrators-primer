@@ -59,7 +59,10 @@ OPEN_COLUMNS = {"batch_id", "translator"}  # new batches and new names arrive wi
 CREDIT_COLUMNS = {"title", "author", "illustrator", "translator", "image_caption"}
 LONG_TEXT = 200              # mean length above this: skip distinct counting, and stream it (stories, strokes)
 TOP_VALUES = 10
-TEXT_BATCH_ROWS = 50_000     # rows per chunk when streaming long text; sets memory use, never results
+# Rows per batch when streaming long text. It never changes results. It bounds the batches handed to
+# the statistics, but pyarrow may still decode a whole row group of the column at once, so peak
+# memory also depends on the files' row-group size (see the measured figures in dags/README.md).
+TEXT_BATCH_ROWS = 50_000
 
 # Drift thresholds (warnings, not errors).
 ROW_DROP = 0.05              # rows fell by more than 5%
@@ -452,8 +455,9 @@ def text_contract(schema: dict[str, Any], text: dict[str, TextStats]) -> list[An
     The same rules ``build_suite`` gives Great Expectations: the non-null share must reach
     ``mostly``, and no value may be shorter than ``min_length``. (A ``not_all_null`` column always
     passes here: only columns with at least one value are streamed.) A column the schema doesn't
-    have breaks the column set; one the schema expects to be numeric or categorical (``min``,
-    ``allowed``) has turned into long text, which also breaks it.
+    have breaks the column set. A column the schema expects to be numeric or categorical (``min``,
+    ``allowed``) that has turned into long text is reported as that check failing, as Great
+    Expectations reports it on the full frame.
 
     Raises ``ValueError`` if the schema has a ``min_length`` that the stream did not count: that
     would otherwise pass every empty value silently. Load with ``min_lengths(schema)``.
