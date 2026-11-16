@@ -68,6 +68,36 @@ def test_infer_schema_floor_is_zero_only_if_zero_was_seen():
     assert cols["delta"]["min"] == pytest.approx(-6.0)
 
 
+def keypoint_frame(counts):
+    """character_drawings' count of visible joints, the way every Amateur Drawings row has it today."""
+    return pd.DataFrame({"n_keypoints": pd.array(counts, dtype="int32")})
+
+
+def test_a_known_count_gets_its_real_bounds_not_the_observed_range():
+    """KAN-90: 17 in every row would infer 15.3-18.7; a joint can be hidden, so the floor is 0."""
+    all_visible = profiling.profile_frame(keypoint_frame([17] * 200))
+
+    known = profiling.infer_schema("character_drawings", all_visible)["columns"]["n_keypoints"]
+    elsewhere = profiling.infer_schema("other_dataset", all_visible)["columns"]["n_keypoints"]
+
+    assert (known["min"], known["max"]) == (0.0, 17.0)
+    assert (elsewhere["min"], elsewhere["max"]) == (15.3, 18.7)   # only the listed dataset changes
+
+
+def test_hidden_joints_pass_the_contract_and_impossible_counts_still_fail(context):
+    schema = profiling.infer_schema("character_drawings", profiling.profile_frame(keypoint_frame([17] * 200)))
+    schema = {**schema, "min_rows": 1}
+
+    some_hidden = keypoint_frame([17] * 150 + [16] * 30 + [3] * 19 + [0])
+    assert profiling.validate(some_hidden, schema, context) == []
+
+    negative = keypoint_frame([17] * 199 + [-1])
+    assert {(a.check, a.column) for a in profiling.validate(negative, schema, context)} == {
+        ("expect_column_values_to_be_between", "n_keypoints")}
+    too_many = profiling.profile_frame(keypoint_frame([17] * 199 + [18]))   # more joints than COCO has
+    assert [a.check for a in profiling.range_warnings(schema, too_many)] == ["above_range"]
+
+
 def test_infer_schema_never_lets_a_column_go_all_null(context):
     n = 1000
     df = pd.DataFrame({"mostly_null": pd.array([1.0] * 20 + [None] * (n - 20), dtype="Float64"),
@@ -499,3 +529,6 @@ def test_committed_schema_matches_the_parquet_schema(dataset):
         assert "min_length" not in committed["columns"][name], (dataset, name)
     if dataset == "storybook_pages":
         assert committed["columns"]["page_number"]["min"] > 0      # 1-based (schemas.py), so 0 must fail
+    for name, (low, high) in profiling.KNOWN_BOUNDS.get(dataset, {}).items():
+        spec = committed["columns"][name]
+        assert (spec["min"], spec["max"]) == (low, high), (dataset, name)   # regenerate after KNOWN_BOUNDS changes
