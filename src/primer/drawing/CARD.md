@@ -45,13 +45,17 @@ Gated keys this stage owns are listed in `evaluate.py` as `OWNED_METRICS`, taken
 
 | Key | Value | Baseline | Run |
 |---|---|---|---|
-| `drawing_top5_acc` | 0.4956 over all 63,310 test drawings (**fails** the 0.85 gate) | chance 0.0145 (5 of 345); target 0.85 | MLflow `c2b6818759af457e972d868b77019225`, experiment `yip-drawing` |
+| `drawing_top5_acc` | 0.5436 over all 63,310 test drawings (**fails** the 0.85 gate) | chance 0.0145 (5 of 345); target 0.85 | MLflow `b72bc442f32f43cba857e9127f2b6c6f`, experiment `yip-drawing` |
 
-Measured on 2026-11-15 with `python -m primer.drawing.evaluate`: data version v1.1, RTX 4060, bf16.
-It is a number over **rendered Quick, Draw! drawings**, not children's uploads, and only comparable
-with another run on the same device and dtype (a CPU/fp32 run ranks near-ties differently and was
-not done). The run was backfilled to MLflow from the metrics file, so the logged value is that
-file's four-place display; the file the code now writes carries the unrounded ratio.
+Measured on 2026-11-16 with `python -m primer.drawing.evaluate`: data version v1.1, RTX 4060, bf16,
+prompt template `a child's drawing of a {label}.`, commit `b749f34`. It is a number over **rendered
+Quick, Draw! drawings**, not children's uploads, and only comparable with another run on the same
+device, dtype and prompt (a CPU/fp32 run ranks near-ties differently and was not done).
+
+**The previous figure, 0.4956** (2026-11-15, MLflow `c2b6818759af457e972d868b77019225`), was the
+same model and split under the model card's template, `This is a photo of {label}.`. The template
+was switched on S6f's `val` sweep (+4.3 points there), and the switch measured +4.8 on `test`. That
+is a better prompt, not a better model: S6d's fine-tune must beat 0.5436.
 
 **Do not read a number into the zero-shot setup.** The brief's survey of the sketch literature puts
 plain CLIP near 43% top-1 on Quick, Draw!, and the gate wants 0.85 top-5. This baseline exists to
@@ -62,14 +66,20 @@ produce the floor S6d must beat and to prove the path end to end, not to clear t
 Per-slice results for the keys in `slices.py`, and what was done about any gap.
 
 `country_code` is the one key. 165 countries appear in the test split and 54 have at least
-`SMALL_SLICE` (100) drawings, so only those are judged. They run from 0.43 (BE) to 0.65 (CL), and
-the largest, US (n=28,557), reads 0.4774. Differences of that size are within noise over a few
+`SMALL_SLICE` (100) drawings, so only those are judged. Under the current prompt they run from
+0.47 (RO, n=452) to 0.68 (CL, n=102), and the largest, US (n=28,557), reads 0.5282. Differences of that size are within noise over a few
 hundred drawings and label mix is not controlled per country, so **nothing has been done about any
 gap**: none is established. Small slices are reported but not judged.
 
 ## Mitigations and trade-offs
 
 - **Zero-shot on sketches is weak**, and knowingly so — see above. The mitigation is S6d.
+- **The prompt trades children's-drawing stability for the gate's number.** `a child's drawing of
+  a {label}.` adds 4.8 top-5 points on rendered Quick, Draw!, but on S6c2's 1,000 children's
+  drawings top-1 changes more often between preprocessing variants (34 / 66 / 50% against 25 / 50 /
+  41%), the median top-1 confidence of an unbinarised upload is 0.93 rather than 0.10, and the
+  most common answer is `The Great Wall of China` rather than `squiggle`. Kept knowingly
+  (2026-11-16). A confidence near 1 from this model is not evidence the label is right.
 - **Confidences are sigmoid, not softmax.** SigLIP's training loss is pairwise, so each score is
   "does this label fit", independent of the others. They do not sum to 1. Ranking is unaffected,
   which is all `drawing_top5_acc` reads, but anything that later thresholds a confidence must know
