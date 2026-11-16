@@ -312,7 +312,9 @@ def _write_stories(store, df, parts=2):
 def stories(n=120):
     df = frame(n)
     df.loc[3, "text"] = pd.NA                     # a missing story, allowed by the schema below
-    df.loc[5, "text"] = "short " + "x" * 400       # lengths differ, so min/max/mean are tested
+    # Lengths differ, so min/max/mean are tested, and the longest story has multi-byte characters
+    # (as CLEAR passages do), so a length counted in bytes instead of characters would not match.
+    df.loc[5, "text"] = "café “story” é" + "x" * 400
     # As TinyStories writes it (sources/tinystories.py): a typed text column with no values, so every
     # streamed chunk of it is all null. The stream must skip those chunks rather than fail on them.
     df["title"] = pd.array([pd.NA] * n, dtype="string")
