@@ -1,0 +1,33 @@
+# The shared MLflow tracking server (KAN-107), as it runs on the `mlflow` VM in the shared project.
+# Runbook: docs/runbooks/mlflow-server.md. POSTGRES_PASSWORD comes from a `.env` beside this file
+# on the VM (see `.env.example`); it is never committed.
+#
+# Artifacts are proxied (`--serve-artifacts`): clients upload through the server, which writes to
+# GCS with the VM's own service account, so no laptop needs access to the artifact bucket.
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: mlflow
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  mlflow:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - db
+    ports:
+      # Meant to be reachable only through IAP (35.235.240.0/20), by the firewall alone: MLflow has
+      # no login. A VM built from this file is exposed to the whole default network until the
+      # runbook's "Harden the live server" firewall rules cover it. See docs/runbooks/mlflow-server.md.
+      - "5000:5000"
+    command: >
+      mlflow server --host 0.0.0.0 --port 5000
+      --backend-store-uri postgresql://mlflow:${POSTGRES_PASSWORD}@db/mlflow
+      --artifacts-destination gs://yip-mlflow-artifacts
+      --serve-artifacts
+volumes:
+  pgdata:

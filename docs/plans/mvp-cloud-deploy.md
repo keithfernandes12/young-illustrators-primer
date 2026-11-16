@@ -1207,7 +1207,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   own no-image-library acceptance. The shipped `greyscale: false` and `binarise: false` keep what
   S6a did and **decide neither question** — colour versus greyscale is the KAN-38 owner's, on
   S6c2's numbers. None of these figures is in MLflow: they measure preprocessing rather than
-  compare models, and there is no host yet (KAN-107). S6b2 inherits the remaining half of the
+  compare models, and there was no host yet (KAN-107; one exists as of 2026-11-15). S6b2 inherits the remaining half of the
   single-path guard — asserting the training loader imports `augment_canvas` from here.
 - **2026-11-15 — S6b1: the first independent review found the single-path guard half-blind.**
   *Hypothesis:* the guard catches a second preprocessing path in the drawing path. *Result:* not
@@ -1253,7 +1253,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   an item is read. The split is unstratified by design — a hash, not S6b3's samplers, which
   were in #29 and not yet on `main` when this was built — and per-label coverage above is what
   shows that did not cost a class.
-  Not in MLflow: these describe the data, not a model, and there is no host (KAN-107).
+  Not in MLflow: these describe the data, not a model, and there was no host then (KAN-107; one exists as of 2026-11-15).
 - **2026-11-15 — S6b2: `v1.1` passes the stricter provenance check.** Review asked that blank and
   non-text `license` / `attribution` be refused, not only null ones; the earlier "present on every
   row" was a null check alone, so it was re-measured. `read_dataset("v1.1", split)` for all three
@@ -1307,7 +1307,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   zero, and a fine-tune that moves drawings *off* `squiggle` may show as *less* stable while
   being better. *Second hypothesis:* the measurement reproduces. *Result:* a full re-run gave
   every figure above **identically** (779 s), so S6d's comparison is against fixed numbers. **Not accuracy**, and nothing here says which variant is right. Not in MLflow:
-  there is no host (KAN-107); the summary JSON's fields are what an MLflow run would log.
+  there was no host then (KAN-107; one exists as of 2026-11-15); the summary JSON's fields are what an MLflow run would log.
 - **2026-11-15 — S6c2: the decision the plan asked for, and the one it did not.** The rank
   statistic is **top-5 set overlap** (`evaluate.py` docstring has why). Whether the 0.85 gate
   keeps reading the rendered Quick, Draw! number is **not decided here** — it is the KAN-38
@@ -1566,9 +1566,10 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   against the same numbers. *Recommended:* add the extra to the pinned set when CI installs it.
 - **Where does a zero-shot number get logged?** **Tracked as KAN-107.** `AGENTS.md` requires every model comparison to go
   to MLflow, and nothing from S6a is in one: the baseline's figures live in these Verified facts
-  only. `docs/engineering/model-development.md` still has an open question about who hosts the
-  shared MLflow server, so there is nowhere to log to yet. *Recommended:* settle the host before
-  S6c produces the first `drawing_top5_acc`, which is a number that genuinely needs comparing.
+  only. **Update, 2026-11-15:** a shared MLflow server now exists on the shared project (KAN-107,
+  `docs/runbooks/mlflow-server.md`), reached through an IAP tunnel, and S6c's baseline is its first
+  run. Who hosts it long term is still the project owner's to confirm
+  (`docs/engineering/model-development.md`), and a cloud job cannot reach it yet (see the runbook).
 - **Does the recogniser see colour, or greyscale?** The pipeline answers this inconsistently today
   — see the Verified fact above — and nothing has measured what the inconsistency costs. Zero-shot
   the asymmetry is probably mild, since SigLIP 2 was trained on photographs; the concern is after

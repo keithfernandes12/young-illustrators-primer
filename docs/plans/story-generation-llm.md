@@ -57,7 +57,7 @@ fetched on 2026-11-14. Also not read: the bucket itself (no row counts), the `tr
   re-checks them when it pins revisions.
 - `bitsandbytes` 4-bit QLoRA needs an NVIDIA GPU, so it will not run on a MacBook Air.
 - The shared MLflow server and GPU quota are still outstanding, as `model-development` §1.4 said on
-  2026-11-14.
+  2026-11-14. (The MLflow server exists as of 2026-11-15; see the blockers below.)
 
 ## Contract
 
@@ -419,7 +419,9 @@ S2 runs these steps in this order. The order matters: dedupe before the split, g
     likeliest to fit there. A registered run must come from Vertex anyway (ADR clause 4).
 - **Blockers outside this plan:**
   - GPU quota in Diya's compute project (a new project starts at zero).
-  - The shared MLflow server (`model-development` §1.4 and §10).
+  - ~~The shared MLflow server (`model-development` §1.4 and §10).~~ It exists as of 2026-11-15
+    (KAN-107, `docs/runbooks/mlflow-server.md`). Still open: a cloud job has no path to it once
+    it is IAP-only, so the Vertex run must log some other way until that is decided.
   - **Read access for the training job** (review F7a). The Vertex job runs as
     `yip-trainer@$YIP_COMPUTE_PROJECT` (`.claude/skills/train-vertex/job_template.yaml:25`), and that
     account needs `roles/storage.objectViewer` on `gs://young-illustrators-primer-data` to read
@@ -755,7 +757,7 @@ Results and mitigations go in `CARD.md`. SHAP is stated as inapplicable (`model-
 
 - **Acceptance**
   - One MLflow run per ablation and sweep point, with per-slice metrics logged as
-    `slice/<key>=<value>/<metric>`.
+    `slice/<key>/<value>/<metric>` (MLflow rejects `=` everywhere and `:` on Windows clients).
   - Any slice of at least 100 rows whose `target_word_inclusion` is more than 5 points below overall
     is named in `CARD.md`, with a mitigation proposed or ruled out.
 - **Testing**
