@@ -64,9 +64,14 @@ LINE_WIDTHS = (1, 5, 7)
 #: places its rectangles at random, and many land on blank paper.
 ERASURE_FLOOR = 0.05
 
-#: Alternative prompt templates. The shipped one is the baseline; "{label}" alone and a
-#: sketch-worded one bracket it.
-PROMPT_TEMPLATES = ("{label}", "a sketch of a {label}.", "a child's drawing of a {label}.")
+#: Prompt templates compared with the shipped one, which is the baseline and is skipped here:
+#: "{label}" alone, a sketch-worded one, the model card's, and the one shipped since 2026-11-16.
+PROMPT_TEMPLATES = (
+    "{label}",
+    "a sketch of a {label}.",
+    "This is a photo of {label}.",
+    "a child's drawing of a {label}.",
+)
 
 #: Occlusion patch, in pixels of the 224px canvas: a 7 x 7 grid.
 PATCH = 32
@@ -389,7 +394,11 @@ def main(argv: list[str] | None = None) -> int:
         # PNG bytes, as an upload: the encoder decodes and runs `prepare_drawing` itself.
         return encoder.encode(to_png(canvas), prompts).confidences
 
-    prompt_sets = {t: tuple(t.format(label=label) for label in labels) for t in PROMPT_TEMPLATES}
+    prompt_sets = {
+        t: tuple(t.format(label=label) for label in labels)
+        for t in PROMPT_TEMPLATES
+        if t != config.prompt_template
+    }
     start = time.perf_counter()
     result = measure(
         drawings,

@@ -1585,8 +1585,8 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
     neither helps nor hurts the gated number, and the choice matters to the top-1 label the
     product shows.
   - **The prompt template is worth +4.3 points on `val`.** `a child's drawing of a {label}.` beats
-    the shipped `This is a photo of {label}.`. This slice does not change `prompt_template`. That
-    is the KAN-38 owner's call, and it is now an Open question. The figure was taken on `val`, so
+    the then-shipped `This is a photo of {label}.`. The KAN-38 owner switched `prompt_template` to
+    it on 2026-11-16 (Decisions); every figure in this entry predates the switch. The figure was taken on `val`, so
     a decision taken on it leaves `test` clean.
   - **The training erasure barely erases.** With erasure forced on at the shipped settings (up to 3
     rectangles of up to 20% a side), the median drawing loses **0.5%** of its ink. Only 202 of
@@ -1876,7 +1876,8 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   every score, including S6c's and S6c2's, so they would need re-measuring. It also bears on S6d,
   because fine-tuning learns against whatever text the prompts give it. *Recommended:* decide
   before S6d starts. If it changes, re-run S6c on `test` once under the new template.
-  *Decides:* the KAN-38 owner.
+  *Decides:* the KAN-38 owner. **Answered 2026-11-16: switched**, and S6c and S6c2 re-measured
+  (Verified facts, same date).
 - **Is the training erasure too weak to matter?** At the shipped `erasure_*` settings, forced on,
   it removes a median of 0.5% of a drawing's ink, and it fires on only 30% of training drawings.
   S6f found that losing real strokes costs 12–20 points, so robustness to missing ink is worth

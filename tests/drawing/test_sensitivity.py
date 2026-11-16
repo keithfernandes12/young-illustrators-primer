@@ -311,9 +311,12 @@ def test_the_cli_runs_end_to_end_on_a_stubbed_world(monkeypatch, tmp_path):
     assert code == 0 and result["drawings"] == 3 and result["split"] == "val"
     assert all(image.startswith(b"\x89PNG") for image in seen), "the encoder gets PNG bytes, as an upload"
     assert result["license"] == ["CC-BY-4.0"] and result["attribution"] == ["Quick, Draw!"]
-    assert len([k for k in result["perturbations"] if k.startswith("prompt:")]) == len(
-        sensitivity.PROMPT_TEMPLATES
-    )
+    # Every alternative except the shipped template, which is the baseline itself.
+    shipped = result["shipped_prompt_template"]
+    assert shipped in sensitivity.PROMPT_TEMPLATES
+    compared = [k for k in result["perturbations"] if k.startswith("prompt:")]
+    assert len(compared) == len(sensitivity.PROMPT_TEMPLATES) - 1
+    assert not any(shipped in k for k in compared)
     assert result["device"] == "cpu" and result["dtype"] == "float32"
 
 

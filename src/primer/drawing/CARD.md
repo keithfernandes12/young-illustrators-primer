@@ -125,7 +125,8 @@ Verified facts. Each figure is the change in top-5 accuracy against the same dra
   changes on a quarter to a third of drawings, so the label shown first is less stable than the
   gated number suggests.
 - **The prompt is a real setting.** `a child's drawing of a {label}.` scores 4.3 points above the
-  shipped `This is a photo of {label}.`. Changing it is an open decision, not done here.
+  then-shipped `This is a photo of {label}.`, and became the shipped template on 2026-11-16. The
+  figures in this section were all measured under the old template.
 - **The answer rests on a few regions.** In occlusion maps of 20 correctly ranked drawings, the
   three most important 32 px patches carry about half the confidence drop.
 - **Not covered:** training hyperparameters (S6d), and children's drawings, for which see S6c2's
