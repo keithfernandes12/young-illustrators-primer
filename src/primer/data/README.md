@@ -119,10 +119,10 @@ Every processed record keeps its `license` and `attribution`.
    length, distinct count and category shares for text. Saved to `metadata/profiles/`.
 2. **Schema.** `configs/schemas/<dataset>.json` is the dataset's contract: exact column set,
    minimum row count, maximum null fraction (or "not entirely null" for mostly-null columns),
-   numeric ranges, non-empty text and allowed categories. A count whose range is fixed by what it
-   counts uses that range instead of the one observed (`KNOWN_BOUNDS` in `profiling.py`:
-   `n_keypoints` is 0–17, so a hidden joint is not an error). It is inferred from known-good data (`primer-data profile --write-schemas`),
-   reviewed, and committed, so a change to the contract shows up in a pull request.
+   numeric ranges, non-empty text and allowed categories. It is inferred from known-good data (`primer-data profile --write-schemas`),
+   reviewed, and committed, so a change to the contract shows up in a pull request. A count whose
+   range is fixed by what it counts gets that range instead of the observed one (`KNOWN_BOUNDS` in
+   `profiling.py`: `n_keypoints` is 0–17, so a hidden joint is not an error).
    **Great Expectations** validates the data against it; any failure is an **error**. So is a
    dataset that had rows and now has none, a dataset with no schema, or a dataset that could not be
    read. The one exception is the top of a numeric range: growing sources (more Quick, Draw!
