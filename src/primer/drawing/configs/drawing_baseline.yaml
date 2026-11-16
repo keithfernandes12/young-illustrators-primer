@@ -10,8 +10,12 @@
 # (0.346 GB fp32). **VRAM itself is still unmeasured** -- that run needs a CUDA build of torch and
 # belongs to S6d. See the plan's Verified facts, 2026-11-14.
 #
-# `prompt_template`, `text_max_length` and `text_padding` are the settings the checkpoint was
-# trained with, from its model card. They are here rather than in a call site because changing one
+# `text_max_length` and `text_padding` are the settings the checkpoint was trained with, from its
+# model card. `prompt_template` is not the model card's `This is a photo of {label}.`: S6f's sweep
+# on 2,000 `val` drawings scored `a child's drawing of a {label}.` +4.3 top-5 points higher
+# [+2.9, +5.9] (MLflow `d99d75b514934b18836e4ad94ddbc32f`), and the KAN-38 owner switched to it on
+# 2026-11-16. It is kept exactly as measured, "a airplane" included: fixing the article would be a
+# new, unmeasured prompt. All three are here rather than in a call site because changing one
 # changes every score: a measured `drawing_top5_acc` is only meaningful next to the prompt that
 # produced it.
 name: drawing-baseline
@@ -20,7 +24,7 @@ encoder: google/siglip2-base-patch16-224
 encoder_revision: 75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2
 encoder_license: apache-2.0
 labels_file: quickdraw_categories.txt
-prompt_template: "This is a photo of {label}."
+prompt_template: "a child's drawing of a {label}."
 text_max_length: 64
 text_padding: max_length
 top_k: 5

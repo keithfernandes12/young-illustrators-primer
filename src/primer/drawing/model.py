@@ -185,7 +185,7 @@ class DrawingConfig:
         return tuple(line for line in lines if line and not line.startswith("#"))
 
     def prompts(self) -> tuple[str, ...]:
-        """One text prompt per label, in label order, as the checkpoint was trained to read them."""
+        """One text prompt per label, in label order, through the configured `prompt_template`."""
         return tuple(self.prompt_template.format(label=label) for label in self.labels())
 
 
