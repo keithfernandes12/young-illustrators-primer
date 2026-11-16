@@ -84,7 +84,7 @@ def test_a_known_count_gets_its_real_bounds_not_the_observed_range():
     assert (elsewhere["min"], elsewhere["max"]) == (15.3, 18.7)   # only the listed dataset changes
 
 
-def test_hidden_joints_pass_the_contract_and_impossible_counts_still_fail(context):
+def test_hidden_joints_pass_a_negative_count_fails_and_too_many_joints_warns(context):
     schema = profiling.infer_schema("character_drawings", profiling.profile_frame(keypoint_frame([17] * 200)))
     schema = {**schema, "min_rows": 1}
 
