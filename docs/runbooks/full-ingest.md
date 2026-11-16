@@ -22,11 +22,13 @@ re-infer the schemas, save a data-check baseline and freeze a version.
 - A Windows laptop with the project venv (`%USERPROFILE%\.venvs\primer`, installed from
   `requirements.txt` plus `pip install -e . --no-deps`), `gcloud auth application-default login`
   done as an account that can write to `gs://young-illustrators-primer-data`, ~50 GB free disk
-  **outside OneDrive**, and ~4 GB of free memory for the data check (steps 5–6). Long text is
-  streamed rather than loaded (KAN-91), so on all of `v1.1` the check peaked at about 2.8 GB
-  against a local copy, and at about 3.4 GB reading the bucket inside Airflow, scheduler overhead
-  included (see the [data README](../../src/primer/data/README.md#statistics-schema-and-anomalies)
-  and `dags/README.md`). Step 4's Amateur Drawings preprocess has not been measured.
+  **outside OneDrive**, and ~4 GB of free memory for steps 5–6 (re-inferring the schemas, then
+  the data check). Long text is streamed rather than loaded (KAN-91), so on all of `v1.1` the data
+  check peaked at about 2.8 GB against a local copy, and at about 3.4 GB reading the bucket inside
+  Airflow, scheduler overhead included (see the
+  [data README](../../src/primer/data/README.md#statistics-schema-and-anomalies) and
+  `dags/README.md`). Step 5 does the same loading without Great Expectations, so it needs no more.
+  Step 4's Amateur Drawings preprocess has not been measured.
 - Steps marked **[person]** write to the shared bucket, so only a person runs them. Agents only
   prepare them. In a Claude Code session, run such a command yourself with the `!` prefix (it runs
   in your shell); never ask the agent to run it.
@@ -126,7 +128,7 @@ $pd = "$env:USERPROFILE\.venvs\primer\Scripts\primer-data.exe"
   ```
 - **The data check reports errors:** after `--write-schemas` the contracts match the data, so an error
   points at a real problem in one dataset; fix it before freezing a version.
-- **Out of memory in step 5 or 6:** close other apps and rerun; each dataset is checked one at a time.
+- **Out of memory in step 5 or 6:** close other apps and rerun; each dataset is loaded one at a time.
 - **`primer-data version` fails on DVC:** run it with `--no-dvc`, then `& $pd dvc-pointers`.
 - **Steps that cannot be undone:** freezing a version (step 7; a tag can't be reused or overwritten)
   and removing a partial batch with `gcloud storage rm` (above; recoverable only for the 7 days of
