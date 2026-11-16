@@ -880,7 +880,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   - it logs a `bool` as a number;
   - it cleans only the slice value, and lets two cleaned names collide;
   - it accepts an empty owner.
-  So the drawing stage has its own `tracking.py`. The gaps are tracked as a separate ticket for the
+  So the drawing stage has its own `tracking.py`. The gaps are tracked as KAN-128 for the
   speech owner, and the drawing code does not import from another area.
 
 ## Verified facts
