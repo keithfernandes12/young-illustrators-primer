@@ -167,8 +167,8 @@ def _stamp(radius: int) -> npt.NDArray[np.int64]:
     is 18% thick; neither is even.
 
     It is kept because the gap closes as the radius grows and a square's does not, and because a
-    thin diagonal is the safer error on a sketch. That is a choice, not a result: S6c is the first
-    slice that can say whether it costs any accuracy.
+    thin diagonal is the safer error on a sketch. That is a choice, not a result: the S6c baseline used
+    this stamp and nothing has compared it with another, so its cost in accuracy is unmeasured.
     """
     offsets = [
         (dy, dx)

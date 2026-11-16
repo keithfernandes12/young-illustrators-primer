@@ -25,8 +25,8 @@ size: 224
 # Stroke weight in pixels, centred on the line, so it must be odd. The 256-grid is scaled down by
 # 207/255 = 0.81 to fit the padded canvas, and at 1px the result is a sketch that is mostly
 # background. 3px is a judgement from looking at rendered Quick, Draw! drawings, not a measurement:
-# no model has scored a rendered drawing yet, and S6c is the first slice that can say whether this
-# is the right weight.
+# the S6c baseline was scored at this width and no other has been, so nothing yet says whether it is
+# the right weight.
 line_width: 3
 # Margin in pixels from the canvas edge to a stroke's *centre line*, on every side. The blank
 # border is narrower by the stroke's radius -- at `line_width: 3` the outermost ink sits one pixel

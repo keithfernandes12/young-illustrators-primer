@@ -12,7 +12,7 @@ tower. One character per drawing: the whole image is the subject.
 
 Not here yet, and deliberately so -- the per-drawing ``description`` (a separate captioning VLM),
 multi-character detection, ``body_type``, ``crop_ref``/``mask_ref`` and ``keypoints`` are S6e; the
-fine-tune is S6d; the measured ``drawing_top5_acc`` is S6c, which needs S6b's rendered split. Those
+fine-tune is S6d; S6c measured ``drawing_top5_acc`` over S6b's rendered split (see CARD.md). Those
 fields keep their contract defaults here rather than being guessed, because a guessed
 ``body_type`` sends KAN-42 down the wrong reposing branch silently.
 
