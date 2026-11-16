@@ -396,7 +396,10 @@ def test_an_unusable_output_folder_is_refused_before_any_scoring(monkeypatch, tm
     assert world.boxes == [], "nothing was scored first"
 
 
-def test_the_gate_cli_is_still_s6cs_stub():
-    """S6c fills `--model --split --out`; this slice only adds the `stability` subcommand."""
-    with pytest.raises(NotImplementedError):
-        evaluate.main(["--model", "m", "--out", "o.json"])
+def test_anything_but_stability_goes_to_s6cs_accuracy_cli(monkeypatch):
+    """S6c filled `--model --split --out`; the `stability` subcommand stays beside it."""
+    seen: list[list[str]] = []
+    monkeypatch.setattr(evaluate, "_evaluate_accuracy", lambda argv: seen.append(argv) or 0)
+
+    assert evaluate.main(["--model", "m", "--version", "v1.1", "--out", "o.json"]) == 0
+    assert seen == [["--model", "m", "--version", "v1.1", "--out", "o.json"]]

@@ -120,7 +120,9 @@ Every processed record keeps its `license` and `attribution`.
 2. **Schema.** `configs/schemas/<dataset>.json` is the dataset's contract: exact column set,
    minimum row count, maximum null fraction (or "not entirely null" for mostly-null columns),
    numeric ranges, non-empty text and allowed categories. It is inferred from known-good data (`primer-data profile --write-schemas`),
-   reviewed, and committed, so a change to the contract shows up in a pull request.
+   reviewed, and committed, so a change to the contract shows up in a pull request. A count whose
+   range is fixed by what it counts gets that range instead of the observed one (`KNOWN_BOUNDS` in
+   `profiling.py`: `n_keypoints` is 0–17, so a hidden joint is not an error).
    **Great Expectations** validates the data against it; any failure is an **error**. So is a
    dataset that had rows and now has none, a dataset with no schema, or a dataset that could not be
    read. The one exception is the top of a numeric range: growing sources (more Quick, Draw!
@@ -133,6 +135,16 @@ Every processed record keeps its `license` and `attribution`.
 
 In Airflow, `check_data` runs this after every source: errors fail the run, warnings don't. Both are
 emailed (see `alerts.py` and `PRIMER_ALERT_EMAILS` in `.env.example`), as is any failed task.
+
+**Long text is never loaded whole** (KAN-91). A text column averaging over 200 characters is read
+in batches instead (50,000 rows, though pyarrow may decode a whole row group at once). In `v1.1` that is `stories_text.text`, `readability.text`,
+`drawings.strokes`, and `character_drawings.keypoints` and `segmentation`. The stream gives exact statistics: nulls and
+min/mean/max length, plus how many values are shorter than the schema allows. Its contract (not
+null, not empty) is checked from those statistics; every other column goes through Great
+Expectations as before. The profiles are identical and the same checks fail as when checking the whole
+table; only the wording of a failure's detail and the order of the anomalies can differ (tested, and on
+`v1.1` every regenerated schema came out identical). Measured on all of `v1.1`: peak memory went
+from 11.9 GB to 2.8 GB, and time from 83 s to 32 s.
 
 When a source legitimately changes (a new column, a new source value), re-run
 `primer-data profile --write-schemas`, review the diff, and commit it with the change.

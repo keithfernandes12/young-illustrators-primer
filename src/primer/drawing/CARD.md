@@ -1,8 +1,8 @@
 # Model card: drawing
 
-The pretrained zero-shot baseline (KAN-38, plan slice S6a). Nothing is registered yet: there is no
-measured `drawing_top5_acc` until S6c runs this over S6b's rendered split, and no trained
-checkpoint until S6d. Fill the blanks below in those slices rather than guessing them here.
+The pretrained zero-shot baseline (KAN-38, plan slice S6a). Nothing is registered yet: S6c measured
+`drawing_top5_acc` over S6b's rendered test split (below), and there is no trained checkpoint until
+S6d. Fill the remaining blanks in that slice rather than guessing them here.
 
 | Field | Value |
 |---|---|
@@ -45,7 +45,13 @@ Gated keys this stage owns are listed in `evaluate.py` as `OWNED_METRICS`, taken
 
 | Key | Value | Baseline | Run |
 |---|---|---|---|
-| `drawing_top5_acc` | _not measured_ — S6c | target 0.85 | |
+| `drawing_top5_acc` | 0.4956 over all 63,310 test drawings (**fails** the 0.85 gate) | chance 0.0145 (5 of 345); target 0.85 | MLflow `c2b6818759af457e972d868b77019225`, experiment `yip-drawing` |
+
+Measured on 2026-11-15 with `python -m primer.drawing.evaluate`: data version v1.1, RTX 4060, bf16.
+It is a number over **rendered Quick, Draw! drawings**, not children's uploads, and only comparable
+with another run on the same device and dtype (a CPU/fp32 run ranks near-ties differently and was
+not done). The run was backfilled to MLflow from the metrics file, so the logged value is that
+file's four-place display; the file the code now writes carries the unrounded ratio.
 
 **Do not read a number into the zero-shot setup.** The brief's survey of the sketch literature puts
 plain CLIP near 43% top-1 on Quick, Draw!, and the gate wants 0.85 top-5. This baseline exists to
@@ -53,7 +59,13 @@ produce the floor S6d must beat and to prove the path end to end, not to clear t
 
 ## Slices
 
-Per-slice results for the keys in `slices.py`, and what was done about any gap. Empty until S6c.
+Per-slice results for the keys in `slices.py`, and what was done about any gap.
+
+`country_code` is the one key. 165 countries appear in the test split and 54 have at least
+`SMALL_SLICE` (100) drawings, so only those are judged. They run from 0.43 (BE) to 0.65 (CL), and
+the largest, US (n=28,557), reads 0.4774. Differences of that size are within noise over a few
+hundred drawings and label mix is not controlled per country, so **nothing has been done about any
+gap**: none is established. Small slices are reported but not judged.
 
 ## Mitigations and trade-offs
 

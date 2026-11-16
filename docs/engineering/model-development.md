@@ -131,16 +131,19 @@ configuration**: model, weights, seed and sampler settings, which must be pinned
 
 ### Tracking conventions
 
-Every run, local or cloud, logs to the shared MLflow server. The experiment name is fixed by
+Every run, local or cloud, logs to the shared MLflow server. (It is reached through an IAP tunnel, so
+a cloud job has no path in; how cloud jobs log is an open decision there.) The experiment name is fixed by
 `train-vertex`: **`MLFLOW_EXPERIMENT_NAME=yip-<component>`**. On top of that, these tags, without which
 runs from six machines cannot be compared:
 
 `stage` · `owner` · `data_version` · `git_sha` · `base_model` · `gate_group` · `where` (`local` | `vertex`)
 
 Params are the whole config file. Metrics are everything in `overall`, plus each slice as
-`slice/<key>=<value>/<metric>`. Artifacts are `metrics.json`, the bias report, the comparison plots the
-guidelines ask for (bar plot across candidates, confusion matrix where the task has classes) and
-`CARD.md`.
+`slice/<key>/<value>/<metric>`. This was `slice/<key>=<value>/<metric>` until 2026-11-15, when
+the first real run found that MLflow rejects `=` in metric names everywhere and `:` on Windows clients. Artifacts are
+`metrics.json`, the bias report, the comparison plots the guidelines ask for (bar plot across
+candidates, confusion matrix where the task has classes) and `CARD.md`. The server and how to reach
+it are in `docs/runbooks/mlflow-server.md`.
 
 ### Registry and rollback
 
@@ -460,6 +463,14 @@ Cloud Storage, Cloud Build, Cloud Monitoring and the budget alerts.
 
 - **Who hosts the shared MLflow, and on whose billing?** Recommended: the infra owner, on the team
   billing account, so it outlives the personal projects. — *member 4*
+  - *Where it stands (2026-11-15).* The server exists. It runs in the shared project
+    `young-illustrators-primer`, on that project's billing, as `docs/runbooks/mlflow-server.md`
+    describes. The project owner still has to confirm that the billing arrangement is meant to
+    last.
+- **How is the MLflow database backed up?** Every run's params, metrics and tags live in one
+  Postgres volume on one VM. Deleting the VM or running `docker-compose down -v` loses them; only
+  the artifacts in GCS survive. *Recommended:* a nightly `pg_dump` to the artifact bucket, or a
+  scheduled snapshot of the VM's disk. — *member 4*
 - **Spot or on-demand for training?** Recommended: Spot everywhere, with checkpointing, since no
   training run here is latency-sensitive. — *member 4*
 - **Does the golden set cap generated images?** Recommended: yes, a sampled subset for development runs

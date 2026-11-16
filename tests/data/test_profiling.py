@@ -68,6 +68,36 @@ def test_infer_schema_floor_is_zero_only_if_zero_was_seen():
     assert cols["delta"]["min"] == pytest.approx(-6.0)
 
 
+def keypoint_frame(counts):
+    """character_drawings' count of visible joints, the way every Amateur Drawings row has it today."""
+    return pd.DataFrame({"n_keypoints": pd.array(counts, dtype="int32")})
+
+
+def test_a_known_count_gets_its_real_bounds_not_the_observed_range():
+    """KAN-90: 17 in every row would infer 15.3-18.7; a joint can be hidden, so the floor is 0."""
+    all_visible = profiling.profile_frame(keypoint_frame([17] * 200))
+
+    known = profiling.infer_schema("character_drawings", all_visible)["columns"]["n_keypoints"]
+    elsewhere = profiling.infer_schema("other_dataset", all_visible)["columns"]["n_keypoints"]
+
+    assert (known["min"], known["max"]) == (0.0, 17.0)
+    assert (elsewhere["min"], elsewhere["max"]) == (15.3, 18.7)   # only the listed dataset changes
+
+
+def test_hidden_joints_pass_a_negative_count_fails_and_too_many_joints_warns(context):
+    schema = profiling.infer_schema("character_drawings", profiling.profile_frame(keypoint_frame([17] * 200)))
+    schema = {**schema, "min_rows": 1}
+
+    some_hidden = keypoint_frame([17] * 150 + [16] * 30 + [3] * 19 + [0])
+    assert profiling.validate(some_hidden, schema, context) == []
+
+    negative = keypoint_frame([17] * 199 + [-1])
+    assert {(a.check, a.column) for a in profiling.validate(negative, schema, context)} == {
+        ("expect_column_values_to_be_between", "n_keypoints")}
+    too_many = profiling.profile_frame(keypoint_frame([17] * 199 + [18]))   # more joints than COCO has
+    assert [a.check for a in profiling.range_warnings(schema, too_many)] == ["above_range"]
+
+
 def test_infer_schema_never_lets_a_column_go_all_null(context):
     n = 1000
     df = pd.DataFrame({"mostly_null": pd.array([1.0] * 20 + [None] * (n - 20), dtype="Float64"),
@@ -283,18 +313,195 @@ def test_one_broken_dataset_does_not_stop_the_others_or_the_report(store, tmp_pa
     schemas = tmp_path / "schemas"
     _write(store, frame(), "20261001T000000Z")
     profiling.write_schemas(store, schemas_dir=schemas, datasets=("readability",))
-    real_read = profiling.read_dataset
+    real_load = profiling.load_dataset
 
-    def read(dataset, store):
+    def load(store, dataset, min_lengths=None):
         if dataset == "drawings":
             raise OSError("corrupt parquet")
-        return real_read(dataset, store)
+        return real_load(store, dataset, min_lengths)
 
-    monkeypatch.setattr(profiling, "read_dataset", read)
+    monkeypatch.setattr(profiling, "load_dataset", load)
     report = profiling.check_datasets(store, run_id="r", schemas_dir=schemas, datasets=("drawings", "readability"))
     assert [(a["dataset"], a["check"]) for a in report["anomalies"]] == [("drawings", "check_failed")]
     assert report["datasets"]["readability"]["errors"] == 0
     assert store.exists("metadata/anomalies/r.json")
+
+
+# ------------------------------------------------------------------ long text (KAN-91)
+#
+# 1.8M stories made Great Expectations need over 7 GB, so long text columns are checked from exact
+# statistics gathered a chunk at a time instead. These tests pin that the results do not change.
+
+def _write_stories(store, df, parts=2):
+    """Write ``df`` as several TinyStories batches, an incremental source, so every file is read."""
+    for i, chunk in enumerate(np.array_split(np.arange(len(df)), parts)):
+        store.write_parquet(f"processed/stories_text/source=tinystories/batch=2026100{i + 1}T000000Z.parquet",
+                            df.iloc[chunk].reset_index(drop=True))
+
+
+def stories(n=120):
+    df = frame(n)
+    df.loc[3, "text"] = pd.NA                     # a missing story, allowed by the schema below
+    # Lengths differ, so min/max/mean are tested, and the longest story has multi-byte characters
+    # (as CLEAR passages do), so a length counted in bytes instead of characters would not match.
+    df.loc[5, "text"] = "café “story” é" + "x" * 400
+    # As TinyStories writes it (sources/tinystories.py): a typed text column with no values, so every
+    # streamed chunk of it is all null. The stream must skip those chunks rather than fail on them.
+    df["title"] = pd.array([pd.NA] * n, dtype="string")
+    return df
+
+
+def test_an_all_null_text_column_streams_like_tinystories_titles(store):
+    import pyarrow.parquet as pq
+
+    _write_stories(store, stories())
+    path = store.glob("processed/stories_text/source=tinystories/*.parquet")[0]
+    assert profiling._is_text(pq.read_schema(store.path(path)).field("title").type)   # typed, not null-typed
+
+    loaded = profiling.load_dataset(store, "stories_text")
+
+    assert loaded.profile()["columns"]["title"] == {"kind": "string", "null_fraction": 1.0}
+
+
+def test_long_text_never_reaches_great_expectations(store, tmp_path, monkeypatch):
+    schemas = tmp_path / "schemas"
+    _write_stories(store, stories())
+    profiling.write_schemas(store, schemas_dir=schemas, datasets=("stories_text",))
+    seen = []
+    real = profiling._gx_ready
+    monkeypatch.setattr(profiling, "_gx_ready", lambda df: seen.append(list(df.columns)) or real(df))
+
+    report = profiling.check_datasets(store, run_id="r", save=False, schemas_dir=schemas, datasets=("stories_text",))
+
+    assert report["errors"] == 0
+    assert seen and all("text" not in columns for columns in seen)
+    assert all("word_count" in columns for columns in seen)   # the other columns still go through GX
+
+
+def test_streamed_profile_matches_the_in_memory_profile(store, monkeypatch):
+    monkeypatch.setattr(profiling, "TEXT_BATCH_ROWS", 7)   # many chunks per file, so merging is exercised
+    df = stories()
+    _write_stories(store, df, parts=3)
+
+    loaded = profiling.load_dataset(store, "stories_text")
+
+    assert set(loaded.text) == {"text"}                     # only the long column is streamed
+    assert "text" not in loaded.frame.columns
+    assert loaded.profile() == profiling.profile_frame(df)
+    assert list(loaded.profile()["columns"]) == list(df.columns)
+
+
+def test_a_text_column_missing_from_one_file_counts_as_null_there(store):
+    df = stories()
+    first, second = df.iloc[:60].reset_index(drop=True), df.iloc[60:].reset_index(drop=True)
+    store.write_parquet("processed/stories_text/source=tinystories/batch=20261001T000000Z.parquet", first)
+    store.write_parquet("processed/stories_text/source=tinystories/batch=20261002T000000Z.parquet",
+                        second.drop(columns="text"))   # an older batch written before the column existed
+
+    loaded = profiling.load_dataset(store, "stories_text")
+
+    assert loaded.text["text"].nulls == 60 + int(first["text"].isna().sum())
+    assert loaded.profile() == profiling.profile_frame(pd.concat([first, second.drop(columns="text")],
+                                                                 ignore_index=True))
+
+
+@pytest.mark.parametrize("change, expected", [
+    (lambda df: df, set()),
+    (lambda df: df.assign(text=df["text"].where(df.index > 20)),
+     {("expect_column_values_to_not_be_null", "text")}),
+    (lambda df: df.assign(text=df["text"].mask(df.index == 0, "")),
+     {("expect_column_value_lengths_to_be_between", "text")}),
+    (lambda df: df.drop(columns="text"), {("expect_table_columns_to_match_set", None),   # and the column's
+                                           ("expect_column_values_to_not_be_null", "text"),  # own checks,
+                                           ("expect_column_value_lengths_to_be_between", "text")}),  # as GX does
+    (lambda df: df.assign(notes="note " * 60), {("expect_table_columns_to_match_set", None)}),
+    (lambda df: df.assign(notes="note " * 60).drop(columns="score"),  # one column-set break, not two,
+     {("expect_table_columns_to_match_set", None),                    # plus the missing column's checks
+      ("expect_column_values_to_be_between", "score"), ("expect_column_values_to_not_be_null", "score")}),
+    (lambda df: df.assign(text=df["text"].mask(df.index == 0, "x")), set()),  # exactly min_length: fine
+    (lambda df: df.assign(word_count="word " * 60), {("expect_column_values_to_be_between", "word_count")}),
+], ids=["clean", "too_many_nulls", "one_empty_story", "text_missing", "extra_long_column",
+        "extra_long_and_missing_short", "story_exactly_min_length", "numeric_turns_into_long_text"])
+def test_long_text_contract_breaks_match_the_full_frame_check(tmp_path, context, change, expected):
+    from primer.data.storage import Store
+
+    schema = profiling.infer_schema("stories_text", profiling.profile_frame(stories()))
+    df = change(stories())
+    store = Store((tmp_path / "data").as_posix())
+    _write_stories(store, df)
+    loaded = profiling.load_dataset(store, "stories_text", min_lengths=profiling.min_lengths(schema))
+
+    # Lists, not sets: a contract break must be reported as many times as the full frame reports it.
+    streamed = sorted((a.check, a.column or "") for a in profiling.validate(loaded.frame, schema, context, loaded.text))
+    full = sorted((a.check, a.column or "") for a in profiling.validate(df, schema, context))
+
+    assert streamed == full == sorted((check, column or "") for check, column in expected)
+
+
+def test_check_datasets_catches_one_empty_story(store, tmp_path):
+    """End to end: ``check_datasets`` must count short values while streaming, or this passes silently."""
+    schemas = tmp_path / "schemas"
+    _write_stories(store, stories())
+    profiling.write_schemas(store, schemas_dir=schemas, datasets=("stories_text",))
+    emptied = stories()
+    emptied.loc[7, "text"] = ""
+    for path in store.glob("processed/stories_text/source=tinystories/*.parquet"):
+        store.fs.rm(store.path(path))
+    _write_stories(store, emptied)
+
+    report = profiling.check_datasets(store, run_id="r", save=False, schemas_dir=schemas, datasets=("stories_text",))
+
+    assert {(a["check"], a["column"]) for a in report["anomalies"]} == {
+        ("expect_column_value_lengths_to_be_between", "text")}
+
+
+def test_a_min_length_the_stream_did_not_count_is_refused(tmp_path, context):
+    from primer.data.storage import Store
+
+    schema = profiling.infer_schema("stories_text", profiling.profile_frame(stories()))
+    store = Store((tmp_path / "data").as_posix())
+    _write_stories(store, stories())
+    loaded = profiling.load_dataset(store, "stories_text")    # no min_lengths: short values not counted
+
+    with pytest.raises(ValueError, match="min_lengths"):
+        profiling.validate(loaded.frame, schema, context, loaded.text)
+
+
+def test_a_column_that_is_not_text_in_every_file_is_loaded_not_streamed(store):
+    df = stories()
+    first = df.iloc[:60].reset_index(drop=True).assign(notes="note " * 60)
+    second = df.iloc[60:].reset_index(drop=True).assign(notes=7)    # the same column, as a number
+    store.write_parquet("processed/stories_text/source=tinystories/batch=20261001T000000Z.parquet", first)
+    store.write_parquet("processed/stories_text/source=tinystories/batch=20261002T000000Z.parquet", second)
+
+    loaded = profiling.load_dataset(store, "stories_text")
+
+    assert "notes" not in loaded.text and "notes" in loaded.frame.columns
+    assert loaded.profile() == profiling.profile_frame(pd.concat([first, second], ignore_index=True))
+
+
+def test_write_schemas_never_loads_long_text_whole(store, tmp_path, monkeypatch):
+    _write_stories(store, stories())
+    profiled = []
+    real = profiling.profile_column
+    monkeypatch.setattr(profiling, "profile_column", lambda s: profiled.append(s.name) or real(s))
+
+    profiling.write_schemas(store, schemas_dir=tmp_path / "schemas", datasets=("stories_text",))
+
+    assert profiled and "text" not in profiled and "word_count" in profiled
+
+
+def test_a_categorical_column_that_turns_into_long_text_is_an_error(tmp_path, context):
+    from primer.data.storage import Store
+
+    schema = profiling.infer_schema("stories_text", profiling.profile_frame(stories()))
+    assert "allowed" in schema["columns"]["source"]
+    store = Store((tmp_path / "data").as_posix())
+    _write_stories(store, stories().assign(source="tinystories " * 30))
+    loaded = profiling.load_dataset(store, "stories_text", min_lengths=profiling.min_lengths(schema))
+
+    found = {(a.check, a.column) for a in profiling.validate(loaded.frame, schema, context, loaded.text)}
+    assert ("expect_column_values_to_be_in_set", "source") in found
 
 
 def test_an_unreadable_previous_profile_is_skipped(store):
@@ -322,3 +529,6 @@ def test_committed_schema_matches_the_parquet_schema(dataset):
         assert "min_length" not in committed["columns"][name], (dataset, name)
     if dataset == "storybook_pages":
         assert committed["columns"]["page_number"]["min"] > 0      # 1-based (schemas.py), so 0 must fail
+    for name, (low, high) in profiling.KNOWN_BOUNDS.get(dataset, {}).items():
+        spec = committed["columns"][name]
+        assert (spec["min"], spec["max"]) == (low, high), (dataset, name)   # regenerate after KNOWN_BOUNDS changes
