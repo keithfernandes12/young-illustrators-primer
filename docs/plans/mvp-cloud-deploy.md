@@ -1506,19 +1506,22 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 
 ## Open questions
 
-- **What S6c hands to S6d, found in review of #37.** None is a defect in S6c as shipped. (1) *Ties:*
-  `scored` breaks ties in vocabulary order, so a tied label at the fifth/sixth boundary can count
-  as a hit; bf16 sigmoids make near-ties plausible. Record `boundary_ties` and a pessimistic
-  accuracy beside the headline before S6d's number nears 0.85. (2) *The gate does not bind a file
-  to a run:* `check_gate --mlflow-run-id` tags any run from any drawing file that passes, and the
-  file carries no checkpoint hash or run id. Needs a design decision before S6d registers a model.
-  (3) *MLflow logging is not in the repo:* the backfill script was scratch; S6d needs a logging
-  helper or flag so it logs the same params and `slice/<key>/<value>/<metric>` names, and
-  `model-development.md`'s `slice/<key>=<value>` text (changed in #38) and its contract paragraph
-  (which still says `golden.py` merges each area's `overall`) need to follow. (4) *The gate is
-  device- and version-agnostic:* a CPU/fp32 run and a bf16 GPU run are both gate-eligible, and
-  nothing checks the drawing count against the version's expected test size. Decide which device
-  and dtype certify. Not yet recorded on Jira.
+- **What S6c hands to S6d, found in review of #37.** None is a defect in S6c as shipped. S6d is
+  KAN-38's, so these are hand-offs to its owner, not a claim that all four are done under that
+  ticket. Recorded on KAN-38 on 2026-11-15. (1) *Ties, S6d acceptance:* `scored` breaks ties in
+  vocabulary order, so a tied label at the fifth/sixth boundary can count as a hit; bf16 sigmoids
+  make near-ties plausible. Record `boundary_ties` and a pessimistic accuracy beside the headline
+  before S6d's number nears 0.85. (2) *The gate does not bind a file to a run, a design decision
+  before S6d registers a model:* `check_gate --mlflow-run-id` tags any run from any drawing file
+  that passes, and the file carries no checkpoint hash or run id. The code is in `check_gate.py`,
+  which every area shares, so it may need the gate's owner or its own ticket. (3) *MLflow logging
+  is not in the repo, S6d:* the backfill script was scratch; S6d needs a logging helper or flag so
+  it logs the same params and `slice/<key>/<value>/<metric>` names. `model-development.md`'s
+  `slice/<key>=<value>` text (changed in #38) and its contract paragraph (which still says
+  `golden.py` merges each area's `overall`) need to follow, and are #38's file. (4) *The gate is
+  device- and version-agnostic, S6d acceptance plus a team decision:* a CPU/fp32 run and a bf16
+  GPU run are both gate-eligible, and nothing checks the drawing count against the version's
+  expected test size. Decide which device and dtype certify.
 
 - **What S6b1 hands to S6b2 and S6c2.** Recorded here so they are not found only in Verified
   facts. *S6b2:* assert the training loader imports `augment_canvas` from `preprocess.py`, the
