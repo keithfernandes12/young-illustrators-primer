@@ -126,7 +126,7 @@ $pd = "$env:USERPROFILE\.venvs\primer\Scripts\primer-data.exe"
   ```
 - **The data check reports errors:** after `--write-schemas` the contracts match the data, so an error
   points at a real problem in one dataset; fix it before freezing a version.
-- **Out of memory in step 6:** close other apps and rerun; each dataset is checked one at a time.
+- **Out of memory in step 5 or 6:** close other apps and rerun; each dataset is checked one at a time.
 - **`primer-data version` fails on DVC:** run it with `--no-dvc`, then `& $pd dvc-pointers`.
 - **Steps that cannot be undone:** freezing a version (step 7; a tag can't be reused or overwritten)
   and removing a partial batch with `gcloud storage rm` (above; recoverable only for the 7 days of
