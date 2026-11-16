@@ -525,6 +525,38 @@ upload size only as `original_width`/`original_height` (`schemas.py`). A parent'
 full-resolution capture. So that row carries two confounds, not one — an unknown mix of
 photographs, scans and digital drawings, and a resize nobody in this pipeline performed.
 
+### S6c3 · MLflow logging for the drawing evaluations
+
+*size: small*
+
+`evaluate.py --mlflow --owner <name>`, for S6c's accuracy and S6c2's stability, logs a copy of the
+file it has just written to `yip-drawing`. The names come from `tracking.py`, a new module. It
+replaces the scratch backfill script that logged S6c's two runs, which was hand-off (3) from #37's
+review.
+
+- **Why separate** — S6d's first training run needs it, and it changes no number. It is independent
+  of #39.
+- **Principles it is held to** (the S6 standard, written down here because S6c3 is where it is
+  first applied to logging):
+  1. **The file is the record.** The run copies a file already on disk, and logs that file as
+     `eval/<name>`.
+  2. **Refuse before side effects.** A missing owner, a `--limit` probe or an unset
+     `MLFLOW_TRACKING_URI` (the client would log to a local `mlflow.db` and print a run id as if
+     it were shared) is refused before the bucket or the weights are touched. A malformed file fails before any run is opened.
+  3. **Nothing silent.** A flag (`bool`) is not logged as a measurement. Two names that clean to
+     the same string are refused, not overwritten. A missing commit, or a dirty state git could not read, is logged as `unknown`.
+  4. **Provenance travels with the number.** The seven convention tags, plus `git_dirty`,
+     `gate_eligible` and `kind`. Params carry every scoring and preprocessing setting, with nested
+     values as JSON.
+  5. **A probe is never a result.** `--limit` cannot be logged.
+  6. **Hermetic tests that fail when the behaviour goes.** A fake `mlflow` in `sys.modules`, plus
+     mutation checks.
+- **Not doing** — logging S6f (#39 has its own `log_to_mlflow`; it moves here after #39 merges),
+  registration, or `check_gate`'s binding of a file to a run (hand-off 2).
+- **Acceptance** — both CLIs log a run on the real server whose tags, params and metrics match the
+  file. The accuracy run matches the backfill's 334 metrics and 23 params.
+- **Depends on** — S6c, S6c2, KAN-107's server. **Jira** — KAN-38.
+
 ### S6d · Fine-tune the recogniser
 
 *size: medium*
@@ -701,6 +733,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6b2 | merged | [#32](https://github.com/keithfernandes12/young-illustrators-primer/pull/32) | `data.py`: hashed 80/10/10 split of v1.1 (506k/63k/63k), rendered on demand through `render_strokes` → `augment_canvas` (train only) → `prepare_drawing`. Unblocks S6c |
 | S6c | in review | [#37](https://github.com/keithfernandes12/young-illustrators-primer/pull/37) | baseline `drawing_top5_acc` **0.4956** over all 63,310 rendered test drawings (GPU, bf16): gate FAIL against 0.85, chance 0.0145. MLflow run `c2b68187` in `yip-drawing`. The gate's number, not the product's. KAN-38 |
 | S6c2 | merged | [#33](https://github.com/keithfernandes12/young-illustrators-primer/pull/33) | 1,000 frozen drawings (unstratified), four variants: top-1 moves 25% / 50% / 41% between adjacent variants; over half the drawings come out `squiggle`. Reproduces exactly. KAN-109 |
+| S6c3 | in review | [#44](https://github.com/keithfernandes12/young-illustrators-primer/pull/44) | `evaluate.py --mlflow --owner` for accuracy and stability through `tracking.py`; refuses probes, owner-less runs, a missing `MLFLOW_TRACKING_URI` and colliding names. Round-tripped on the real server. KAN-38 |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); still waits on S6c (#37). Reads S6c2's stability figures |
 | S6e | merged | [#35](https://github.com/keithfernandes12/young-illustrators-primer/pull/35) | `sheet.py`: Florence-2 + SAM 2.1 + ViTPose beside SigLIP 2; every field filled on 82/82 real sheets; two figures found as two on 12/20. Unblocks KAN-42 |
 | S7a | in progress | branch `feat/KAN-42-controlnet-baseline` | pretrained SD 1.5 + ControlNet-Scribble, one page, local output; synthetic inputs only until KAN-94 |
@@ -840,6 +873,16 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   the same pixels training will. Labels are compared by vocabulary index (`data.label_index`,
   case-insensitive), never by string. The cut is a literal 5 (`evaluate.TOP_K`), not
   `DrawingConfig.top_k`.
+
+- **2026-11-16 — S6c3 sets its own logging conventions rather than reusing the speech stage's
+  helper.** `speech/train.py`'s `log_run` was read first and judged against the S6 principles in
+  S6c3's slice. It falls short of four of them:
+  - it opens the run before building what it logs;
+  - it logs a `bool` as a number;
+  - it cleans only the slice value, and lets two cleaned names collide;
+  - it accepts an empty owner.
+  So the drawing stage has its own `tracking.py`. The gaps are tracked as KAN-128 for the
+  speech owner, and the drawing code does not import from another area.
 
 ## Verified facts
 
@@ -1503,6 +1546,22 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
     over 16 distinct `drawing_label`s. All 16 are in the 345, case-insensitively and exactly, so a
     flawless recogniser reaches 1.0. That is a property of the golden set, not of this number,
     which is not taken over it.
+
+- **2026-11-16 — S6c3: both evaluation files round-trip through the real MLflow server.**
+  `tracking.log_run` logged S6c's re-measured metrics file and S6c2's stability summary into the
+  scratch experiment `yip-drawing-s6c3-check`, so that `yip-drawing` holds no duplicates. Runs
+  `2741493f882a4d07bb4236563d78a7cf` and `7cece9c43d78483ab6524ee88cc665bf` both ended
+  `FINISHED`.
+  - **Accuracy:** 334 metrics and 23 params, the same counts as the backfill run `b72bc442`.
+    `drawing_top5_acc` reads 0.5435950086874112 unrounded, and US reads 0.5282.
+  - **Stability:** 42 metrics and 21 params. It is tagged `gate_eligible=false`, and
+    `git_sha=unknown`, because that summary predates this slice's commit recording.
+  - **Both:** artifacts are `CARD.md` and `eval/`.
+  - **One client/server mismatch, found while checking.** The 3.18 client's
+    `list_artifacts(run, "eval")` calls `/logged-models/search`, which the 2.17 server returns 404
+    for. Logging is unaffected; only listing a sub-folder from this client fails.
+  - **Tests:** 29 new tests. Three mutation checks were each caught by one failing test: the
+    collision refusal, the `--limit` refusal, and the `bool` exclusion.
 
 ## Open questions
 
