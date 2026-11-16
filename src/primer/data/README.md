@@ -35,6 +35,28 @@ Train on a named version (see [Versions](#versions)) so results are reproducible
 | `readability` | CLEAR | `READABILITY`: text, `score` (BT_easiness, higher = easier), Flesch-Kincaid grade baseline |
 | `word_lists` | Dolch, Fry, Kuperman | `WORD_LISTS`: `list_name`, word, level/rank, age of acquisition |
 
+### Splitting by book
+
+`primer.data.splits` is the shared book split for model areas that split books (KAN-120). The story
+and illustration areas still have their own copies of it, and move to this one when their owners
+switch. Areas that use the same fractions put a book in the same split; illustration's 0/50/50
+lays the same hash out differently from story's 80/10/10, which is harmless because illustration
+trains nothing:
+
+```python
+from primer.data.splits import SplitFractions, book_key, split_of
+
+key = book_key("storyweaver", "storyweaver-12")        # "storyweaver/storyweaver-12"
+split_of(key)                                           # "train" | "val" | "test", 80/10/10
+split_of(key, SplitFractions(train=0.0, val=0.5, test=0.5))   # e.g. evaluation only
+```
+
+A book's split is a hash of its key alone (the first 8 bytes of SHA-256, over 2^64). It doesn't
+depend on the other books, on any label such as reading level, or on a seed, and pages of one book
+never straddle splits. The key includes the source, because a `book_id` is only unique within its
+source. The hash matches the story and illustration areas' existing copies, so switching to this
+module moves no book (tested).
+
 ## Commands
 
 ```bash
