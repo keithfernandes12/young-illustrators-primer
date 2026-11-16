@@ -540,10 +540,11 @@ review.
   first applied to logging):
   1. **The file is the record.** The run copies a file already on disk, and logs that file as
      `eval/<name>`.
-  2. **Refuse before side effects.** A missing owner or a `--limit` probe is refused before the
-     bucket or the weights are touched. A malformed file fails before any run is opened.
+  2. **Refuse before side effects.** A missing owner, a `--limit` probe or an unset
+     `MLFLOW_TRACKING_URI` (the client would log to a local `mlflow.db` and print a run id as if
+     it were shared) is refused before the bucket or the weights are touched. A malformed file fails before any run is opened.
   3. **Nothing silent.** A flag (`bool`) is not logged as a measurement. Two names that clean to
-     the same string are refused, not overwritten. A missing commit is logged as `unknown`.
+     the same string are refused, not overwritten. A missing commit, or a dirty state git could not read, is logged as `unknown`.
   4. **Provenance travels with the number.** The seven convention tags, plus `git_dirty`,
      `gate_eligible` and `kind`. Params carry every scoring and preprocessing setting, with nested
      values as JSON.
@@ -732,7 +733,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6b2 | merged | [#32](https://github.com/keithfernandes12/young-illustrators-primer/pull/32) | `data.py`: hashed 80/10/10 split of v1.1 (506k/63k/63k), rendered on demand through `render_strokes` → `augment_canvas` (train only) → `prepare_drawing`. Unblocks S6c |
 | S6c | in review | [#37](https://github.com/keithfernandes12/young-illustrators-primer/pull/37) | baseline `drawing_top5_acc` **0.4956** over all 63,310 rendered test drawings (GPU, bf16): gate FAIL against 0.85, chance 0.0145. MLflow run `c2b68187` in `yip-drawing`. The gate's number, not the product's. KAN-38 |
 | S6c2 | merged | [#33](https://github.com/keithfernandes12/young-illustrators-primer/pull/33) | 1,000 frozen drawings (unstratified), four variants: top-1 moves 25% / 50% / 41% between adjacent variants; over half the drawings come out `squiggle`. Reproduces exactly. KAN-109 |
-| S6c3 | in review | [#44](https://github.com/keithfernandes12/young-illustrators-primer/pull/44) | `evaluate.py --mlflow --owner` for accuracy and stability through `tracking.py`; refuses probes, owner-less runs and colliding names. Round-tripped on the real server. KAN-38 |
+| S6c3 | in review | [#44](https://github.com/keithfernandes12/young-illustrators-primer/pull/44) | `evaluate.py --mlflow --owner` for accuracy and stability through `tracking.py`; refuses probes, owner-less runs, a missing `MLFLOW_TRACKING_URI` and colliding names. Round-tripped on the real server. KAN-38 |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); still waits on S6c (#37). Reads S6c2's stability figures |
 | S6e | merged | [#35](https://github.com/keithfernandes12/young-illustrators-primer/pull/35) | `sheet.py`: Florence-2 + SAM 2.1 + ViTPose beside SigLIP 2; every field filled on 82/82 real sheets; two figures found as two on 12/20. Unblocks KAN-42 |
 | S7a | in progress | branch `feat/KAN-42-controlnet-baseline` | pretrained SD 1.5 + ControlNet-Scribble, one page, local output; synthetic inputs only until KAN-94 |
