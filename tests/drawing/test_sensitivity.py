@@ -532,6 +532,9 @@ def test_the_cli_runs_end_to_end_on_a_stubbed_world(monkeypatch, tmp_path):
     # The commit and dirty flag come from `_git_state`, in the file and in the MLflow tags.
     assert (result["git_sha"], result["git_dirty"]) == ("abc1234", True)
     assert logged["tags"]["git_sha"] == "abc1234" and logged["tags"]["git_dirty"] == "True"
+    # The tags model-development.md requires on every run.
+    required = {"stage", "owner", "data_version", "git_sha", "base_model", "gate_group", "where"}
+    assert required <= logged["tags"].keys()
     assert "sensitivity/occlusion/top3_share_undefined" in logged["metrics"]
 
 

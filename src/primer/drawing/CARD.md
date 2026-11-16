@@ -138,8 +138,8 @@ interval. Baseline top-5 on the sample is 0.518.
 - **Partial erasure is too weak to read.** The training erasure removes a median 0.5% of ink; on
   the 202 drawings that lost at least 5%, the change is -2.0 [-5.4, +1.0].
 - **Uncorrected intervals.** About ten 95% intervals are reported with no multiplicity correction;
-  the 7 px result is the one line-width interval that excludes zero, so it is consistent with 3 px
-  rather than proof of it.
+  the 7 px result is the one line-width interval that excludes zero, so treat it as suggestive
+  given the uncorrected intervals.
 - **Not covered:** training hyperparameters (S6d), and children's drawings, for which see S6c2's
   preprocessing stability.
 - **History:** the first run (MLflow `d99d75b514934b18836e4ad94ddbc32f`, 2026-11-15) was under the

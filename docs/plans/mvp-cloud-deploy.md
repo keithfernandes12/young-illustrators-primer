@@ -1674,7 +1674,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
     with before and after swapped, so it is the negation by construction and checks nothing.)
   - **Uncorrected intervals.** About ten 95% intervals are reported with no multiplicity
     correction, so one in twenty could clear zero by chance. The 7 px result is the only
-    line-width interval that excludes zero; read it as consistent with 3 px, not as proof.
+    line-width interval that excludes zero; treat it as suggestive given the uncorrected intervals.
   - **Missing strokes cost more under this prompt** (-14.7 against -11.7), from a higher baseline.
   - **7 px is worse than 3 px on this sample**, by 2.5 points [1.1, 3.8]; for 1 and 5 px we detect
     no clear change (1 px: -1.2 [-2.6, +0.4]). This is consistent with keeping the shipped 3 px,
