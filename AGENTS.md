@@ -15,8 +15,11 @@ deployment, §8 failure analysis).
 
 ## Layout
 
-- `src/primer/data/` — data pipeline, the only real code so far. Read `src/primer/data/AGENTS.md`.
-- `src/primer/{drawing,story,readability,illustration,speech,safety,serving}/` — empty, planned.
+- `src/primer/data/` — the data pipeline. Read `src/primer/data/AGENTS.md`.
+- `src/primer/{drawing,story,readability,illustration,speech,safety,serving}/` — the model areas and
+  serving, each with the layout in `docs/engineering/model-development.md` §2. They are at different
+  stages; each area's `CARD.md` and its plan in `docs/plans/` say what is real. `story/` has the
+  ages 3–5 pipeline on small pretrained models (`docs/plans/story-generation-llm.md`, slice M1).
 - `configs/sources.yaml` — dataset registry. `data/` — DVC pointer files only, never data.
 - `dags/` — Airflow DAGs (`dags/README.md`); `docker-compose.yaml` and `infra/airflow/` run them.
 - `dashboards/tracker/` — Streamlit pipeline tracker. `app/`, `notebooks/` — empty.

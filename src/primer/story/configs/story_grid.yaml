@@ -1,0 +1,76 @@
+# The Mac submission's model comparison (`grid.py`; plan Decisions 2026-11-15, scope change).
+# Two small pretrained instruct models, run zero-shot on the member's MacBook Air (MPS), over a
+# temperature x max_new_tokens grid, on the validation requests from `data.py`.
+#
+# Revisions are pinned so a rerun downloads exactly the weights a number was measured on; looked up
+# from the Hugging Face API on 2026-11-15. Download sizes: 0.5B ~1.0 GB, 1.5B ~3.1 GB.
+#
+# The selection rule is fixed here so the result cannot pick the rule. Its version is
+# `selection.version`; it is frozen as of commit bac7bca
+# (813c6c2 before the rebase onto main). One honest caveat: `max_raw_safety_flag_rate`
+# was added after a first grid had started (2 of 12 configurations, stopped for review fixes). Those
+# runs' flag rates were not looked at before 0.2 was chosen, and the runs are soft-deleted. Any later
+# change to this block bumps `version` and requires a full re-run: no rule edit after seeing results.
+name: story-mac-grid
+data_version: v1.1
+level_source: fk_formula@1
+requests: .local-data/story/validation_requests.jsonl
+out: .local-data/story/grid
+# Local and git-ignored (.local-data/); re-logged to the shared server when it exists. SQLite, not a
+# `file:` store: MLflow 3 refuses the file store (maintenance mode). Paths are relative to the repo root,
+# so run the grid from there.
+mlflow_tracking_uri: sqlite:///.local-data/mlflow.db
+mlflow_artifact_location: .local-data/mlartifacts
+experiment: yip-story
+seed: 1234
+max_attempts: 3
+top_p: 0.9
+
+models:
+  - name: qwen2.5-0.5b-instruct
+    repo: Qwen/Qwen2.5-0.5B-Instruct
+    revision: 7ae557604adf67be50417f59c2c2f167def9a775
+    license: apache-2.0
+  - name: qwen2.5-1.5b-instruct
+    repo: Qwen/Qwen2.5-1.5B-Instruct
+    revision: 989aa7980e4cf806f80c7fef2b1adb7bc71aa306
+    license: apache-2.0
+
+# Reduced for the Mac (Diya, 2026-11-15): a fanless MacBook Air heats and throttles over a long MPS
+# run, and the full 2 x 3 x 2 grid on 30 requests took ~75 min. So: both models, 2 temperatures, 1 token
+# limit (4 configurations), on the first 20 requests. The first 20 stay balanced (7/7/6 by source and by
+# age) because the requests file is written round-robin. 512 tokens, not 256: a 4-6 page JSON story can
+# be cut off at 256, which would score the token limit as invalid JSON rather than the model. The full
+# grid (temperature 1.0, max_new_tokens 256, all 30 requests) runs where there is a GPU.
+max_requests: 20
+grid:
+  temperature: [0.3, 0.7]
+  max_new_tokens: [512]
+
+# The named frozen configuration every later model has to beat (model-development section 2: for a
+# stage that does not train, the baseline is a pinned configuration, not "the model's own score").
+baseline:
+  model: qwen2.5-0.5b-instruct
+  temperature: 0.7
+  max_new_tokens: 512
+
+selection:
+  version: selection@1                  # bump on any change to this block, then re-run the whole grid
+  # 1. Hard filters. A config is eligible only if all three hold.
+  min_success_rate: 0.8                 # a story returned within max_attempts for >= 80% of requests
+  # Zero by construction while the judge is the writer's own guardrail; it starts to bite once an
+  # independent classifier (member 3's) is passed as the judge. Kept so that day needs no rule change.
+  max_returned_safety_violation_rate: 0.0
+  # The filter that bites today: a configuration whose drafts trip the avoid-list on more than 1 in 5
+  # attempts keeps trying to write unsafe content for 3-5 year olds, even if the retries catch it.
+  # Provisional (review Q2), revisable once real flag rates are seen.
+  max_raw_safety_flag_rate: 0.2
+  # 2. Primary metric: the gated key.
+  primary: target_word_inclusion
+  # 3. Within this margin of the best primary score, prefer, in order:
+  tie_margin: 0.02
+  tie_breakers:
+    - first_attempt_valid_json_rate     # higher: fewer retries
+    - format_compliance_rate            # higher: mean of page and sentence compliance
+    - p95_latency_s                     # lower
+    - model_size_rank                   # lower: the smaller model

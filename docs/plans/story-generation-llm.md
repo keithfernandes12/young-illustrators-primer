@@ -13,9 +13,11 @@ related: [mvp-cloud-deploy, model-stages-and-data-coverage, bounded-local-traini
 
 ## Where things stand
 
-`src/primer/story/` is the stage 2 area skeleton (`model-development` §2). `interface.py` is real:
-`StoryRequest`, `Story`, the `StoryWriter` protocol and `FakeStoryWriter`, which `serving/book.py` and
-`tests/models/test_area_interfaces.py` already use. Every other file raises `NotImplementedError`.
+`src/primer/story/` is the stage 2 area (`model-development` §2). `interface.py` holds `StoryRequest`,
+`Story`, the `StoryWriter` protocol and `FakeStoryWriter`, which `serving/book.py` and
+`tests/models/test_area_interfaces.py` already use. When this plan was written, every other file
+raised `NotImplementedError`. Slice M1 (2026-11-15) has since built the 3–5 pipeline on two small
+pretrained models; `train.py` and `register.py` are still stubs.
 KAN-39 asks for three things: compare Qwen3-4B, Phi-4-mini and Llama 3.2 3B on constraint following,
 QLoRA fine-tune the winner on the instruction dataset, and produce structured JSON with constrained
 decoding and vocabulary-aware prompts. KAN-92 is the deterministic template generator that "defines the
@@ -289,6 +291,10 @@ the run ids.
     Serving decides what to show; the writer never returns a story that fails the check.
   - An optional small positive logit bias on the target words' first tokens is a sensitivity knob
     (S8a), not a default.
+- **Changed for M1 (Decisions, 2026-11-15):** the writer now retries on invalid JSON, a missing target
+  word and **a failed safety check** (the story stage's own avoid-list guardrail). It does **not**
+  retry on page or sentence limits, which are measured instead. The original v0 rule below is kept
+  for the record.
 - **What triggers regeneration in v0.** Exactly three things: invalid JSON (which constrained decoding
   should make impossible, so this is a backstop), a missing target word, and a page-count or
   sentence-length violation of the age-mode preset.
@@ -421,15 +427,18 @@ S2 runs these steps in this order. The order matters: dedupe before the split, g
     bucket owner, grants it.
 
   All three are person-only. Until the
-  shared server exists, runs log to a local, git-ignored store with
-  `MLFLOW_TRACKING_URI=file:./.local-data/mlruns` (`.local-data/` is already in `.gitignore`). Every
+  shared server exists, runs log to a local, git-ignored store: SQLite at
+  `sqlite:///.local-data/mlflow.db`, with artifacts in `.local-data/mlartifacts` (`.local-data/` is
+  already in `.gitignore`). It was first `file:./.local-data/mlruns`, but MLflow 3 refuses the file
+  store (Decisions, 2026-11-15). Every
   run still carries the full tag set, so it can be **re-logged** to the shared server when that
   exists. A number only in a local store does not count for a decision or a registration.
 - **Every run** (bake-off, smoke, sweep, fine-tune) logs to experiment `yip-story` with these tags:
   - `stage=story`, `owner`, `data_version=v1.1`, `git_sha`, `base_model` with the pinned revision,
     `gate_group=story`, and `where` (`local` or `vertex`);
-  - plus `level_source`, and the DVC object hash for `stories_text`, `storybook_pages` and
-    `word_lists`, read from `data/*.dvc` at the `data-v1.1` tag.
+  - plus `level_source`, and `dvc/<dataset>` tags for `stories_text`, `storybook_pages` and
+    `word_lists`: a short SHA-1 of each `data/<dataset>.dvc` pointer file as committed at the
+    `data-v1.1` git tag (`grid.dvc_tags`), which pins the object versions the data came from.
   - Params are the whole config. Artifacts are `metrics.json`, the pair-build manifest, the bar plot
     and `CARD.md`. The manifest holds counts per split for each (source × 0.5-level) reporting bin;
     these bins are reported only and never used to assign splits.
@@ -444,8 +453,8 @@ S2 runs these steps in this order. The order matters: dedupe before the split, g
 
 ## Slices
 
-Every slice is tracked on **KAN-39**. There are no sub-tasks (Decisions, 2026-11-14), so each
-slice's branch, commits and PR carry `KAN-39`.
+Every slice is tracked on **KAN-39** (Decisions, 2026-11-14), so each slice's branch, commits and PR
+carry `KAN-39`. The exception is S2, which has its own issue, **KAN-127** (Decisions, 2026-11-15).
 
 ### S0 · This plan
 
@@ -457,6 +466,45 @@ Adds `docs/plans/story-generation-llm.md` and points `mvp-cloud-deploy` S5/S5b a
   `mvp-cloud-deploy` S5 and S5b point here.
 - **Testing** — docs check only (no code).
 - **Depends on** — nothing. **Jira** — KAN-39.
+
+### M1 · Small pretrained models on the Mac, ages 3–5 (this submission)
+
+*size: large* — the scope change in Decisions, 2026-11-15. It brings forward parts of S1–S6 for the
+3–5 mode only, on two small pretrained models.
+
+`src/primer/story/`:
+- `levels.py`: the shared `fk_grade`;
+- `presets.py`: Learn to Read only;
+- `guardrails.py` and `configs/avoid_list.yaml`: the safety guardrail;
+- `schema.py`: the JSON reply;
+- `prompts.py`;
+- `checks.py`;
+- `writer.py`: retries on invalid JSON, a missing word or a failed safety check;
+- `model.py`: Hugging Face on MPS, loaded lazily;
+- `data.py`: one pair per book, cross-source exact dedupe, the pure-hash split, and ~30 validation
+  requests from val;
+- `evaluate.py`, `slices.py` and `sensitivity.py`;
+- `grid.py`, `charts.py` and `configs/story_grid.yaml`: the comparison, MLflow logging,
+  `metrics.json` and charts;
+- `CARD.md`: including the guideline table.
+
+- **Acceptance**
+  - Every unit test runs on a stub model: no weights, no network, no bucket.
+  - Importing the area loads none of torch, transformers, mlflow or matplotlib.
+  - The writer never returns a story that failed one of its three checks.
+  - `fk_grade` is clamped at 0 and on the 0.5 grid.
+  - A book's split depends on its key alone.
+  - `metrics.json` carries only story-owned gated keys, and lists `story_quality_mean` as not
+    measured.
+  - Every grid point is one MLflow run with the §2 tags.
+  - **Person-run, after bucket access:** `python -m primer.story.data --data-uri
+    gs://young-illustrators-primer-data --version v1.1` writes the ~30 requests. Then
+    `python -m primer.story.grid --owner DiyaKaswa11` (with `.[story]` installed) runs the grid, and
+    its result goes in Verified facts.
+- **Testing** — `tests/story/`. Each behaviour above was checked by mutation on 2026-11-15:
+  removing the clamp, the rounding, the safety retry, the round-robin, the dedupe, the pure-hash
+  split, the TinyStories-only filter or the word matcher each fails a test.
+- **Depends on** — S0. **Jira** — KAN-39.
 
 ### S1 · Request and output types, age-mode presets, template generator (KAN-92)
 
@@ -520,6 +568,11 @@ It writes a manifest.
     - The S2 PR then records the shortfall and a mitigation in Decisions before S6 starts: for
       example, drawing the TinyStories pool toward shorter stories, or raising the TinyStories ratio.
     - It does not proceed silently.
+    - **Risk, measured 2026-11-15** (Verified facts): only 3.8% of `v1.1` val books are at grade 0–1,
+      far below the 20% floor. If train looks the same, this check fails. Expect S2 to need the
+      mitigation, and "raising the TinyStories ratio" will not help on its own, because TinyStories'
+      median grade is 4.5. The likelier fixes are drawing the pool toward short, simple stories, or
+      using a lower age-band floor.
   - Every pair's target words occur in its story.
   - Every row carries `license`, `attribution` and `level_source`.
 - **Testing** — each acceptance line has a test on in-memory frames built through `conform()`. Each
@@ -538,7 +591,7 @@ It writes a manifest.
     80/10/10 and the test could not catch it.)
 
   `fk_grade` also gets a table of hand-computed cases.
-- **Depends on** — S1 (types). **Jira** — KAN-39.
+- **Depends on** — S1 (types). **Jira** — KAN-127 (S2; under KAN-39). PR #36 review F8.
 
 ### S2b · Near-duplicate and safety filtering of training text
 
@@ -750,9 +803,10 @@ TinyStories ratio (3:1, 10:1, 30:1, all drawn from the step-2 pool) and the LoRA
 
 | Slice | State | PR | Notes |
 |---|---|---|---|
-| S0 | in review | [#28](https://github.com/keithfernandes12/young-illustrators-primer/pull/28) | this plan; level decided by Keith (option B, with conditions); other four defaults revisable in review; Keith's review fixes; all in Decisions |
-| S1 | not started | | KAN-92's scope, built by Diya on KAN-39 |
-| S2 | not started | | pure-hash split, one pair per book, cross-source dedupe, shared `fk_grade` (review F1–F5); helper moves to `src/primer/data` with KAN-120 |
+| S0 | merged | [#28](https://github.com/keithfernandes12/young-illustrators-primer/pull/28) | this plan; level decided by Keith (option B, with conditions); other four defaults revisable in review; Keith's review fixes; all in Decisions |
+| M1 | in review | [#36](https://github.com/keithfernandes12/young-illustrators-primer/pull/36) | small pretrained models on the Mac, ages 3–5; built and measured. Reduced grid (4 configurations × 20 requests) re-run 2026-11-15 on the post-fix requests: **nothing selected**, best inclusion 0.20 against 0.95 (Verified facts) |
+| S1 | not started | | KAN-92's scope, built by Diya on KAN-39; M1 delivers the types and the 3–5 preset |
+| S2 | not started | | KAN-127. Expect the 0–1 level floor to fail (3.8% of val books, Verified facts). pure-hash split, one pair per book, cross-source dedupe, shared `fk_grade` (review F1–F5); helper moves to `src/primer/data` with KAN-120 |
 | S2b | not started | | runs on the hash-sampled pool, not 1.8M rows |
 | S3 | not started | | |
 | S4 | not started | | |
@@ -854,6 +908,110 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
   - **Option A later:** Option A's row and Out of scope now carry the pipeline stage, the float grade
     plus scorer-version column kept across re-runs, the team data-version decision, and the check of
     CLEAR-trained labels on texts for ages 3–5.
+- **2026-11-15** — **Scope change for this submission (Diya).** The first model built is slice M1:
+  - **two small pretrained instruct models run zero-shot on Diya's MacBook Air** (MPS):
+    Qwen2.5-0.5B-Instruct and Qwen2.5-1.5B-Instruct, pinned by revision;
+  - **only the 3–5 (Learn to Read) age mode**;
+  - a temperature × max_new_tokens grid, with the selection rule fixed in config before any run.
+
+  Moved to later, not dropped:
+  - the three 4B candidates (Qwen3-4B, Phi-4-mini, Llama 3.2 3B) and their bake-off (S6);
+  - QLoRA (S7), the Vertex runs, and the 5–8 mode.
+
+  Why: there is no CUDA GPU or GPU quota yet, and the submission needs a working, measured model
+  stage now. Every course guideline is either implemented in M1 or listed as not applicable or
+  deferred, with the reason, in `src/primer/story/CARD.md`.
+- **2026-11-15** — **Retry conditions for M1 (Diya; replaces "Regeneration conditions in v0"
+  above).** The writer retries on exactly three things:
+  - invalid JSON;
+  - a missing target word;
+  - **a failed safety check**.
+
+  Safety guardrails for this model are the story owner's job, so the story stage carries its own
+  avoid-list guardrail (`configs/avoid_list.yaml`), and the writer never returns a story it flags.
+  Serving's check with member 3's classifier after `write` stays as an independent second line.
+
+  **Page and sentence limits are no longer retry conditions.** They are measured (`page_limit_rate`,
+  `sentence_limit_rate`), as the reading level already was, so the grid shows how often small models
+  break them rather than hiding it behind retries.
+- **2026-11-15** — *Avoid-list in the prompt (Diya).* The prompt names the avoid-list **topics**,
+  not its words, because naming the words to a small model tends to prime them. The words are used
+  only to check the output.
+- **2026-11-15** — *`story_quality_mean` is not measured in M1.* It needs the LLM-as-judge (open
+  question 3). `metrics.json` lists it under `not_measured` rather than reporting a made-up number.
+- **2026-11-15** — **Validation requests for M1 (Diya).**
+  - **The target level comes from the child's age**, by the golden set's rule (`max(0, age − 4)`, the
+    centre of the generator's ±0.3), not from the source book. The book only supplies the target
+    words, the character and the setting.
+  - **Source books qualify at a whole-story `fk_grade` of 3.0 or below** (`MAX_SOURCE_BOOK_LEVEL`).
+  - Target words prefer the sight-word lists (Dolch and Fry).
+  - 30 requests, balanced round-robin across sources, ages 3, 4 and 5 equally.
+
+  Why: at the original ≤ 1.5 cut only 12 val books qualified (Verified facts), too few to choose a
+  model on.
+- **2026-11-15** — *TinyStories subset for requests (Diya).* The requests read only the **smallest**
+  `v1.1` TinyStories file (2,000 stories, ~1 MB), pinned by its GCS generation, instead of all ~931 MB.
+  - Splits are unaffected, because each book's split is a pure hash of its own key.
+  - The file used is recorded in the requests manifest (`--tinystories-files`, default 1).
+  - Training pairs (S2) will read more.
+- **2026-11-15** — *The local MLflow store is SQLite (corrects the Local MLflow entry above).* MLflow
+  3.18 refuses the `file:` tracking store ("maintenance mode"); the only way past is an opt-out flag
+  for an unmaintained backend. So the local store is `sqlite:///.local-data/mlflow.db`, with
+  artifacts in `.local-data/mlartifacts`. Both are git-ignored, both are still local, and both still
+  get re-logged to the shared server. Found by a smoke run before the grid, not by a failed grid.
+- **2026-11-15** — **M1 changes after the self-review of `9f11f0a`.** The first real grid was stopped
+  after 2 of 12 configurations, because these change what is generated and how it is scored. Its 2
+  partial runs are not results.
+  - **Inclusion counts pages only.** A target word used only in the title is never read on a page.
+  - **A request that returned no story scores zero words,** whatever its drafts contained. A draft
+    refused as unsafe can no longer count as included.
+  - **Age cycles within each source.** One cycle over the round-robin had locked age to source, so
+    the `age` and `source` slices measured the same thing.
+  - **The prompt states the target reading level** ("kindergarten" below grade 1), which the plan's
+    S3 always intended.
+  - **New selection filter, `max_raw_safety_flag_rate: 0.2`** (provisional). The
+    returned-violation filter cannot exclude a run while the writer's own guardrail is the judge.
+  - **With no eligible configuration, `metrics.json` reports no `overall` keys and the grid exits 2.**
+    The baseline is still reported.
+  - **Logging.** `metrics.json` and the charts are logged as a `grid-summary` MLflow run. Every run
+    logs the whole config as params, plus `dvc/<dataset>` tags.
+  - **Grammar-constrained decoding is deferred in M1** (KAN-39 asks for it). M1 samples freely and
+    retries on invalid JSON, and the grid's valid-JSON rate measures how much constraint is needed.
+- **2026-11-15** — **Reduced grid for the Mac (Diya; hardware constraint).** The grid is both models ×
+  temperature {0.3, 0.7} × max_new_tokens {512}, so **4 configurations, on the first 20 of the 30
+  requests** (`max_requests: 20`). The first 20 are balanced 7/7/6 by source and by age.
+  - Why: the fanless MacBook Air heats and throttles on a long MPS run, and the full 12-configuration
+    grid on 30 requests ran ~75 min and was stopped twice.
+  - Kept: the baseline configuration (0.5B, 0.7, 512) is still a grid point, and the selection rule
+    is unchanged (`selection@1`).
+  - Not measured in this submission: temperature 1.0, max_new_tokens 256 (so no token-limit
+    sensitivity), and requests 21–30. The full grid runs where there is a GPU.
+  - Recorded in `CARD.md` ("Grid (hardware constraint)").
+- **2026-11-15** — *S2 gets its own issue, KAN-127 (Diya; PR #36 review F8).* This replaces the
+  "Jira: no sub-tasks" default above for S2 only. S2 is a separate piece of work (the training
+  pairs), and its 0–1 level floor is expected to fail on the measured 3.8%. Other slices stay on
+  KAN-39.
+- **2026-11-15** — *The request vocabulary is the Learn to Read set, as this plan always said (PR #36
+  review F2).* Before the fix it was every sight-word row (Dolch to grade 3, Fry 1–1000). It is now
+  Dolch pre-primer, primer and grade 1, plus Fry 1–300: 321 words. Each request records which list
+  each target word came from, or `book`, and the manifest carries each list's licence and
+  attribution.
+- **2026-11-15** — **For ages 3–5, target words are a hard Learn to Read filter (Diya; Keith's
+  question on PR #36).** With the vocabulary given, only list words qualify, and a book with fewer
+  than two list words is skipped. There is no fallback to a harder word from a grade-3 source book.
+  - Cost on the real data: in the requests built after F2, 1 of the first 20 had used a fallback
+    word.
+  - Applies to Learn to Read only. Grow Vocabulary (5–8), when it is built, should deliberately go
+    beyond the sight words.
+- **2026-11-15** — **For ages 3–5, target-word matching stays exact: "jumped" does not count for
+  "jump" (Keith, follow-up review of PR #36; answers the question raised in the reply).**
+  - Why: Learn to Read is about recognising the sight word itself, and "jumped" doesn't show the child
+    "jump". The golden gate's `contains_target_word` also requires an exact match, so loosening only
+    the story matcher would make the story metric and the release gate disagree.
+  - So `checks.contains_target_word` is unchanged, and it still agrees with the gate (tested in
+    `test_checks_and_prompts.py`). The inflected miss in the re-run's hand check counts as a miss.
+  - **For Grow Vocabulary (5–8) only:** simple inflections (-s, -ed, -ing) are to be reconsidered,
+    and only together with the gate, so the two never disagree. Not built in M1.
 
 ## Verified facts
 
@@ -894,6 +1052,121 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
   exists. Checked by grepping `src/primer/data`.
 - **2026-11-14** — `docs/plans/story-demo.md`, cited by KAN-92, does not exist on `main` or on any
   fetched branch. Checked with `git log --all -- docs/plans/story-demo.md`.
+- **2026-11-15** — **The `v1.1` corpus sits well above the 3–5 reading range. Only 3.8% of val books
+  (10 of 264) are at grade 0–1.** Measured with `levels.fk_grade` on whole stories. The data read was
+  all `storybook_pages`, plus the smallest TinyStories file (`batch=20261027T003515Z`, generation
+  `1793061331116289`, 2,000 stories), with one pair per book and cross-source dedupe (5 duplicates
+  dropped). That gives 2,753 books, 264 of them in val.
+
+  | Grade | african_storybook | storyweaver | tinystories | all val |
+  |---|---|---|---|---|
+  | ≤ 1.0 | 5 | 3 | 2 | 10 (3.8%) |
+  | ≤ 1.5 | 7 | 3 | 2 | 12 |
+  | ≤ 2.0 | 8 | 5 | 5 | 18 |
+  | ≤ 3.0 | 18 | 9 | 30 | 57 |
+  | median grade | 3.0 | 4.5 | 4.5 | |
+
+  **Risk for the S2 floor** (≥ 20% and ≥ 300 train pairs at 0–1): if train matches val, it fails by a
+  wide margin. The TinyStories figures come from one file of 2,000 stories out of 1.8M, so treat them
+  as an estimate. Run the full count when S2 reads more TinyStories.
+- **2026-11-15** — Bucket read access works from Diya's Mac with Application Default Credentials. The
+  python.org Python 3.13 that the `.venv` was built from has no CA bundle installed
+  (`/Library/Frameworks/Python.framework/Versions/3.13/etc/openssl/` is empty), so every Google Cloud
+  call fails `CERTIFICATE_VERIFY_FAILED` unless `SSL_CERT_FILE` points at the `.venv`'s `certifi`
+  bundle. The permanent fix is the installer's `Install Certificates.command`, a person's action.
+- **2026-11-15** — *Correction to the level-distribution fact above.* It says "cross-source dedupe (5
+  duplicates dropped)". Once the counts were split (review F10), those 5 turned out to be **1
+  cross-source and 4 within one source**. The book counts and level figures are unchanged.
+- **2026-11-15** — **The reduced M1 grid selected nothing: no configuration passed `selection@1`.**
+  - Run from commit `323de91` on Diya's MacBook Air (MPS, fp16): 4 configurations × the first 20
+    requests, 11:44:57–11:58:00, exit code 2.
+  - Local MLflow store, experiment `yip-story`. The summary run `7a33159945aa4cc98fb505b35bc938ed`
+    holds `metrics.json`, `grid_results.json` and both charts.
+
+  | Configuration (run id) | success | target-word inclusion | first-try valid JSON | page limit | sentence limit | FK mean | raw safety flags | mean attempts | p95 s |
+  |---|---|---|---|---|---|---|---|---|---|
+  | 0.5B, t 0.3 (`5d9315e7…`) | 0.10 | 0.10 | 0.90 | 0.00 | 0.00 | 4.0 | 0.0 | 2.90 | 8.6 |
+  | **0.5B, t 0.7 — baseline** (`89749273…`) | 0.00 | 0.00 | 0.60 | – | – | – | 0.0 | 3.00 | 7.5 |
+  | 1.5B, t 0.3 (`c475b545…`) | 0.15 | 0.16 | 0.95 | 1.00 | 0.00 | 4.7 | 0.0 | 2.75 | 19.7 |
+  | 1.5B, t 0.7 (`e43193d1…`) | **0.40** | **0.36** | 0.65 | 0.88 | 0.00 | 3.9 | 0.0 | 2.50 | 23.4 |
+
+  - **Every configuration fails the success filter** (≥ 0.8 of requests returning a story). The
+    best, 1.5B at 0.7, returns a story for 40% of requests. Retries fail mostly on **missing target
+    words**: the safety guardrail never fired (raw flag rate 0.0 everywhere), and JSON validity on
+    the first try was 0.60–0.95.
+  - **`target_word_inclusion` is 0.00–0.36 against the gate's 0.95.** `metrics.json` therefore has an
+    empty `overall` (both story keys under `not_measured`), and the baseline's inclusion is 0.00.
+  - **No returned story met the sentence limit** (≤ 2 sentences per page, ≤ 10 words per sentence),
+    and the FK means are 3.9–4.7 against targets of 0–1. Checked by hand on real 1.5B stories, so
+    this is not a checker bug: the models write 7–16-word sentences, and one sentence over 10 words
+    fails the story.
+  - **What moved the numbers:** model size (1.5B over 0.5B: inclusion +0.21 averaged over
+    temperature) and, for 1.5B, the higher temperature (inclusion 0.16 → 0.36). For 0.5B, the higher
+    temperature hurt. Raising the temperature made first-try JSON worse for both (−0.30 averaged).
+  - **Slices** (1.5B, t 0.7; all below the 100-row floor, not judged): inclusion 0.35 / 0.44 / 0.27
+    for african_storybook / storyweaver / tinystories, and 0.12 / 0.39 / 0.60 for ages 3 / 4 / 5.
+    Age 3 has the two-word lists most often missed, and its target level is the lowest.
+  - **What this means for the plan:** zero-shot 0.5B–1.5B models do not meet the 3–5 constraints.
+    The constraint the plan already names as the lever is the one that fails: target words. This is
+    the evidence for the next steps. Use a larger candidate (S6), constrained decoding plus a
+    word-forcing prompt or logit bias (S4/S8a), and the QLoRA fine-tune on pairs whose target words
+    come from the story (S7). Raising `max_attempts` or loosening `selection@1` would hide the
+    failure rather than fix it.
+- **2026-11-15** — *Commit hashes after the rebase onto `main`.* PR #28 merged, so M1 was rebased onto
+  `main` before its first push, and every M1 commit got a new hash. The story area, its tests and
+  this plan are byte-identical before and after (checked with `git diff` against a backup branch).
+  The hashes cited above, and in the MLflow `git_sha` tags, are the pre-rebase ones:
+  - `9f11f0a` → `9c182ca` (the SQLite store; the commit reviewed in the first self-review);
+  - `813c6c2` → `bac7bca` (the self-review fixes; `selection@1` is frozen here);
+  - `323de91` → `7ddc022` (the reduced grid; the grid's runs carry `git_sha=323de91`).
+- **2026-11-15** — **The grid result above is superseded: it was computed on pre-fix requests.**
+  PR #36 review F2 (the Learn to Read vocabulary) and the hard filter changed the target words of
+  15 of the 20 graded requests. Those requests are kept as a record:
+  `.local-data/story/validation_requests.prefix.jsonl`, sha256 `10b0c4baa94dc5f4…`. Their 4 MLflow
+  runs (`git_sha=323de91`, no `requests_sha256` tag) are kept too.
+- **2026-11-15** — **Re-run on the post-fix requests: nothing selected again, and lower than before.**
+  - Commit `f07d2a8`, 17:28:36–17:41:44 on Diya's MacBook Air, 4 configurations × the first 20
+    requests (sha256 `23c55df0c3d2268d…`; every target word from Dolch pre-primer–grade 1 or Fry
+    1–300), exit code 2.
+  - The summary run is `69d093b6915745ea82c2a9785faa7c97`.
+
+  | Configuration (run id) | success | target-word inclusion | first-try valid JSON | page limit | sentence limit | FK mean | raw safety flags | mean attempts | p95 s |
+  |---|---|---|---|---|---|---|---|---|---|
+  | 0.5B, t 0.3 (`f8ba2728…`) | 0.05 | 0.04 | 0.70 | 0.00 | 0.00 | 2.5 | 0.0 | 2.90 | 6.1 |
+  | **0.5B, t 0.7 — baseline** (`312123fc…`) | 0.10 | 0.08 | 0.60 | 0.00 | 0.00 | 2.75 | 0.0 | 2.95 | 6.4 |
+  | 1.5B, t 0.3 (`c6ab3dba…`) | 0.05 | 0.06 | 0.85 | 1.00 | 0.00 | 4.5 | 0.0 | 2.95 | 18.5 |
+  | 1.5B, t 0.7 (`7b5c2e52…`) | **0.20** | **0.20** | 0.85 | 0.25 | 0.00 | 4.6 | 0.0 | 2.80 | 21.1 |
+
+  - **Every configuration fails the success filter.** Best inclusion is 0.20 against the gate's
+    0.95, and the baseline's is 0.08. `metrics.json` has an empty `overall`.
+  - **Learn to Read words did not make inclusion easier, against expectation.** A hand check of 8
+    requests on 1.5B at 0.7 found:
+    - 1 missed word was inflected (a requested "jump" written as "jumped" or "jumping");
+    - 3 missed words were simply absent;
+    - 2 requests produced invalid JSON on that attempt;
+    - 1 request used every word.
+
+    So inflection is one cause, not the main one. With 20 requests, the drop from 0.36 to 0.20 on
+    the best configuration is about 3 requests: treat the direction, not the size, as the finding.
+  - **No returned story met the sentence limit.** FK means are 2.5–4.6 against targets of 0–1.
+  - **Spreads** (model, then temperature): inclusion +0.07 and +0.09, first-try JSON +0.20 and
+    −0.05. 1.5B at temperature 0.7 is still the best configuration.
+  - **Slices** (1.5B, t 0.7; all below the 100-row floor, not judged): inclusion 0.33 / 0.12 / 0.17
+    for african_storybook / storyweaver / tinystories, and 0.19 / 0.28 / 0.12 for ages 3 / 4 / 5.
+  - **Implication, unchanged:** the case for a larger model, word-forcing constrained decoding and
+    the fine-tune. A word-matching rule that accepts inflections ("jumped" for "jump") is a product
+    question, not something to change quietly to raise a number. Raised in the PR #36 reply.
+- **2026-11-15** — *Correction to the hand-check breakdown in the entry above* (found by an
+  independent check of the diff). The breakdown listed 7 outcomes for 8 requests and mixed requests
+  with words. Corrected, all counted per request (one attempt each, 1.5B at 0.7):
+  - 2 requests produced invalid JSON;
+  - 1 request used every target word;
+  - 5 requests each missed one word: **1 inflected** ("jump" written as "jumped" or "jumping") and
+    **4 absent**.
+
+  The entry above said 3 absent. The fourth, "here", was falsely counted as inflected because the
+  check's prefix test matched "her". The conclusion stands, a little stronger: inflection is one
+  cause, and most missed words are absent.
 
 ## Open questions
 
@@ -934,6 +1207,12 @@ corrects. The base model is not decided here: S6 decides it, from logged runs.
    - Option A cannot work until the readability owner defines that mapping: invert the fit, train the
      scorer on FK directly, or change the interface.
    - *Decides:* member 3 (readability). This plan's option B does not depend on it.
+9. ~~A single-model `evaluate.py` CLI and the golden adapter~~ **Tracked as KAN-122** (Diya; self-review
+   F14). `python -m primer.story.evaluate --model --split --out` still raises `NotImplementedError`; in
+   M1 the grid writes `metrics.json`. To be built with S5.
+10. ~~The slice metric name in `model-development` §2~~ **Tracked as KAN-123** (unassigned, team doc;
+    self-review F15). §2 prescribes `slice/<key>=<value>/<metric>`, but MLflow refuses `=`, so the grid
+    logs `slice/<key>_<value>/<metric>` (the illustration area hit the same limit).
 
 ## Out of scope
 
