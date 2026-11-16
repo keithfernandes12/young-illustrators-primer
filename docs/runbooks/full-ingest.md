@@ -22,9 +22,11 @@ re-infer the schemas, save a data-check baseline and freeze a version.
 - A Windows laptop with the project venv (`%USERPROFILE%\.venvs\primer`, installed from
   `requirements.txt` plus `pip install -e . --no-deps`), `gcloud auth application-default login`
   done as an account that can write to `gs://young-illustrators-primer-data`, ~50 GB free disk
-  **outside OneDrive**, and ~4 GB of free memory for the data check. It peaks at about 2.8 GB on
-  all of `v1.1`, because long text is streamed rather than loaded (KAN-91; see the
-  [data README](../../src/primer/data/README.md#statistics-schema-and-anomalies)).
+  **outside OneDrive**, and ~4 GB of free memory for the data check (steps 5–6). Long text is
+  streamed rather than loaded (KAN-91), so on all of `v1.1` the check peaked at about 2.8 GB
+  against a local copy, and at about 3.4 GB reading the bucket inside Airflow, scheduler overhead
+  included (see the [data README](../../src/primer/data/README.md#statistics-schema-and-anomalies)
+  and `dags/README.md`). Step 4's Amateur Drawings preprocess has not been measured.
 - Steps marked **[person]** write to the shared bucket, so only a person runs them. Agents only
   prepare them. In a Claude Code session, run such a command yourself with the `!` prefix (it runs
   in your shell); never ask the agent to run it.
