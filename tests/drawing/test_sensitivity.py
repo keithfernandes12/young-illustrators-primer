@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Sequence
+from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
@@ -113,8 +114,6 @@ def test_erasure_returns_a_grey_canvas_and_the_ink_it_removed():
 
 
 def test_a_colourful_augmentation_is_refused_rather_than_measured():
-    from dataclasses import replace
-
     colourful = replace(erasure_only(), ink_colour_probability=1.0)
 
     with pytest.raises(ValueError, match="colour"):
@@ -135,6 +134,30 @@ def test_occlusion_scores_only_inked_patches_and_finds_the_one_that_matters():
     assert result["grid"][0][0] is None, "a blank patch is not scored: its drop is 0 by construction"
     assert result["top3_share"] == 1.0
     assert result["max_drop"] == result["grid"][1][1]
+
+
+def test_top3_share_counts_exactly_the_three_largest_drops():
+    canvas = np.full((RENDER.size, RENDER.size), RENDER.background, dtype=np.uint8)
+    # Four inked patches, one block each, of 100, 64, 36 and 16 ink pixels: drops in that ratio.
+    canvas[5:15, 5:15] = RENDER.ink
+    canvas[5:13, 40:48] = RENDER.ink
+    canvas[40:46, 5:11] = RENDER.ink
+    canvas[40:44, 40:44] = RENDER.ink
+
+    result = occlusion(canvas, 0, InkScorer(gain=100.0), PROMPTS, RENDER)
+
+    assert result["inked_patches"] == 4
+    assert result["top3_share"] == pytest.approx(200 / 216, abs=1e-4)
+
+
+def test_a_hit_is_the_fifth_place_but_not_the_sixth_and_matches_the_gated_metric():
+    from primer.drawing import evaluate
+
+    confidences = [0.9 - 0.1 * i for i in range(8)]
+    ranked = scored(confidences)
+
+    assert sensitivity.TOP_K == evaluate.TOP_K == 5
+    assert sensitivity.hit(ranked, 4) and not sensitivity.hit(ranked, 5)
 
 
 def test_occlusion_paints_paper_white_not_some_other_grey():
@@ -169,6 +192,64 @@ def test_each_perturbation_is_compared_over_the_drawings_it_applies_to():
         "line_width_7",
         "erasure",
     }
+
+
+def test_dropping_strokes_removes_ink_and_costs_the_hit_it_depended_on():
+    # Tune the fake so label 0 scores 0.455 once the last stroke is gone: just under label 5's 0.46,
+    # so out of the top five. With the tick it scores 0.455 * full / minus_one, which must clear
+    # 0.47 for the hit to exist before the drop and not after.
+    full = ink_mass(render_strokes(THREE, RENDER), RENDER)
+    minus_one = ink_mass(render_strokes(THREE[:-1], RENDER), RENDER)
+    minus_two = ink_mass(render_strokes(THREE[:-2], RENDER), RENDER)
+    assert full > 1.04 * minus_one > minus_two, "each stroke must carry real ink"
+    scorer = InkScorer(gain=0.455 * FULL / minus_one)
+
+    result = measure(drawings(), scorer, PROMPTS, prompt_sets={}, seed=0, occlude=0)
+    figures = result["perturbations"]
+
+    # Drawing "a" loses its hit; "c" (label 3) is in the top five whatever the ink; "b" has one stroke.
+    assert figures["drop_last_1"]["top5_delta"] == -0.5
+    assert figures["drop_last_2"]["top5_delta"] == -0.5
+    assert figures["drop_last_1"]["top5_acc_before"] == 1.0
+    assert figures["drop_last_1"]["top5_acc_after"] == 0.5
+
+
+def test_full_erasure_removes_the_ink_and_costs_the_hit():
+    # Many whole-strength rectangles, each up to the full canvas: nearly all the ink goes.
+    everything = replace(
+        erasure_only(),
+        erasure_patches=60,
+        erasure_size=1.0,
+        erasure_strength_min=1.0,
+        erasure_strength_max=1.0,
+    )
+
+    result = measure(
+        drawings(), InkScorer(), PROMPTS, prompt_sets={}, seed=0, occlude=0, augmentation=everything
+    )
+    erasure = result["perturbations"]["erasure"]
+
+    assert erasure["ink_removed_median"] > 0.9
+    assert erasure["drawings"] == 3 and erasure["below_floor"] == 0
+    # "a" and "b" lose label 0's top-five place with almost no ink; "c" (label 3) does not.
+    assert erasure["top5_delta"] < 0
+    assert erasure["top5_acc_after"] < erasure["top5_acc_before"]
+
+
+def test_the_erasure_floor_is_inclusive_and_counts_the_misses(monkeypatch):
+    fractions = {0: 0.01, 1: sensitivity.ERASURE_FLOOR, 2: 0.5}
+
+    def fake_erased(canvas, seed, config):
+        return canvas, fractions[seed]
+
+    monkeypatch.setattr(sensitivity, "erased", fake_erased)
+
+    result = measure(drawings(), InkScorer(), PROMPTS, prompt_sets={}, seed=0, occlude=0)
+    erasure = result["perturbations"]["erasure"]
+
+    assert erasure["drawings"] == 2, "0.05 is at the floor and counts; 0.01 does not"
+    assert erasure["below_floor"] == 1.0
+    assert erasure["ink_removed_median"] == sensitivity.ERASURE_FLOOR
 
 
 def test_thinner_lines_lose_ink_and_so_lose_the_fake_label():

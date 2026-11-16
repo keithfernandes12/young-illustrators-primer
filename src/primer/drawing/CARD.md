@@ -130,9 +130,14 @@ interval. Baseline top-5 on the sample is 0.518.
   {label}.` by 4.3 points [2.9, 5.9], and `{label}` alone by 8.5. `a sketch of a {label}.` is
   within noise of it (-0.9 [-2.1, +0.3]).
 - **The answer rests on a few regions.** In occlusion maps of 20 correctly ranked drawings, the
-  three most important 32 px patches carry a median 58% of the confidence drop.
+  three most important 32 px patches carry a median 58% of the confidence drop. The share counts
+  positive drops only, and a drawing with three or fewer inked patches scores 1.0 trivially, so it
+  is read beside the median number of inked patches the run now records.
 - **Partial erasure is too weak to read.** The training erasure removes a median 0.5% of ink; on
   the 202 drawings that lost at least 5%, the change is -2.0 [-5.4, +1.0].
+- **Uncorrected intervals.** About ten 95% intervals are reported with no multiplicity correction;
+  the 7 px result is the one line-width interval that excludes zero, so it supports 3 px rather
+  than proving it.
 - **Not covered:** training hyperparameters (S6d), and children's drawings, for which see S6c2's
   preprocessing stability.
 - **History:** the first run (MLflow `d99d75b514934b18836e4ad94ddbc32f`, 2026-11-15) was under the

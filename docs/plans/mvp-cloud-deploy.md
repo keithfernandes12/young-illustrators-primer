@@ -597,8 +597,11 @@ maps are the attribution step that the course guidelines meet with SHAP or LIME.
   drawings, with a paired bootstrap interval on the top-5 change. One real run is recorded as a
   dated Verified fact, logged to MLflow if a server is reachable.
 - **Not in this slice** — sensitivity to training hyperparameters, which belongs to S6d because
-  nothing here trains. Also not a change to `prompt_template`: a better-scoring template is a
-  KAN-38 decision, not something this slice ships.
+  nothing here trains. The sweep itself does not change `prompt_template`: a better-scoring
+  template is a KAN-38 decision. That decision was made on 2026-11-16 (Decisions), and the PR
+  carries the owner-approved switch to `a child's drawing of a {label}.` at the owner's request.
+  The measurement code never edits the config; the switch is a separate, one-line change to
+  `drawing_baseline.yaml`.
 - **Depends on** — S6a, S6b, S6b1. **Jira** — KAN-38.
 
 ### S7a · Illustration model, pretrained baseline
@@ -1664,8 +1667,12 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   | prompt `a sketch of a {label}.` | 2,000 | -0.010 [-0.021, +0.003] | 32.3% | +0.033 vs old |
   | prompt `This is a photo of {label}.` | 2,000 | **-0.043** [-0.059, -0.029] | 49.5% | baseline then |
 
-  - **A consistency check.** The model card's template scores 0.4755 here, exactly the earlier
-    run's baseline, and its -0.043 mirrors the earlier +0.043: same drawings, same seed, two runs.
+  - **A reproducibility check.** The model card's template scores 0.4755 here, exactly the earlier
+    run's baseline: same drawings, same seed, two GPU bf16 runs. (Its -0.043 is the earlier +0.043
+    with before and after swapped, so it is the negation by construction and checks nothing.)
+  - **Uncorrected intervals.** About ten 95% intervals are reported with no multiplicity
+    correction, so one in twenty could clear zero by chance. The 7 px result is the only
+    line-width interval that excludes zero; read it as support for 3 px, not as proof.
   - **Missing strokes cost more under this prompt** (-14.7 against -11.7), from a higher baseline.
   - **7 px is now measurably worse than 3 px**, by 2.5 points; 1 and 5 px stay within noise. This
     supports the shipped 3 px rather than changing it.
@@ -1921,6 +1928,17 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   the new table; revert to `This is a photo of {label}.`; or run S6c2 under `a sketch of a {label}.`
   (+3.3 on `val`) first, which selects on Amateur Drawings rather than on `test`. *Decides:* the
   KAN-38 owner. **Answered 2026-11-16: keep it** (Decisions, same date).
+
+- **The shipped template is ungrammatical for many labels.** It is kept exactly as measured, so
+  "a airplane" and "a The Great Wall of China" are in the prompts. The "a The ..." shared-prefix
+  effect is the unmeasured mechanism behind the stability drop above. *Recommended:* before or
+  inside S6d, try a label-aware article (or a template that avoids one), measure it on `val`, run
+  S6c2's stability table, and score `test` once. *Decides:* the KAN-38 owner.
+- **There is no accuracy measure for children's drawings.** The +4.8 is on rendered Quick, Draw!;
+  the recorded effect on the product's input is less stability and confidence near 1, and nothing
+  gated says which way accuracy moved. *Recommended:* S6d's acceptance names a proxy (for example
+  hand-labelled Amateur Drawings) so a gain can be told from a stability loss. *Decides:* the
+  KAN-38 owner.
 
 ## Out of scope
 

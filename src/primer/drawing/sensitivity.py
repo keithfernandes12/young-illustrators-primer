@@ -172,7 +172,9 @@ def occlusion(
 
     ``grid`` holds the drop per patch, row by row, and None for a patch with no ink -- whose drop
     is 0 by construction and so says nothing. ``top3_share`` is the share of the total positive
-    drop that the three largest patches carry: near 1 means the answer hangs on one region.
+    drop (negative drops are left out) that the three largest patches carry: near 1 means the
+    answer hangs on one region. A drawing with three or fewer inked patches scores 1.0 trivially,
+    so read it beside ``inked_patches``.
     """
     start = float(scorer(canvas, prompts)[label])
     rows = range(0, canvas.shape[0], PATCH)
@@ -284,6 +286,9 @@ def measure(
             "drawings": len(maps),
             "patch": PATCH,
             "top3_share_median": round(statistics.median(shares), 4) if shares else None,
+            "inked_patches_median": statistics.median(m["inked_patches"] for m in maps.values())
+            if maps
+            else None,
             "max_drop_median": round(statistics.median(m["max_drop"] for m in maps.values()), 4)
             if maps
             else None,
@@ -308,7 +313,7 @@ def mlflow_metrics(result: Mapping[str, Any]) -> dict[str, float]:
             if isinstance(value, (int, float)):
                 metrics[f"sensitivity/{name}/{key}"] = float(value)
     occluded = result["occlusion"]
-    for key in ("top3_share_median", "max_drop_median"):
+    for key in ("top3_share_median", "inked_patches_median", "max_drop_median"):
         if occluded[key] is not None:
             metrics[f"sensitivity/occlusion/{key}"] = float(occluded[key])
     return metrics
@@ -399,11 +404,12 @@ def main(argv: list[str] | None = None) -> int:
         for t in PROMPT_TEMPLATES
         if t != config.prompt_template
     }
+    prompts = config.prompts()
     start = time.perf_counter()
     result = measure(
         drawings,
         scorer,
-        config.prompts(),
+        prompts,
         prompt_sets=prompt_sets,
         seed=args.seed,
         occlude=args.occlude,
@@ -411,7 +417,6 @@ def main(argv: list[str] | None = None) -> int:
             f"{step}: {time.perf_counter() - start:.0f}s", file=sys.stderr, flush=True
         ),
     )
-    prompts = config.prompts()
     result.update(
         {
             "data_version": args.version,
