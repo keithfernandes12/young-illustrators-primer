@@ -9,7 +9,7 @@ import tarfile
 
 import pytest
 
-from primer.data import pipeline
+from primer.data import pipeline, profiling
 from primer.data.catalog import read_dataset
 from primer.data.config import SourceConfig
 from primer.data.manifest import ValidationFailed
@@ -34,7 +34,8 @@ def coco(n_images=4, **overrides):
               for i in range(n_images)]
     annotations = [{"id": i, "image_id": i, "category_id": 1, "segmentation": [[1, 2, 3, 4, 5, 6]],
                     "area": 50.5, "bbox": [1.5, 2.0, 30.0, 40.0], "iscrowd": 0,
-                    "keypoints": keypoints(16 if i == 1 else 17), "num_keypoints": 17}
+                    # Drawing 1 has 12 hidden joints: valid COCO, below the old inferred floor of 15.3
+                    "keypoints": keypoints(5 if i == 1 else 17), "num_keypoints": 17}
                    for i in range(n_images)]
     data = {"info": {}, "categories": [], "images": images, "annotations": annotations,
             "licenses": [{"id": 1, "name": "Attribution-NonCommercial License"}]}
@@ -112,7 +113,10 @@ def test_end_to_end(store, batch_ids):
     assert (first["original_width"], first["original_height"]) == (100, 200)  # as uploaded
     assert (first["bbox_x"], first["bbox_y"], first["bbox_width"], first["bbox_height"]) == (1.5, 2.0, 30.0, 40.0)
     assert json.loads(first["keypoints"])[0] == [10, 20, 2] and len(json.loads(first["keypoints"])) == 17
-    assert df["n_keypoints"].tolist() == [17, 16]
+    assert df["n_keypoints"].tolist() == [17, 5]
+    # A hidden joint passes validate and preprocess, so the committed contract must accept it too (KAN-90).
+    contract = profiling.load_schema("character_drawings")["columns"]["n_keypoints"]
+    assert df["n_keypoints"].between(contract["min"], contract["max"]).all()
     assert json.loads(first["segmentation"]) == [[1, 2, 3, 4, 5, 6]]
     assert (first["area"], first["license"], first["attribution"]) == (50.5, "CC-BY-NC-4.0", "AD")
 

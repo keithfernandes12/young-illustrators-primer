@@ -43,6 +43,7 @@ import pandas as pd
 
 from primer.data.catalog import DATASETS, dataset_files
 from primer.data.config import REPO_ROOT
+from primer.data.sources.amateur_drawings import N_KEYPOINTS
 from primer.data.storage import Store
 
 log = logging.getLogger(__name__)
@@ -59,6 +60,13 @@ OPEN_COLUMNS = {"batch_id", "translator"}  # new batches and new names arrive wi
 CREDIT_COLUMNS = {"title", "author", "illustrator", "translator", "image_caption"}
 LONG_TEXT = 200              # mean length above this: skip distinct counting, and stream it (stories, strokes)
 TOP_VALUES = 10
+# Numeric columns whose valid range is fixed by what they count, not by the data seen so far. Their
+# contract uses these bounds instead of the observed range widened by 10% (KAN-90). n_keypoints counts
+# the visible joints out of COCO's 17: every Amateur Drawings row has all 17 today, which would infer
+# 15.3-18.7, and a later release with hidden joints is valid data, not a broken contract.
+KNOWN_BOUNDS: dict[str, dict[str, tuple[float, float]]] = {
+    "character_drawings": {"n_keypoints": (0.0, float(N_KEYPOINTS))},
+}
 # Rows per batch when streaming long text. It never changes results. It bounds the batches handed to
 # the statistics, but pyarrow may still decode a whole row group of the column at once, so peak
 # memory also depends on the files' row-group size (see the measured figures in dags/README.md).
@@ -279,7 +287,9 @@ def infer_schema(dataset: str, profile: dict[str, Any], min_rows_fraction: float
 
     Numeric ranges are the observed range widened by 10% on each side, except that a non-negative
     column never gets a negative floor, and gets a floor of 0 only if 0 was observed (so a count
-    collapsing to zero is caught). Text columns that were never empty must stay non-empty.
+    collapsing to zero is caught). A column in ``KNOWN_BOUNDS`` gets those bounds instead, because
+    what it counts fixes its range (``n_keypoints``: 0 to 17 visible joints). Text columns that were
+    never empty must stay non-empty.
     Categorical columns get their observed values as the allowed set (unless the values are too
     rare to be real categories, like a handful of translator names); ``min_rows`` guards against a
     dataset shrinking.
@@ -313,6 +323,8 @@ def infer_schema(dataset: str, profile: dict[str, Any], min_rows_fraction: float
                 # value from 1 up stays valid: growing sources bring smaller counts than seen so far.
                 low = min(col["min"] * 0.9, 1.0)
             spec["min"], spec["max"] = _sig(low, direction="down"), _sig(col["max"] + pad, direction="up")
+            if name in KNOWN_BOUNDS.get(dataset, {}):
+                spec["min"], spec["max"] = KNOWN_BOUNDS[dataset][name]
         if col["kind"] == "string" and col.get("min_length", 0) >= 1 and name not in CREDIT_COLUMNS:
             # Not empty; not "as long as before", since new books bring shorter pages. Truncated text
             # is drift (length_shift), not a contract break.
