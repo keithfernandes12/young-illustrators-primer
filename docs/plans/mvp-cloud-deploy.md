@@ -724,7 +724,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6c2 | merged | [#33](https://github.com/keithfernandes12/young-illustrators-primer/pull/33) | 1,000 frozen drawings (unstratified), four variants: top-1 moves 25% / 50% / 41% between adjacent variants; over half the drawings come out `squiggle`. Reproduces exactly. KAN-109 |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); S6c merged (#37); must beat 0.5436 under the switched prompt. Reads S6c2's stability figures |
 | S6e | merged | [#35](https://github.com/keithfernandes12/young-illustrators-primer/pull/35) | `sheet.py`: Florence-2 + SAM 2.1 + ViTPose beside SigLIP 2; every field filled on 82/82 real sheets; two figures found as two on 12/20. Unblocks KAN-42 |
-| S6f | in review | [#39](https://github.com/keithfernandes12/young-illustrators-primer/pull/39) | sensitivity: stroke drop, line width, erasure, prompt template, occlusion; paired bootstrap intervals; runs on `val`. KAN-38 |
+| S6f | in review | [#39](https://github.com/keithfernandes12/young-illustrators-primer/pull/39) | sensitivity: stroke drop, line width, erasure, prompt template, occlusion; paired bootstrap intervals; runs on `val`. Also carries the prompt switch to `a child's drawing of a {label}.` (S6c 0.5436 on `test`, S6c2 re-measured). Re-run under it: strokes -14.7 / -21.8, 7 px -2.5. KAN-38 |
 | S7a | in progress | branch `feat/KAN-42-controlnet-baseline` | pretrained SD 1.5 + ControlNet-Scribble, one page, local output; synthetic inputs only until KAN-94 |
 | S7b | not started | | needs S1, GPU quota in region, a working `consistency()`, and KAN-94 |
 | S8 | not started | | |
@@ -1646,6 +1646,34 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
     overlap rose for two pairs, so the top five as a set is steadier there while its order is not.
   - This is the pattern S6d's acceptance names: a gain on rendered Quick, Draw! (+4.8, above)
     together with a drop in stability. It is measured here on the prompt, before any training.
+
+- **2026-11-16 — S6f re-run under the switched prompt: the same picture, a little sharper.** The
+  same command and seed (20261115, 2,000 `val` drawings, RTX 4060 bf16) at commit `5b57dee`, 308 s,
+  MLflow `dfaee7e263744e9e85ce939c30489128`. The shipped template is now the baseline, so the model
+  card's template is one of the alternatives. Baseline top-5 **0.518** (was 0.4755).
+
+  | Perturbation | n | top-5 change [95% CI] | top-1 changes | earlier run |
+  |---|---|---|---|---|
+  | drop the last stroke | 1,728 | **-0.147** [-0.166, -0.128] | 46.8% | -0.117 |
+  | drop the last two | 1,440 | **-0.218** [-0.242, -0.196] | 60.9% | -0.199 |
+  | line width 1 px | 2,000 | -0.012 [-0.026, +0.004] | 36.6% | ≈ 0 |
+  | line width 5 px | 2,000 | +0.000 [-0.011, +0.012] | 27.3% | ≈ 0 |
+  | line width 7 px | 2,000 | **-0.025** [-0.038, -0.011] | 37.6% | ≈ 0 |
+  | erasure (≥ 5% ink removed) | 202 | -0.020 [-0.054, +0.010] | 24.8% | -0.045 |
+  | prompt `{label}` | 2,000 | **-0.085** [-0.100, -0.071] | 51.7% | -0.042 vs old |
+  | prompt `a sketch of a {label}.` | 2,000 | -0.010 [-0.021, +0.003] | 32.3% | +0.033 vs old |
+  | prompt `This is a photo of {label}.` | 2,000 | **-0.043** [-0.059, -0.029] | 49.5% | baseline then |
+
+  - **A consistency check.** The model card's template scores 0.4755 here, exactly the earlier
+    run's baseline, and its -0.043 mirrors the earlier +0.043: same drawings, same seed, two runs.
+  - **Missing strokes cost more under this prompt** (-14.7 against -11.7), from a higher baseline.
+  - **7 px is now measurably worse than 3 px**, by 2.5 points; 1 and 5 px stay within noise. This
+    supports the shipped 3 px rather than changing it.
+  - **Erasure no longer clears zero.** It still removes a median 0.5% of ink (1,798 of 2,000 below
+    the 5% floor), so the earlier -4.5 and this -2.0 are both thin; the Open question on its
+    strength stands.
+  - **Occlusion:** median `top3_share` 0.58 (was 0.50), median `max_drop` 0.178 (was 0.076). The
+    drops are larger in absolute terms because confidences are higher under this prompt.
 
 ## Open questions
 

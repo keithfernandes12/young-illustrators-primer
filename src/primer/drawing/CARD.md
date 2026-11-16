@@ -115,19 +115,26 @@ gap**: none is established. Small slices are reported but not judged.
 ## Sensitivity
 
 Measured by `python -m primer.drawing.sensitivity` (S6f) on 2,000 `val` drawings of v1.1, on GPU in
-bf16. The run is MLflow `d99d75b514934b18836e4ad94ddbc32f`, and the full table is in the plan's
-Verified facts. Each figure is the change in top-5 accuracy against the same drawings unperturbed.
+bf16, under the shipped prompt `a child's drawing of a {label}.`. The run is MLflow
+`dfaee7e263744e9e85ce939c30489128` (2026-11-16), and the full table is in the plan's Verified facts.
+Each figure is the change in top-5 accuracy against the same drawings unperturbed, with a 95%
+interval. Baseline top-5 on the sample is 0.518.
 
-- **Missing strokes hurt most.** Dropping the last stroke costs 11.7 points, and the last two cost
-  19.9. A child who stops early, or a scan that loses faint lines, will cost far more accuracy than
-  any change of pen.
-- **Line thickness does not move top-5.** From 1 to 7 px, every interval spans zero. Top-1 still
-  changes on a quarter to a third of drawings, so the label shown first is less stable than the
-  gated number suggests.
-- **The prompt is a real setting.** `a child's drawing of a {label}.` scores 4.3 points above the
-  then-shipped `This is a photo of {label}.`, and became the shipped template on 2026-11-16. The
-  figures in this section were all measured under the old template.
+- **Missing strokes hurt most.** Dropping the last stroke costs 14.7 points [12.8, 16.6], and the
+  last two cost 21.8 [19.6, 24.2]. A child who stops early, or a scan that loses faint lines, will
+  cost far more accuracy than any change of pen.
+- **Line thickness barely moves top-5, and 3 px is not wrong.** 1 and 5 px are within noise; 7 px
+  costs 2.5 points [1.1, 3.8]. Top-1 still changes on 27–38% of drawings, so the label shown first
+  is less stable than the gated number suggests.
+- **The prompt is a real setting.** The shipped template beats the model card's `This is a photo of
+  {label}.` by 4.3 points [2.9, 5.9], and `{label}` alone by 8.5. `a sketch of a {label}.` is
+  within noise of it (-0.9 [-2.1, +0.3]).
 - **The answer rests on a few regions.** In occlusion maps of 20 correctly ranked drawings, the
-  three most important 32 px patches carry about half the confidence drop.
+  three most important 32 px patches carry a median 58% of the confidence drop.
+- **Partial erasure is too weak to read.** The training erasure removes a median 0.5% of ink; on
+  the 202 drawings that lost at least 5%, the change is -2.0 [-5.4, +1.0].
 - **Not covered:** training hyperparameters (S6d), and children's drawings, for which see S6c2's
   preprocessing stability.
+- **History:** the first run (MLflow `d99d75b514934b18836e4ad94ddbc32f`, 2026-11-15) was under the
+  old prompt and gave the same picture: -11.7 and -19.9 for strokes, line width within noise, and
+  +4.3 for this prompt.
