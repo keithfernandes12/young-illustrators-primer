@@ -38,11 +38,13 @@ african_storybook  ingest → validate → preprocess ─┘
   with the previous profile. Schema **errors fail the run**; drift is a warning. Results go to
   `metadata/profiles/` and `metadata/anomalies/` (see the [data README](../src/primer/data/README.md#statistics-schema-and-anomalies)).
   Long text columns (stories, strokes) are streamed for their statistics rather than loaded. In the
-  running stack against the bucket, checking all of `v1.1` (about 2.65M rows) took the **whole
-  scheduler container to a peak of about 3.4 GB** and took about 2 minutes, most of it reading from
-  GCS. That was run `manual__2026-11-16T01:05:43`, with Docker at 7.6 GB, sampled every ~3 s. On a
-  laptop against a local copy, the check alone peaks at 2.8 GB and takes 30 s. Before KAN-91 it
-  needed 11.9 GB, and the same task was killed (exit 137).
+  running stack against the bucket, checking all of `v1.1` (about 2.65M rows) took the **scheduler
+  container**, where the task runs, **to a peak of about 3.4 GB**, sampled every ~3 s. The other
+  three containers (DAG processor, API server, postgres) use about 0.6 GB together when idle, which
+  they are during the check, so **the whole stack peaks at about 4 GB**. The check took about
+  2 minutes, most of it reading from GCS. That was run `manual__2026-11-16T01:05:43.903473+00:00`,
+  with Docker at 7.6 GB. On a laptop against a local copy, the check alone peaks at 2.8 GB and takes
+  32 s. Before KAN-91 it needed 11.9 GB, and the same task was killed (exit 137).
 - **Alerts:** any failed task emails `PRIMER_ALERT_EMAILS` with the task, run and error (schema
   errors included); drift warnings are emailed by `check_data`. When `summarize` fails because a
   source did, it only logs, since that source task has already sent its alert; when it fails on its
@@ -74,8 +76,8 @@ git tag data-v1.2
 
 Needs [Docker Desktop](https://docs.docker.com/get-docker/) (or Docker Engine with Compose v2.24+)
 and about 4 GB of memory for Docker in local mode (`.local-data/`, small data). Against the full
-bucket, give Docker **about 6 GB**: `check_data` on all of `v1.1` took the scheduler container to
-about 3.4 GB (see `check_data` above), and the rest is headroom. That is not every machine's
+bucket, give Docker **about 6 GB**: with `check_data` running on all of `v1.1`, the whole stack
+peaks at about 4 GB (see `check_data` above), and the rest is headroom. That is not every machine's
 default: Docker Desktop on Windows (WSL 2) gives Docker half the machine's RAM unless `.wslconfig`
 says otherwise, so an 8 GB laptop gets about 4 GB. Check with `docker info --format "{{.MemTotal}}"`.
 From the repo root:
