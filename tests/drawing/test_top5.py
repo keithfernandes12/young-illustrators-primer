@@ -624,3 +624,61 @@ def test_stability_still_routes_to_its_own_subcommand(monkeypatch):
 
     assert evaluate.main(["stability", "--version", "v1.1", "--out", "s.json"]) == 0
     assert seen == [["--version", "v1.1", "--out", "s.json"]]
+
+
+# ------------------------------------------------------------------------------- per-drawing (S6g)
+
+
+def test_ranks_are_the_true_labels_position_and_hits_follow_from_them():
+    # Label 6 sits fifth and label 7 sixth, so the top-5 cut falls between them.
+    encoder = TableEncoder({b"d": [0.9, 0.8, 0.7, 0.6, 0.1, 0.0, 0.5, 0.4]})
+    drawings = [(b"d", 0), (b"d", 6), (b"d", 7), (b"d", 5)]
+
+    ranks = evaluate.true_label_ranks(drawings, encoder, PROMPTS)
+
+    assert ranks == [0, 4, 5, 7]
+    assert top5_hits(drawings, encoder, PROMPTS) == [rank < 5 for rank in ranks]
+
+
+def test_per_drawing_rows_reconcile_with_the_metrics_file(monkeypatch, tmp_path):
+    from primer.drawing.bias_report import check_rows
+
+    _stub_world(monkeypatch, _test_split_frame(6), winner="The Eiffel Tower")
+    out, rows_path = tmp_path / "m.json", tmp_path / "rows.csv.gz"
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    code = evaluate.main(
+        ["--model", str(model_yaml), "--version", "v1.1", "--out", str(out), "--per-drawing", str(rows_path)]
+    )
+
+    rows = pd.read_csv(rows_path, dtype={"country_code": str, "record_id": str}, keep_default_na=False)
+    metrics = json.loads(out.read_text(encoding="utf-8"))
+    assert code == 0 and len(rows) == 6
+    assert set(rows["label"]) == {"The Eiffel Tower", "zigzag"}, "labels in the vocabulary's spelling"
+    assert rows.loc[rows["label"] == "The Eiffel Tower", "rank"].eq(0).all()
+    check_rows(rows, metrics)  # the bias report accepts them as the same run
+
+
+def test_per_drawing_into_a_missing_folder_is_refused_before_anything_is_read(monkeypatch, tmp_path):
+    from primer.data import catalog
+
+    def boom(*args, **kwargs):
+        raise AssertionError("the bucket must not be touched")
+
+    monkeypatch.setattr(catalog, "read_dataset", boom)
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+    missing = tmp_path / "missing" / "rows.csv.gz"
+
+    with pytest.raises(SystemExit):
+        evaluate.main(
+            [
+                "--model",
+                str(model_yaml),
+                "--version",
+                "v1.1",
+                "--out",
+                str(tmp_path / "m.json"),
+                "--per-drawing",
+                str(missing),
+            ]
+        )

@@ -525,6 +525,29 @@ upload size only as `original_width`/`original_height` (`schemas.py`). A parent'
 full-resolution capture. So that row carries two confounds, not one — an unknown mix of
 photographs, scans and digital drawings, and a resize nobody in this pipeline performed.
 
+### S6g · The drawing recogniser's bias report
+
+*size: small*
+
+Step 3 of `model-development.md` for this stage: per-slice metrics over its two keys, `country_code`
+and category, with every disparity named or ruled out and a mitigation proposed or ruled out in
+`CARD.md`.
+- `evaluate --per-drawing` writes one row per scored drawing from S6c's own scoring pass.
+- `python -m primer.drawing.bias_report` turns those rows into the report.
+
+- **Why separate** — it changes no number. It is the last of the eight steps a zero-shot model can
+  complete, and it is independent of #39 and #44.
+- **How a disparity is named** — a slice is named only after all three of:
+  - a Wilson interval on its own accuracy;
+  - its label mix is controlled for: expected accuracy is each label's accuracy in the other
+    countries, averaged over the country's own drawings;
+  - a z-test that includes the expectation's own estimation error, Holm-corrected.
+- **Rows must reconcile first** — they must reproduce the metrics file's count, its
+  `drawing_top5_acc` and every country slice exactly. A `--limit` probe is refused.
+- **Not doing** — mitigation itself (nothing to reweight in a zero-shot model; proposed for S6d),
+  logging the report to MLflow (it needs #44's `tracking.py`; a follow-up), and new slice keys.
+- **Depends on** — S6c. **Jira** — KAN-38.
+
 ### S6d · Fine-tune the recogniser
 
 *size: medium*
@@ -701,6 +724,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6b2 | merged | [#32](https://github.com/keithfernandes12/young-illustrators-primer/pull/32) | `data.py`: hashed 80/10/10 split of v1.1 (506k/63k/63k), rendered on demand through `render_strokes` → `augment_canvas` (train only) → `prepare_drawing`. Unblocks S6c |
 | S6c | in review | [#37](https://github.com/keithfernandes12/young-illustrators-primer/pull/37) | baseline `drawing_top5_acc` **0.4956** over all 63,310 rendered test drawings (GPU, bf16): gate FAIL against 0.85, chance 0.0145. MLflow run `c2b68187` in `yip-drawing`. The gate's number, not the product's. KAN-38 |
 | S6c2 | merged | [#33](https://github.com/keithfernandes12/young-illustrators-primer/pull/33) | 1,000 frozen drawings (unstratified), four variants: top-1 moves 25% / 50% / 41% between adjacent variants; over half the drawings come out `squiggle`. Reproduces exactly. KAN-109 |
+| S6g | in review | | bias report: 9 of 54 judged countries differ from their label mix (Holm, 5%): US −2.5, GB −3.2, JP +11.7 …; categories 0.00–0.996. Mitigation proposed for S6d. KAN-38 |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); still waits on S6c (#37). Reads S6c2's stability figures |
 | S6e | merged | [#35](https://github.com/keithfernandes12/young-illustrators-primer/pull/35) | `sheet.py`: Florence-2 + SAM 2.1 + ViTPose beside SigLIP 2; every field filled on 82/82 real sheets; two figures found as two on 12/20. Unblocks KAN-42 |
 | S7a | in progress | branch `feat/KAN-42-controlnet-baseline` | pretrained SD 1.5 + ControlNet-Scribble, one page, local output; synthetic inputs only until KAN-94 |
@@ -840,6 +864,17 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   the same pixels training will. Labels are compared by vocabulary index (`data.label_index`,
   case-insensitive), never by string. The cut is a literal 5 (`evaluate.TOP_K`), not
   `DrawingConfig.top_k`.
+
+- **2026-11-16 — S6g tests each country against its own label mix, not against the best minus the
+  worst.** `primer.data.bias.recognition_by_country` reports a gap as max minus min over the 15
+  largest countries, with a fixed 2-point threshold. That suits the data's own recogniser over
+  countries of thousands of drawings. It would mostly measure sample size over 54 countries near
+  100 drawings, and it cannot separate a country's style from what it drew. So S6g:
+  - reuses `MetricFrame` and `SMALL_SLICE` from there, but not that function;
+  - names a country only after a label-mix-controlled, Holm-corrected test.
+  No ticket was filed: the data function is not wrong for its own purpose. And the report reads
+  rows written by S6c's scoring pass, never a second loop, so it cannot drift from the gated
+  number.
 
 ## Verified facts
 
@@ -1503,6 +1538,34 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
     over 16 distinct `drawing_label`s. All 16 are in the 345, case-insensitively and exactly, so a
     flawless recogniser reaches 1.0. That is a property of the golden set, not of this number,
     which is not taken over it.
+
+- **2026-11-16 — S6g: nine countries differ from what their label mix predicts.**
+  `evaluate --per-drawing` scored all 63,310 v1.1 `test` drawings (RTX 4060, bf16, 967 s), from
+  clean commit `8e7bdb0`, with `--model` pointed at #39's config so that the prompt is the one
+  being shipped (`a child's drawing of a {label}.`). Top-5 **0.5435950086874112**, the same float
+  as MLflow `b72bc442`. `bias_report` accepted the rows only after reconciling them with the
+  metrics file.
+  - **Named, with Holm-corrected p:**
+
+    | Below their label mix | Above it |
+    |---|---|
+    | RO −0.069 (0.034) | RU +0.046 (0.0035) |
+    | SA −0.064 (0.0062) | TH +0.050 (0.0495) |
+    | GB −0.032 (3.8e-05) | KR +0.059 (0.0040) |
+    | US −0.025 (1.3e-11) | IN +0.070 (0.0092) |
+    | | JP +0.117 (1.2e-06) |
+
+  - **The raw test is not the same test.** Against the other countries' rate, it names only GB,
+    US, TH, KR, IN and JP: the label-mix control reveals RO, SA and RU rather than explaining gaps
+    away. TW (+0.068, p 0.055) and MY (+0.056) just miss.
+  - **The estimation-error term matters.** Leaving out the expectation's own estimation error had
+    put the US at p=1e-21 rather than 1.3e-11. Nine countries are named either way; TH is the
+    nearest the line.
+  - **Categories:** all 345 are judged (146–227 drawings each), with top-5 from 0.000 (`garden`)
+    to 0.996 (`line`). Every label had drawings in other countries, so no drawing was left out of
+    a country test.
+  - **Not covered:** why the gaps exist (style is the guess; it is not measured); children's
+    drawings; and a CPU/fp32 run.
 
 ## Open questions
 
