@@ -90,7 +90,8 @@ def run_tags(result: Mapping[str, Any], *, owner: str, kind: str) -> dict[str, s
         "where": os.environ.get("YIP_WHERE", "local"),
         "kind": kind,
         # Whether the code differed from `git_sha` when the run started: a sha alone over-claims.
-        "git_dirty": str(result.get("git_dirty", "unknown")).lower(),
+        # `None` is what the CLIs write when git failed or timed out; it must read "unknown", not "none".
+        "git_dirty": "unknown" if result.get("git_dirty") is None else str(result["git_dirty"]).lower(),
         # Whether `check_gate` may read the file at all. Only S6c's whole-test-split file is; a
         # `val` run is diagnostic and stability never is.
         "gate_eligible": str(bool(result.get("gate_eligible", False))).lower(),

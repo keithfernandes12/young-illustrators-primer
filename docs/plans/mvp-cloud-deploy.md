@@ -1559,7 +1559,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   - **One client/server mismatch, found while checking.** The 3.18 client's
     `list_artifacts(run, "eval")` calls `/logged-models/search`, which the 2.17 server returns 404
     for. Logging is unaffected; only listing a sub-folder from this client fails.
-  - **Tests:** 21 new tests. Three mutation checks were each caught by one failing test: the
+  - **Tests:** 29 new tests. Three mutation checks were each caught by one failing test: the
     collision refusal, the `--limit` refusal, and the `bool` exclusion.
 
 ## Open questions

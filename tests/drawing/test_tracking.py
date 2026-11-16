@@ -147,6 +147,25 @@ def test_tags_hold_the_convention_and_say_what_the_run_is(monkeypatch):
     assert tags["gate_eligible"] == "true" and tags["git_dirty"] == "false" and tags["kind"] == "accuracy"
 
 
+def test_git_state_that_could_not_be_read_is_unknown_not_none():
+    # The CLIs write `git_dirty: null` when git failed or timed out.
+    tags = tracking.run_tags(accuracy_file(git_dirty=None), owner="member-1", kind="accuracy")
+
+    assert tags["git_dirty"] == "unknown"
+
+
+def test_where_comes_from_the_environment(monkeypatch):
+    monkeypatch.setenv("YIP_WHERE", "vertex")
+
+    assert tracking.run_tags(accuracy_file(), owner="member-1", kind="accuracy")["where"] == "vertex"
+
+
+def test_a_val_run_is_not_gate_eligible():
+    tags = tracking.run_tags(accuracy_file(gate_eligible=False), owner="member-1", kind="accuracy")
+
+    assert tags["gate_eligible"] == "false"
+
+
 def test_a_stability_run_is_never_gate_eligible_and_says_its_tree_was_dirty():
     tags = tracking.run_tags(stability_file(), owner="member-1", kind="stability")
 
@@ -230,6 +249,20 @@ def test_log_run_copies_the_file_into_one_run(fake_mlflow, tmp_path):
         "CARD.md",
         None,
     ) in fake_mlflow.calls
+
+
+def test_the_experiment_name_can_be_overridden(fake_mlflow, monkeypatch, tmp_path):
+    out = tmp_path / "m.json"
+    out.write_text("{}", encoding="utf-8")
+    card = tmp_path / "CARD.md"
+    card.write_text("card", encoding="utf-8")
+    monkeypatch.setenv("MLFLOW_EXPERIMENT_NAME", "yip-drawing-scratch")
+
+    tracking.log_run(
+        kind="accuracy", result=accuracy_file(), metrics_path=out, owner="m1", run_name="r", card_path=card
+    )
+
+    assert fake_mlflow.calls[0] == ("experiment", "yip-drawing-scratch")
 
 
 def test_a_malformed_file_fails_before_any_run_is_opened(fake_mlflow, tmp_path):

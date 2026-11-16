@@ -36,6 +36,7 @@ import argparse
 import hashlib
 import itertools
 import json
+import os
 import statistics
 import sys
 import time
@@ -235,6 +236,12 @@ def check_mlflow_arguments(parser: argparse.ArgumentParser, args: argparse.Names
         # A first-N probe is label-ordered and "never a result" (S6c); a run on the shared server
         # would sit beside real ones with a drawing_top5_acc metric of its own.
         parser.error("--mlflow does not log a --limit probe: it is a timing check, never a result")
+    if not os.environ.get("MLFLOW_TRACKING_URI", "").strip():
+        # Unset, the client quietly logs to a local mlflow.db in the working directory and the run
+        # id is printed as if it reached the shared server. Refuse before minutes of scoring.
+        parser.error(
+            "--mlflow needs MLFLOW_TRACKING_URI (open the IAP tunnel, see docs/runbooks/mlflow-server.md)"
+        )
 
 
 def log_to_mlflow(kind: str, result: dict[str, Any], out: Path, owner: str, run_name: str) -> str:

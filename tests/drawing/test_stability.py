@@ -405,7 +405,6 @@ def test_anything_but_stability_goes_to_s6cs_accuracy_cli(monkeypatch):
     assert seen == [["--model", "m", "--version", "v1.1", "--out", "o.json"]]
 
 
-
 def test_the_stability_summary_records_the_commit_it_ran_at(monkeypatch, tmp_path):
     import json
 
@@ -424,6 +423,7 @@ def test_stability_mlflow_logs_the_written_summary(monkeypatch, tmp_path):
     from primer.drawing import tracking
 
     CliWorld(monkeypatch)
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
     calls = []
     monkeypatch.setattr(tracking, "log_run", lambda **kwargs: calls.append(kwargs) or "run-1")
 
@@ -436,7 +436,17 @@ def test_stability_mlflow_logs_the_written_summary(monkeypatch, tmp_path):
 
 def test_stability_mlflow_without_an_owner_is_refused_before_any_read(monkeypatch, tmp_path):
     world = CliWorld(monkeypatch)
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
 
     with pytest.raises(SystemExit):
         run_cli(tmp_path, "--mlflow")
+    assert world.devices == [], "the encoder was never built"
+
+
+def test_stability_mlflow_without_a_tracking_server_is_refused_before_any_read(monkeypatch, tmp_path):
+    world = CliWorld(monkeypatch)
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+
+    with pytest.raises(SystemExit):
+        run_cli(tmp_path, "--mlflow", "--owner", "m1")
     assert world.devices == [], "the encoder was never built"

@@ -647,6 +647,7 @@ def test_mlflow_logs_a_copy_of_the_written_file(monkeypatch, tmp_path):
     from primer.drawing import tracking
 
     _stub_world(monkeypatch, _test_split_frame(6), winner="The Eiffel Tower")
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
     out = tmp_path / "m.json"
     recorder = RecordingTracking(out)
     monkeypatch.setattr(tracking, "log_run", recorder)
@@ -683,6 +684,18 @@ def test_without_mlflow_nothing_is_logged(monkeypatch, tmp_path):
     ids=["no-owner", "blank-owner", "limit-probe"],
 )
 def test_a_bad_mlflow_request_is_refused_before_anything_is_read(monkeypatch, tmp_path, extra):
+    # The server is set, so only the argument under test can be the reason for the refusal.
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
+    _assert_mlflow_refused_before_any_read(monkeypatch, tmp_path, extra)
+
+
+def test_mlflow_without_a_tracking_server_is_refused_before_anything_is_read(monkeypatch, tmp_path):
+    # Unset, the client would log to a local mlflow.db and print a run id as if it were shared.
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    _assert_mlflow_refused_before_any_read(monkeypatch, tmp_path, ["--mlflow", "--owner", "m1"])
+
+
+def _assert_mlflow_refused_before_any_read(monkeypatch, tmp_path, extra):
     from primer.data import catalog
     from primer.drawing import model
 
