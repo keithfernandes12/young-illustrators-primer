@@ -699,9 +699,9 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6b3 | merged | [#29](https://github.com/keithfernandes12/young-illustrators-primer/pull/29) | strata and two samplers, measured over the real 174,981 rows. KAN-117 |
 | S6b4 | not started | | **spike, person-only**: waits on S6b3, S6a and KAN-24, plus DINOv2 and a captioner that no slice supplies. Can only add a stratum. KAN-117 |
 | S6b2 | merged | [#32](https://github.com/keithfernandes12/young-illustrators-primer/pull/32) | `data.py`: hashed 80/10/10 split of v1.1 (506k/63k/63k), rendered on demand through `render_strokes` → `augment_canvas` (train only) → `prepare_drawing`. Unblocks S6c |
-| S6c | in review | [#37](https://github.com/keithfernandes12/young-illustrators-primer/pull/37) | baseline `drawing_top5_acc` **0.4956** over all 63,310 rendered test drawings (GPU, bf16): gate FAIL against 0.85, chance 0.0145. MLflow run `c2b68187` in `yip-drawing`. The gate's number, not the product's. KAN-38 |
+| S6c | merged | [#37](https://github.com/keithfernandes12/young-illustrators-primer/pull/37) | baseline `drawing_top5_acc` **0.5436** over all 63,310 rendered test drawings (GPU, bf16) under the prompt `a child's drawing of a {label}.` (switched 2026-11-16; was 0.4956 under the model card's prompt): gate FAIL against 0.85, chance 0.0145. MLflow run `b72bc442`, superseding `c2b68187`, in `yip-drawing`. The gate's number, not the product's. KAN-38 |
 | S6c2 | merged | [#33](https://github.com/keithfernandes12/young-illustrators-primer/pull/33) | 1,000 frozen drawings (unstratified), four variants: top-1 moves 25% / 50% / 41% between adjacent variants; over half the drawings come out `squiggle`. Reproduces exactly. KAN-109 |
-| S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); still waits on S6c (#37). Reads S6c2's stability figures |
+| S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); S6c merged (#37); must beat 0.5436 under the switched prompt. Reads S6c2's stability figures |
 | S6e | merged | [#35](https://github.com/keithfernandes12/young-illustrators-primer/pull/35) | `sheet.py`: Florence-2 + SAM 2.1 + ViTPose beside SigLIP 2; every field filled on 82/82 real sheets; two figures found as two on 12/20. Unblocks KAN-42 |
 | S7a | in progress | branch `feat/KAN-42-controlnet-baseline` | pretrained SD 1.5 + ControlNet-Scribble, one page, local output; synthetic inputs only until KAN-94 |
 | S7b | not started | | needs S1, GPU quota in region, a working `consistency()`, and KAN-94 |
@@ -840,6 +840,15 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   the same pixels training will. Labels are compared by vocabulary index (`data.label_index`,
   case-insensitive), never by string. The cut is a literal 5 (`evaluate.TOP_K`), not
   `DrawingConfig.top_k`.
+
+- **2026-11-16 — The prompt template is `a child's drawing of a {label}.`, chosen on `val`.** S6f's
+  sweep over 2,000 `val` drawings (MLflow `d99d75b5`) scored it +4.3 top-5 points [+2.9, +5.9] above
+  the model card's `This is a photo of {label}.`, and the KAN-38 owner switched to it before S6d.
+  It was chosen on `val` so that `test` stays a report: S6c was re-measured on `test` once under
+  it, and no other template was scored there. It is kept exactly as measured, "a airplane"
+  included; correcting the article would be a new, unmeasured prompt. Every earlier drawing figure
+  (S6c's 0.4956, S6c2's table, S6f's perturbations) was taken under the old template and stays
+  on record as that.
 
 ## Verified facts
 
@@ -1504,6 +1513,52 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
     flawless recogniser reaches 1.0. That is a property of the golden set, not of this number,
     which is not taken over it.
 
+- **2026-11-16 — S6c under the switched prompt: `drawing_top5_acc` = 0.5436, still a gate FAIL.**
+  The same command as S6c's 0.4956, over all **63,310** test drawings, RTX 4060 in bf16, encoder
+  revision `75de2d55`, from clean commit `b749f34`, with only `prompt_template` changed (prompts
+  sha256 `d3425b53…`). It ran in 942 s. `check_gate.py --only drawing` prints `FAIL
+  drawing_top5_acc >= 0.85: actual=0.5436`. MLflow run `b72bc442f32f43cba857e9127f2b6c6f` in
+  `yip-drawing`, run name `s6c-siglip2-zero-shot-child-prompt`, tagged `supersedes_run` =
+  `c2b68187…` and `gate_passed=false`, logged from the metrics file by the same path as the
+  backfill.
+  - **+4.8 points on `test`** against +4.3 [+2.9, +5.9] on `val` in S6f: the gain carried over
+    from the split it was chosen on, and it is a better prompt, not a better model. S6d's
+    fine-tune must beat 0.5436 under this prompt, not 0.4956.
+  - **Per country.** The same 54 judged slices now run from 0.4735 (RO, n=452) to 0.6765 (CL,
+    n=102). US 0.5282 (n=28,557), GB 0.5183, CA 0.5343, DE 0.5573, AU 0.5712: every large slice
+    rose by 4–6 points, so the switch did not open a gap between countries.
+
+- **2026-11-16 — S6c2 under the switched prompt: children's drawings get less stable, and
+  confidently wrong.** S6c2's command (`evaluate stability --version v1.1 --device cpu`), CPU fp32,
+  the same 1,000 frozen drawings, 999.8 s, prompts sha256 `d3425b53…`. Between #33's merge and
+  `b749f34` nothing on the stability path changed except comments and this template, and the old
+  table reproduced exactly, so the template is the only variable. Old figures in brackets.
+
+  | Adjacent pair | top-1 changes | ... where the margin was above median | top-5 overlap |
+  |---|---|---|---|
+  | as published → greyscale | **33.7%** [25.5%] | 22.2% [10.0%] | 0.745 [0.765] |
+  | greyscale → binarised | **66.4%** [49.9%] | 60.2% [35.8%] | 0.534 [0.393] |
+  | binarised → cropped to the box | **49.5%** [41.3%] | 44.0% [24.6%] | 0.681 [0.561] |
+
+  | Variant | top-1 confidence median | margin median | distinct top-1 | most common top-1 share |
+  |---|---|---|---|---|
+  | as published | **0.929** [0.103] | 0.035 [0.051] | 160 [108] | 16.8% [53.3%] |
+  | greyscale | 0.851 [0.081] | 0.053 [0.037] | 144 [110] | 20.3% [50.8%] |
+  | binarised | 0.212 [0.085] | 0.032 [0.039] | 135 [127] | 42.8% [51.5%] |
+  | cropped, binarised | 0.257 [0.093] | 0.035 [0.044] | 123 [141] | 36.2% [54.6%] |
+
+  - **The most common answer is now `The Great Wall of China`**, not `squiggle`, under every
+    variant. One possible mechanism, unmeasured: the template reads "a child's drawing of a The
+    Great Wall of China.", and the shared prefix "a child's drawing of" fits every drawing here.
+  - **Confidence jumped tenfold on unbinarised uploads** (median 0.10 → 0.93) while the margin did
+    not grow, so a high sigmoid score now says little about which label is right. Nothing in
+    `src/` thresholds the recogniser's confidence today; anything that later does would read it
+    as certainty.
+  - **Top-1 flips rose in every pair**, and in the confident half they roughly doubled. Top-5
+    overlap rose for two pairs, so the top five as a set is steadier there while its order is not.
+  - This is the pattern S6d's acceptance names: a gain on rendered Quick, Draw! (+4.8, above)
+    together with a drop in stability. It is measured here on the prompt, before any training.
+
 ## Open questions
 
 - **What S6c hands to S6d, found in review of #37.** None is a defect in S6c as shipped. S6d is
@@ -1727,6 +1782,15 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   worker), and a content-hash name means two children's identical crops would share one object
   once the GCS store exists, which complicates deleting one child's data. *Recommended:* serving
   passes a store explicitly and the GCS one decides its naming against the deletion path (KAN-64).
+
+- **Keep `a child's drawing of a {label}.` now that S6c2 has been re-measured under it?** It gains
+  +4.8 top-5 on the gate's split, but on children's drawings top-1 flips more often, the median
+  confidence of an unbinarised upload goes from 0.10 to 0.93, and `The Great Wall of China`
+  replaces `squiggle` as the most common answer (Verified facts, 2026-11-16). The switch was
+  decided before these figures existed. *Options:* keep it and have S6d read its stability against
+  the new table; revert to `This is a photo of {label}.`; or run S6c2 under `a sketch of a {label}.`
+  (+3.3 on `val`) first, which selects on Amateur Drawings rather than on `test`. *Decides:* the
+  KAN-38 owner.
 
 ## Out of scope
 
