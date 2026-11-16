@@ -37,8 +37,9 @@ Train on a named version (see [Versions](#versions)) so results are reproducible
 
 ### Splitting by book
 
-Every model area splits with the same helper, so a book lands in the same split everywhere
-(KAN-120):
+`primer.data.splits` is the shared book split for model areas that split books (KAN-120). The story
+and illustration areas still have their own copies of it, and move to this one when their owners
+switch; once they do, a book lands in the same split in both:
 
 ```python
 from primer.data.splits import SplitFractions, book_key, split_of

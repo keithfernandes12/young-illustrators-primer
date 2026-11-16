@@ -1,19 +1,23 @@
-"""Book-level train / validation / test splits that every model area shares (KAN-120).
+"""The shared book-level train / validation / test split, for model areas that split books (KAN-120).
 
 A book's split comes from a hash of its key and nothing else: not from which other books exist,
 not from any label such as reading level, and not from a seed. So the same book lands in the same
-split on every machine, in every run, in every model area, and when the data grows. Pages of one
-book never straddle splits, as the review checklist requires ("split by book, never by page").
+split on every machine, in every run, and when the data grows, and pages of one book never straddle
+splits (AGENTS.md: "split by book, never by page"). Once areas use this one helper, a book also
+lands in the same split in each of them.
+
+**Who uses it.** The story and illustration areas split books, and each still has its own copy
+(``primer.story.data.split_of_book``, ``primer.illustration.consistency.experiment.split_of``). They
+move to this module when their owners switch over. The drawing area's ``split_of`` is different: it
+splits individual drawings with its own salt, so it isn't a book split.
 
 **The key** is ``book_key(source, book_id)``, ``"<source>/<book_id>"``. A ``book_id`` is only unique
-within its source, so the source is part of the key. ``storybook_pages`` and the illustration area
-already key books this way.
+within its source, so the source is part of the key. The story and illustration areas already build
+book keys this way.
 
 **The hash** is the first 8 bytes of SHA-256 read as an unsigned integer, divided by 2**64: a
-number in [0, 1) that the fractions are laid along, train first. It is the same hash as
-``primer.illustration.consistency.experiment.split_of`` and ``primer.story.data.hash_fraction``, so
-both areas' existing assignments are reproduced exactly (tested), and they can switch to this module
-without moving a single book.
+number in [0, 1) that the fractions are laid along, train first. It is the same hash as both areas'
+copies, so their existing assignments are reproduced exactly (tested), and switching moves no book.
 
 Model areas must not import each other, which is why this lives in ``primer.data``.
 """
@@ -35,8 +39,9 @@ def book_key(source: str, book_id: str) -> str:
 def hash_fraction(key: str, salt: str = "") -> float:
     """A stable number in [0, 1) for ``key``: the first 8 bytes of SHA-256 of ``salt + key``, over 2**64.
 
-    ``salt`` gives an independent draw from the same key (the story area salts with ``"pool:"`` to
-    pick a TinyStories pool that is independent of the split). Leave it empty for splits.
+    ``salt`` gives an independent draw from the same key. For example, the story area orders its
+    validation requests with ``"requests:"``, and its plan picks a TinyStories pool with ``"pool:"``,
+    so neither depends on the split. Leave it empty for splits.
     """
     return int.from_bytes(hashlib.sha256((salt + key).encode()).digest()[:8], "big") / 2**64
 

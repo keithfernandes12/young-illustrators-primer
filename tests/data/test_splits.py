@@ -63,6 +63,15 @@ def test_float_addition_cannot_move_a_boundary():
     assert SplitFractions().upper_bounds() == (("train", 0.8), ("val", 0.9), ("test", 1.0))
 
 
+def test_the_last_split_always_ends_at_exactly_one(monkeypatch):
+    # The validator accepts shares that sum to 1 within 1e-9; the last bound must still be 1.0,
+    # or a hash above 0.9999999999 would fall off the end and split_of would raise.
+    nearly = SplitFractions(train=0.7, val=0.2, test=0.0999999999)
+    assert nearly.upper_bounds()[-1] == ("test", 1.0)
+    monkeypatch.setattr(splits, "hash_fraction", lambda key, salt="": 0.99999999995)
+    assert split_of("any/book", nearly) == "test"
+
+
 def test_a_zero_share_is_allowed_and_never_assigned():
     no_train = SplitFractions(train=0.0, val=0.5, test=0.5)
     assert "train" not in {split_of(key, no_train) for key in KEYS}
