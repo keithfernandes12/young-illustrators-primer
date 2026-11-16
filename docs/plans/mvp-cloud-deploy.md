@@ -590,9 +590,11 @@ stroke count, line thickness and partial erasure. It also measures how far the a
 the prompt template changes, which is the one inference-time setting a zero-shot model has. Occlusion
 maps are the attribution step that the course guidelines meet with SHAP or LIME.
 
-- **Why separate** — it reads nothing that S6c (#37) or the MLflow server (#38) change. It builds
-  only on `main`: the renderer, `augment_canvas`, and S6c2's `scored` and `pair_stats`. A fake
-  scorer covers all of it in CI.
+- **Why separate** — as first built, the measurement code reads nothing that S6c (#37) or the
+  MLflow server (#38) change. It builds only on `main`: the renderer, `augment_canvas`, and S6c2's
+  `scored` and `pair_stats`. A fake scorer covers all of it in CI. (The prompt switch this PR
+  also carries does change S6c's and S6c2's recorded figures, and the card's results; Decisions,
+  2026-11-16.)
 - **Acceptance** — each perturbation is reported against the unperturbed drawing over the same
   drawings, with a paired bootstrap interval on the top-5 change. One real run is recorded as a
   dated Verified fact, logged to MLflow if a server is reachable.
@@ -1583,10 +1585,10 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
     | prompt `a child's drawing of a {label}.` | 2,000 | +0.043 [+0.029, +0.059] | 50% |
 
   - **Stroke count matters most.** Losing the last one or two strokes costs 12–20 points.
-  - **Line width does not move accuracy** at 1–7 px; every interval spans zero. It does reshuffle
-    the ranking: top-1 changes on 24–32% of drawings while top-5 accuracy stays put. So 3 px
-    neither helps nor hurts the gated number, and the choice matters to the top-1 label the
-    product shows.
+  - **No clear average change in top-5 accuracy from line width on this sample** at 1–7 px: all
+    three intervals span zero. That is absence of evidence, not equivalence: no margin was stated
+    or justified, though all three intervals fit within ±2 points. Top-1 changes on 24–32% of
+    drawings, so the label the product shows first does move. (The re-run below finds 7 px worse.)
   - **The prompt template is worth +4.3 points on `val`.** `a child's drawing of a {label}.` beats
     the then-shipped `This is a photo of {label}.`. The KAN-38 owner switched `prompt_template` to
     it on 2026-11-16 (Decisions); every figure in this entry predates the switch. The figure was taken on `val`, so
@@ -1672,15 +1674,21 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
     with before and after swapped, so it is the negation by construction and checks nothing.)
   - **Uncorrected intervals.** About ten 95% intervals are reported with no multiplicity
     correction, so one in twenty could clear zero by chance. The 7 px result is the only
-    line-width interval that excludes zero; read it as support for 3 px, not as proof.
+    line-width interval that excludes zero; read it as consistent with 3 px, not as proof.
   - **Missing strokes cost more under this prompt** (-14.7 against -11.7), from a higher baseline.
-  - **7 px is now measurably worse than 3 px**, by 2.5 points; 1 and 5 px stay within noise. This
-    supports the shipped 3 px rather than changing it.
+  - **7 px is worse than 3 px on this sample**, by 2.5 points [1.1, 3.8]; for 1 and 5 px we detect
+    no clear change (1 px: -1.2 [-2.6, +0.4]). This is consistent with keeping the shipped 3 px,
+    not proof that 3 px is best: no equivalence margin is claimed.
   - **Erasure no longer clears zero.** It still removes a median 0.5% of ink (1,798 of 2,000 below
     the 5% floor), so the earlier -4.5 and this -2.0 are both thin; the Open question on its
     strength stands.
   - **Occlusion:** median `top3_share` 0.58 (was 0.50), median `max_drop` 0.178 (was 0.076). The
-    drops are larger in absolute terms because confidences are higher under this prompt.
+    drops are larger in absolute terms because confidences are higher under this prompt. Read
+    the share beside the patch counts, which this run's JSON holds per map and the code now also
+    summarises (`inked_patches_median`): a median of 25.5 inked patches per drawing (range 12–37),
+    so none of the 20 maps is trivially 1.0, and none has an undefined share (`top3_share` is
+    `None` when no patch lowers confidence; `top3_share_undefined` counts those, and it was 0
+    here). Computed from the run's saved JSON, not re-scored.
 
 ## Open questions
 

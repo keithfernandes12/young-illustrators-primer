@@ -123,23 +123,25 @@ interval. Baseline top-5 on the sample is 0.518.
 - **Missing strokes hurt most.** Dropping the last stroke costs 14.7 points [12.8, 16.6], and the
   last two cost 21.8 [19.6, 24.2]. A child who stops early, or a scan that loses faint lines, will
   cost far more accuracy than any change of pen.
-- **Line thickness barely moves top-5, and 3 px is not wrong.** 1 and 5 px are within noise; 7 px
-  costs 2.5 points [1.1, 3.8]. Top-1 still changes on 27–38% of drawings, so the label shown first
+- **Line thickness: no clear change for 1 and 5 px on this sample, and 7 px is worse.** 7 px
+  costs 2.5 points [1.1, 3.8]. No equivalence margin is claimed, so this is consistent with 3 px,
+  not proof that it is best. Top-1 still changes on 27–38% of drawings, so the label shown first
   is less stable than the gated number suggests.
 - **The prompt is a real setting.** The shipped template beats the model card's `This is a photo of
   {label}.` by 4.3 points [2.9, 5.9], and `{label}` alone by 8.5. `a sketch of a {label}.` is
   within noise of it (-0.9 [-2.1, +0.3]).
 - **The answer rests on a few regions.** In occlusion maps of 20 correctly ranked drawings, the
   three most important 32 px patches carry a median 58% of the confidence drop. The share counts
-  positive drops only, and a drawing with three or fewer inked patches scores 1.0 trivially, so it
-  is read beside the median number of inked patches the run now records.
+  positive drops only, and a drawing with three or fewer inked patches scores 1.0 trivially. Here
+  the median drawing has 25.5 inked patches (range 12–37), so none is trivial, and no map had an
+  undefined share (the code now returns `None` for one and counts it, instead of entering 0.0).
 - **Partial erasure is too weak to read.** The training erasure removes a median 0.5% of ink; on
   the 202 drawings that lost at least 5%, the change is -2.0 [-5.4, +1.0].
 - **Uncorrected intervals.** About ten 95% intervals are reported with no multiplicity correction;
-  the 7 px result is the one line-width interval that excludes zero, so it supports 3 px rather
-  than proving it.
+  the 7 px result is the one line-width interval that excludes zero, so it is consistent with 3 px
+  rather than proof of it.
 - **Not covered:** training hyperparameters (S6d), and children's drawings, for which see S6c2's
   preprocessing stability.
 - **History:** the first run (MLflow `d99d75b514934b18836e4ad94ddbc32f`, 2026-11-15) was under the
-  old prompt and gave the same picture: -11.7 and -19.9 for strokes, line width within noise, and
+  old prompt and gave the same picture: -11.7 and -19.9 for strokes, no clear line-width change, and
   +4.3 for this prompt.

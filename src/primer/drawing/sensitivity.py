@@ -44,7 +44,7 @@ from typing import Any
 
 import numpy as np
 
-from primer.drawing.evaluate import Scored, pair_stats, scored
+from primer.drawing.evaluate import Scored, _git_state, pair_stats, scored
 from primer.drawing.preprocess import AugmentConfig, augment_canvas, default_augment_config
 from primer.drawing.render import RenderConfig, default_config, render_strokes
 
@@ -174,7 +174,8 @@ def occlusion(
     is 0 by construction and so says nothing. ``top3_share`` is the share of the total positive
     drop (negative drops are left out) that the three largest patches carry: near 1 means the
     answer hangs on one region. A drawing with three or fewer inked patches scores 1.0 trivially,
-    so read it beside ``inked_patches``.
+    so read it beside ``inked_patches``. It is None when no patch lowers the confidence: the share
+    is undefined there, and a 0.0 would drag the median down.
     """
     start = float(scorer(canvas, prompts)[label])
     rows = range(0, canvas.shape[0], PATCH)
@@ -200,7 +201,7 @@ def occlusion(
         "confidence": round(start, 4),
         "inked_patches": len(drops),
         "max_drop": round(max(drops), 4) if drops else 0.0,
-        "top3_share": round(sum(positive[:3]) / total, 4) if total > 0 else 0.0,
+        "top3_share": round(sum(positive[:3]) / total, 4) if total > 0 else None,
         "grid": grid,
     }
 
@@ -275,7 +276,7 @@ def measure(
     maps = {
         drawings[i].record_id: occlusion(canvases[i], labels[i], scorer, prompts, render) for i in correct
     }
-    shares = [m["top3_share"] for m in maps.values() if m["inked_patches"]]
+    shares = [m["top3_share"] for m in maps.values() if m["top3_share"] is not None]
     say("occlusion")
 
     return {
@@ -286,6 +287,7 @@ def measure(
             "drawings": len(maps),
             "patch": PATCH,
             "top3_share_median": round(statistics.median(shares), 4) if shares else None,
+            "top3_share_undefined": len(maps) - len(shares),
             "inked_patches_median": statistics.median(m["inked_patches"] for m in maps.values())
             if maps
             else None,
@@ -313,7 +315,7 @@ def mlflow_metrics(result: Mapping[str, Any]) -> dict[str, float]:
             if isinstance(value, (int, float)):
                 metrics[f"sensitivity/{name}/{key}"] = float(value)
     occluded = result["occlusion"]
-    for key in ("top3_share_median", "inked_patches_median", "max_drop_median"):
+    for key in ("top3_share_median", "top3_share_undefined", "inked_patches_median", "max_drop_median"):
         if occluded[key] is not None:
             metrics[f"sensitivity/occlusion/{key}"] = float(occluded[key])
     return metrics
@@ -350,18 +352,6 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--out", required=True, type=Path)
     p.add_argument("--mlflow", action="store_true", help="also log one run to MLFLOW_TRACKING_URI")
     return p
-
-
-def _git_sha() -> str:
-    import subprocess
-
-    try:
-        done = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=False, timeout=10
-        )
-    except (OSError, subprocess.SubprocessError):
-        return "unknown"
-    return done.stdout.strip() or "unknown"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -405,6 +395,7 @@ def main(argv: list[str] | None = None) -> int:
         if t != config.prompt_template
     }
     prompts = config.prompts()
+    git_sha, git_dirty = _git_state()
     start = time.perf_counter()
     result = measure(
         drawings,
@@ -432,7 +423,8 @@ def main(argv: list[str] | None = None) -> int:
             "render": asdict(default_config()),
             "license": sorted(set(sample["license"])),
             "attribution": sorted(set(sample["attribution"])),
-            "git_sha": _git_sha(),
+            "git_sha": git_sha,
+            "git_dirty": git_dirty,
             "seconds": round(time.perf_counter() - start, 1),
         }
     )
@@ -448,6 +440,7 @@ def main(argv: list[str] | None = None) -> int:
             "owner": "rishiparekh",
             "data_version": args.version,
             "git_sha": result["git_sha"],
+            "git_dirty": str(result["git_dirty"]),
             "base_model": config.encoder,
             "gate_group": "drawing",
             "where": "local",

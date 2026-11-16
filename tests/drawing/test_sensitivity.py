@@ -6,7 +6,9 @@ holds, so every perturbation has an effect that can be predicted by hand.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import statistics
 import sys
 from collections.abc import Sequence
 from dataclasses import replace
@@ -16,7 +18,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from primer.drawing import sensitivity
+from primer.drawing import evaluate, sensitivity
 from primer.drawing.evaluate import scored
 from primer.drawing.render import default_config, render_strokes
 from primer.drawing.sensitivity import (
@@ -136,18 +138,55 @@ def test_occlusion_scores_only_inked_patches_and_finds_the_one_that_matters():
     assert result["max_drop"] == result["grid"][1][1]
 
 
-def test_top3_share_counts_exactly_the_three_largest_drops():
+def test_top3_share_sorts_the_drops_and_leaves_negative_ones_out():
     canvas = np.full((RENDER.size, RENDER.size), RENDER.background, dtype=np.uint8)
-    # Four inked patches, one block each, of 100, 64, 36 and 16 ink pixels: drops in that ratio.
+    # Row-major patches: (0,0) a block whose covering RAISES confidence, then positives of 16, 100,
+    # 36 and 64 ink pixels. In raster order the first three positives are 16, 100, 36, so a missing
+    # sort reads 152/216, not 200/216; counting the negative drop shrinks the denominator.
     canvas[5:15, 5:15] = RENDER.ink
-    canvas[5:13, 40:48] = RENDER.ink
+    canvas[5:9, 40:44] = RENDER.ink
+    canvas[5:15, 70:80] = RENDER.ink
     canvas[40:46, 5:11] = RENDER.ink
-    canvas[40:44, 40:44] = RENDER.ink
+    canvas[40:48, 40:48] = RENDER.ink
+    spoiler = (slice(5, 15), slice(5, 15))
 
-    result = occlusion(canvas, 0, InkScorer(gain=100.0), PROMPTS, RENDER)
+    def scorer(image: np.ndarray, prompts: Sequence[str]) -> list[float]:
+        rest = image.copy()
+        rest[spoiler] = RENDER.background
+        # The ink of the spoiler block suppresses the label; covering it lifts the score by 0.3.
+        score = 0.1 + 100.0 * ink_mass(rest, RENDER) / FULL
+        return [score + (0.0 if (image[spoiler] < RENDER.background).any() else 0.3)]
 
-    assert result["inked_patches"] == 4
+    result = occlusion(canvas, 0, scorer, PROMPTS, RENDER)
+
+    assert result["inked_patches"] == 5
+    assert result["grid"][0][0] < 0, "covering the spoiler raises confidence: a negative drop"
     assert result["top3_share"] == pytest.approx(200 / 216, abs=1e-4)
+
+
+def test_top3_share_is_undefined_when_no_patch_lowers_the_confidence():
+    constant = lambda image, prompts: [0.9] + [0.1] * (len(prompts) - 1)
+
+    assert occlusion(render_strokes(THREE, RENDER), 0, constant, PROMPTS, RENDER)["top3_share"] is None
+
+    result = measure(drawings(), constant, PROMPTS, prompt_sets={}, seed=0, occlude=5)
+    summary = result["occlusion"]
+
+    assert summary["drawings"] == 3
+    assert summary["top3_share_undefined"] == 3, "counted, not silently dropped"
+    assert summary["top3_share_median"] is None, "and a 0.0 never enters the median"
+    assert summary["inked_patches_median"] > 0
+
+
+def test_the_occlusion_summary_reports_the_median_inked_patches_and_undefined_shares():
+    result = measure(drawings(), InkScorer(), PROMPTS, prompt_sets={}, seed=0, occlude=5)
+    summary = result["occlusion"]
+    counts = [m["inked_patches"] for m in summary["maps"].values()]
+
+    assert summary["inked_patches_median"] == statistics.median(counts) > 0
+    assert summary["top3_share_undefined"] == sum(m["top3_share"] is None for m in summary["maps"].values())
+    metrics = mlflow_metrics(result)
+    assert metrics["sensitivity/occlusion/inked_patches_median"] == summary["inked_patches_median"]
 
 
 def test_a_hit_is_the_fifth_place_but_not_the_sixth_and_matches_the_gated_metric():
@@ -212,6 +251,41 @@ def test_dropping_strokes_removes_ink_and_costs_the_hit_it_depended_on():
     assert figures["drop_last_2"]["top5_delta"] == -0.5
     assert figures["drop_last_1"]["top5_acc_before"] == 1.0
     assert figures["drop_last_1"]["top5_acc_after"] == 0.5
+
+
+def test_k_strokes_are_dropped_from_the_end_and_each_k_scores_its_own_canvas():
+    scorer = InkScorer()
+
+    measure([Drawing("a", THREE, 0)], scorer, PROMPTS, prompt_sets={}, seed=0, occlude=0)
+
+    scored_canvases = [canvas for canvas, _ in scorer.calls]
+
+    def was_scored(strokes) -> bool:
+        expected = render_strokes(strokes, RENDER)
+        return any(np.array_equal(canvas, expected) for canvas in scored_canvases)
+
+    assert was_scored(THREE[:-1]), "drop_last_1 scores the drawing without its last stroke"
+    assert was_scored(THREE[:-2]), "drop_last_2 scores it without its last two, not just one"
+    # Dropping from the front would score these instead, and the two drawings are different ones.
+    assert not np.array_equal(render_strokes(THREE[:-1], RENDER), render_strokes(THREE[1:], RENDER))
+    assert not np.array_equal(render_strokes(THREE[:-2], RENDER), render_strokes(THREE[2:], RENDER))
+    assert not np.array_equal(render_strokes(THREE[:-1], RENDER), render_strokes(THREE[:-2], RENDER))
+
+
+def test_a_drawing_that_falls_out_of_the_top_five_only_at_two_strokes_is_counted_only_for_two():
+    full = ink_mass(render_strokes(THREE, RENDER), RENDER)
+    minus_one = ink_mass(render_strokes(THREE[:-1], RENDER), RENDER)
+    minus_two = ink_mass(render_strokes(THREE[:-2], RENDER), RENDER)
+    assert full > minus_one > minus_two
+    # Label 0 scores 0.465 with two strokes left (rank 5, a hit) and below 0.46 with one.
+    scorer = InkScorer(gain=0.465 * FULL / minus_one)
+
+    figures = measure([Drawing("a", THREE, 0)], scorer, PROMPTS, prompt_sets={}, seed=0, occlude=0)[
+        "perturbations"
+    ]
+
+    assert figures["drop_last_1"]["top5_delta"] == 0.0
+    assert figures["drop_last_2"]["top5_delta"] == -1.0
 
 
 def test_full_erasure_removes_the_ink_and_costs_the_hit():
@@ -399,6 +473,21 @@ def test_the_cli_runs_end_to_end_on_a_stubbed_world(monkeypatch, tmp_path):
     assert len(compared) == len(sensitivity.PROMPT_TEMPLATES) - 1
     assert not any(shipped in k for k in compared)
     assert result["device"] == "cpu" and result["dtype"] == "float32"
+    # The commit is the package's, with a dirty flag, as S6c records it.
+    assert (result["git_sha"], result["git_dirty"]) == evaluate._git_state()
+
+
+def test_the_shipped_template_is_the_one_every_recorded_figure_was_measured_under():
+    from primer.drawing.model import DrawingConfig
+
+    config = DrawingConfig.from_yaml()
+    digest = hashlib.sha256("\n".join(config.prompts()).encode()).hexdigest()
+
+    assert config.prompt_template == "a child's drawing of a {label}."
+    assert digest.startswith("d3425b53"), (
+        "the plan's S6c (0.5436) and S6c2 figures, and the card, were measured under this prompt set; "
+        "changing the template means re-measuring them (Decisions, 2026-11-16)"
+    )
 
 
 def test_the_cli_refuses_the_training_split():
