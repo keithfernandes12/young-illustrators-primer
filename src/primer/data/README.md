@@ -139,7 +139,8 @@ emailed (see `alerts.py` and `PRIMER_ALERT_EMAILS` in `.env.example`), as is any
 `drawings.strokes`, and `character_drawings.keypoints` and `segmentation`. The stream gives exact statistics: nulls and
 min/mean/max length, plus how many values are shorter than the schema allows. Its contract (not
 null, not empty) is checked from those statistics; every other column goes through Great
-Expectations as before. The results are the same as checking the whole table (tested, and on
+Expectations as before. The profiles are identical and the same checks fail as when checking the whole
+table; only the wording of a failure's detail can differ (tested, and on
 `v1.1` every regenerated schema came out identical). Measured on all of `v1.1`: peak memory went
 from 11.9 GB to 2.8 GB, and time from 83 s to 32 s.
 

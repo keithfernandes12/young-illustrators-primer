@@ -313,7 +313,22 @@ def stories(n=120):
     df = frame(n)
     df.loc[3, "text"] = pd.NA                     # a missing story, allowed by the schema below
     df.loc[5, "text"] = "short " + "x" * 400       # lengths differ, so min/max/mean are tested
+    # As TinyStories writes it (sources/tinystories.py): a typed text column with no values, so every
+    # streamed chunk of it is all null. The stream must skip those chunks rather than fail on them.
+    df["title"] = pd.array([pd.NA] * n, dtype="string")
     return df
+
+
+def test_an_all_null_text_column_streams_like_tinystories_titles(store):
+    import pyarrow.parquet as pq
+
+    _write_stories(store, stories())
+    path = store.glob("processed/stories_text/source=tinystories/*.parquet")[0]
+    assert profiling._is_text(pq.read_schema(store.path(path)).field("title").type)   # typed, not null-typed
+
+    loaded = profiling.load_dataset(store, "stories_text")
+
+    assert loaded.profile()["columns"]["title"] == {"kind": "string", "null_fraction": 1.0}
 
 
 def test_long_text_never_reaches_great_expectations(store, tmp_path, monkeypatch):
