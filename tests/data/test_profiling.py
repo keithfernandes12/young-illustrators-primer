@@ -371,8 +371,10 @@ def test_a_text_column_missing_from_one_file_counts_as_null_there(store):
     (lambda df: df.assign(notes="note " * 60).drop(columns="score"),  # one column-set break, not two,
      {("expect_table_columns_to_match_set", None),                    # plus the missing column's checks
       ("expect_column_values_to_be_between", "score"), ("expect_column_values_to_not_be_null", "score")}),
+    (lambda df: df.assign(text=df["text"].mask(df.index == 0, "x")), set()),  # exactly min_length: fine
+    (lambda df: df.assign(word_count="word " * 60), {("expect_column_values_to_be_between", "word_count")}),
 ], ids=["clean", "too_many_nulls", "one_empty_story", "text_missing", "extra_long_column",
-        "extra_long_and_missing_short"])
+        "extra_long_and_missing_short", "story_exactly_min_length", "numeric_turns_into_long_text"])
 def test_long_text_contract_breaks_match_the_full_frame_check(tmp_path, context, change, expected):
     from primer.data.storage import Store
 

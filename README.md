@@ -59,7 +59,7 @@ Everything lives in the GCS bucket `gs://young-illustrators-primer-data` for the
 
 ## 2. Reproduce it on your machine
 
-You need **Docker Desktop** (or Docker Engine with Compose v2.24+, about 4 GB of memory for Docker; running against the full bucket needs Docker's default 7.6 GB, see [dags/README.md](dags/README.md#run-it)) and **git**. No Google Cloud account is needed: by default everything is written to `.local-data/` inside the clone.
+You need **Docker Desktop** (or Docker Engine with Compose v2.24+, about 4 GB of memory for Docker; running against the full bucket needs at least 8 GB for Docker, which is not every machine's default; see [dags/README.md](dags/README.md#run-it)) and **git**. No Google Cloud account is needed: by default everything is written to `.local-data/` inside the clone.
 
 ```bash
 git clone https://github.com/keithfernandes12/young-illustrators-primer.git
