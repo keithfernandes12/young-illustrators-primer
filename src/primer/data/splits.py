@@ -3,8 +3,10 @@
 A book's split comes from a hash of its key and nothing else: not from which other books exist,
 not from any label such as reading level, and not from a seed. So the same book lands in the same
 split on every machine, in every run, and when the data grows, and pages of one book never straddle
-splits (AGENTS.md: "split by book, never by page"). Once areas use this one helper, a book also
-lands in the same split in each of them.
+splits (AGENTS.md: "split by book, never by page"). Areas that use the same fractions also put a
+book in the same split as each other. Different fractions lay the same hash out differently: a
+book at 0.3 is train under 80/10/10 but val under illustration's 0/50/50. That's harmless there,
+because illustration trains nothing.
 
 **Who uses it.** The story and illustration areas split books, and each still has its own copy
 (``primer.story.data.split_of_book``, ``primer.illustration.consistency.experiment.split_of``). They
@@ -50,8 +52,8 @@ def hash_fraction(key: str, salt: str = "") -> float:
 class SplitFractions:
     """The share of books in each split. Each is between 0 and 1, and together they sum to 1.
 
-    A share may be 0: the illustration area uses ``SplitFractions(train=0.0, val=0.5, test=0.5)``,
-    since it trains nothing.
+    A share may be 0. The illustration area's own ``split_of(key, val_fraction=0.5)`` is equivalent
+    to ``SplitFractions(train=0.0, val=0.5, test=0.5)``, since it trains nothing.
     """
 
     train: float = 0.8
@@ -71,9 +73,10 @@ class SplitFractions:
     def upper_bounds(self) -> tuple[tuple[str, float], ...]:
         """Each split with the top of its range, train first.
 
-        Rounded to 12 decimals so float addition can't move a boundary: 0.8 + 0.1 gives
-        0.9000000000000001, and the story area's existing table says 0.9. The last split always
-        ends at exactly 1.0, so every fraction in [0, 1) has a split.
+        Rounded to 12 decimals so float addition can't move a boundary: 0.6 + 0.3 gives
+        0.8999999999999999, not 0.9, so without rounding a book hashed at exactly 0.8999999999999999
+        would land in test instead of val. The last split always ends at exactly 1.0, so every
+        fraction in [0, 1) has a split.
         """
         bounds, total = [], 0.0
         for name in SPLIT_NAMES:

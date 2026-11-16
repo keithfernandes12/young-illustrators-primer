@@ -59,7 +59,9 @@ def test_a_book_exactly_on_a_boundary_goes_to_the_next_split(monkeypatch):
 
 
 def test_float_addition_cannot_move_a_boundary():
-    # 0.8 + 0.1 is 0.9000000000000001 in floating point; the bound must still be 0.9.
+    # 0.6 + 0.3 is 0.8999999999999999 in floating point; the bound must still be 0.9.
+    assert SplitFractions(train=0.6, val=0.3, test=0.1).upper_bounds()[1] == ("val", 0.9)
+    assert SplitFractions(train=0.7, val=0.2, test=0.1).upper_bounds()[1] == ("val", 0.9)
     assert SplitFractions().upper_bounds() == (("train", 0.8), ("val", 0.9), ("test", 1.0))
 
 

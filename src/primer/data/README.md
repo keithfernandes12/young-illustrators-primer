@@ -39,7 +39,9 @@ Train on a named version (see [Versions](#versions)) so results are reproducible
 
 `primer.data.splits` is the shared book split for model areas that split books (KAN-120). The story
 and illustration areas still have their own copies of it, and move to this one when their owners
-switch; once they do, a book lands in the same split in both:
+switch. Areas that use the same fractions put a book in the same split; illustration's 0/50/50
+lays the same hash out differently from story's 80/10/10, which is harmless because illustration
+trains nothing:
 
 ```python
 from primer.data.splits import SplitFractions, book_key, split_of
