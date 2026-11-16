@@ -242,11 +242,19 @@ def log_to_mlflow(kind: str, result: dict[str, Any], out: Path, owner: str, run_
     from primer.drawing.tracking import log_run
 
     # The 3.x client prints an emoji when a run ends. On a cp1252 Windows console that raises
-    # inside `end_run` and leaves the run RUNNING on the server; replace what cannot be printed.
-    reconfigure = getattr(sys.stdout, "reconfigure", None)
-    if reconfigure is not None:
+    # inside `end_run` and leaves the run RUNNING on the server, so what cannot be printed is
+    # replaced -- for the logging call only. The stream's own error mode comes back afterwards,
+    # even if logging fails, so nothing printed later in the process is silently altered.
+    stream = sys.stdout
+    reconfigure = getattr(stream, "reconfigure", None)
+    previous = getattr(stream, "errors", None)
+    if reconfigure is not None and previous is not None:
         reconfigure(errors="replace")
-    run_id = log_run(kind=kind, result=result, metrics_path=out, owner=owner, run_name=run_name)
+    try:
+        run_id = log_run(kind=kind, result=result, metrics_path=out, owner=owner, run_name=run_name)
+    finally:
+        if reconfigure is not None and previous is not None:
+            reconfigure(errors=previous)
     print(f"logged MLflow run {run_id}")
     return run_id
 

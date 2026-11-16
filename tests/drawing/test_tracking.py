@@ -251,3 +251,47 @@ def test_an_unknown_kind_is_refused_before_any_run(fake_mlflow, tmp_path):
             kind="speed", result=accuracy_file(), metrics_path=tmp_path, owner="m1", run_name="r"
         )
     assert fake_mlflow.calls == []
+
+
+# ------------------------------------------------------------------- stdout around the logging call
+
+
+def _cp1252_stdout(monkeypatch):
+    import io
+
+    stream = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict")
+    monkeypatch.setattr(sys, "stdout", stream)
+    return stream
+
+
+def test_stdout_replaces_unprintable_text_only_while_logging(monkeypatch, tmp_path):
+    from primer.drawing import evaluate
+
+    stream = _cp1252_stdout(monkeypatch)
+    seen = []
+
+    def log_run(**kwargs):
+        seen.append(stream.errors)
+        print("\U0001f3c3 View run")  # what the 3.x client prints at end_run; cp1252 cannot encode it
+        return "run-1"
+
+    monkeypatch.setattr(tracking, "log_run", log_run)
+
+    assert evaluate.log_to_mlflow("accuracy", {}, tmp_path / "m.json", "m1", "r") == "run-1"
+    assert seen == ["replace"], "the client's emoji must not raise inside end_run"
+    assert stream.errors == "strict", "the stream's own error mode is restored afterwards"
+
+
+def test_stdout_is_restored_even_when_logging_fails(monkeypatch, tmp_path):
+    from primer.drawing import evaluate
+
+    stream = _cp1252_stdout(monkeypatch)
+
+    def log_run(**kwargs):
+        raise RuntimeError("server down")
+
+    monkeypatch.setattr(tracking, "log_run", log_run)
+
+    with pytest.raises(RuntimeError):
+        evaluate.log_to_mlflow("accuracy", {}, tmp_path / "m.json", "m1", "r")
+    assert stream.errors == "strict"
