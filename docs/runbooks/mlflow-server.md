@@ -37,25 +37,12 @@ One server holds every run the team logs, local runs included
   because the default network's own rules (`default-allow-internal` for `10.128.0.0/9`,
   `default-allow-ssh` for `0.0.0.0/0`, both priority 65534) otherwise let any other VM reach port
   5000 and the whole internet reach port 22. The VM has an ephemeral external IP so it can pull
-  images; that IP is billed. It is public, but no rule admits the internet to port 5000, and after
-  hardening none admits it to port 22 either.
-- **Not yet true of the live server.** A read-only `gcloud compute firewall-rules list` on
-  2026-11-15 showed `allow-iap-mlflow` with **no target tag** (so it applies to every VM in the
-  network), no deny rule, and the VM untagged. Until a person runs **Harden the live server**
-  below, any VM added to the default network can read and write every run, and SSH is open to the
-  internet. Today `mlflow` is the project's only VM. The bucket was also created without
-  `--public-access-prevention` (it reports `inherited`); apply it with
-  `gcloud storage buckets update gs://yip-mlflow-artifacts --public-access-prevention`. When both
-  are done and the checks under **Harden the live server** pass, edit these: delete this bullet,
-  the "untested" sentence and the "has not been run either" line under **Harden the live server**,
-  the "Today a job in the same VPC…" sentence in the **Cloud jobs** bullet, the "until then"
-  wording in the port comment of `infra/mlflow/docker-compose.yml`, and the "once the runbook's
-  hardening is applied" parenthetical in `docs/engineering/model-development.md`.
-- **Cloud jobs.** The server's external IP admits no one on port 5000, and after hardening only
-  IAP can reach it, so a Vertex or Cloud Run job has no path in. Today a job in the same VPC
-  reaches it only through `default-allow-internal`, which hardening closes. How cloud runs log is an open decision (an
-  internal-only rule for a tagged range, or a login proxy); until it is made, log from a machine
-  with the tunnel open.
+  images; that IP is billed. It is public, but no rule admits the internet to port 5000 or port 22.
+  The rules and the bucket's public-access prevention were applied to the live server on
+  2026-11-15 and checked as described under **Harden the live server**.
+- **Cloud jobs.** Only IAP can reach the server, so a Vertex or Cloud Run job has no path in. How
+  cloud runs log is an open decision (an internal-only rule for a tagged range, or a login proxy);
+  until it is made, log from a machine with the tunnel open.
 
 ## Before you start
 
@@ -187,9 +174,9 @@ that. Afterwards both `curl` lines must time out (a banner or `OK` means the por
 that port 22 is closed to the internet; port 5000 never had an internet-facing allow rule. The
 exposure hardening exists for is another VM in the network, so also create a throwaway VM in the
 default network, run the same two `curl` lines against `mlflow`'s **internal** IP, and delete the
-throwaway VM. The same step closes the bucket gap listed under **Not yet true of the live server**:
-run `gcloud storage buckets update gs://yip-mlflow-artifacts --public-access-prevention` too. This
-procedure has not been run yet, so it is untested; drop that statement only after these checks pass.
+throwaway VM. The same step closes the bucket's public-access gap, which a bucket created before
+`--public-access-prevention` was added to the build step still has (`inherited`): run
+`gcloud storage buckets update gs://yip-mlflow-artifacts --public-access-prevention` too.
 
 **If the tunnel or SSH stops working afterwards**, undo it. Run all three lines: the deny rule is
 not always the cause (for example, if the tag did not land on the VM), and together they return the
@@ -200,8 +187,6 @@ gcloud compute firewall-rules delete deny-non-iap-mlflow --project=young-illustr
 gcloud compute firewall-rules update allow-iap-mlflow --clear-target-tags --priority=1000 --project=young-illustrators-primer
 gcloud compute instances remove-tags mlflow --tags=mlflow --zone=us-central1-a --project=young-illustrators-primer
 ```
-
-The `--clear-target-tags` flag has not been run either.
 
 ## Build it from scratch (person-only)
 

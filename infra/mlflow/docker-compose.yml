@@ -21,8 +21,8 @@ services:
       - db
     ports:
       # Meant to be reachable only through IAP (35.235.240.0/20), by the firewall alone: MLflow has
-      # no login. That holds only once the runbook's "Harden the live server" step is applied; until
-      # then any VM on the default network can reach this port. See docs/runbooks/mlflow-server.md.
+      # no login. A VM built from this file is exposed to the whole default network until the
+      # runbook's "Harden the live server" firewall rules cover it. See docs/runbooks/mlflow-server.md.
       - "5000:5000"
     command: >
       mlflow server --host 0.0.0.0 --port 5000
