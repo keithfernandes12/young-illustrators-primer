@@ -850,6 +850,13 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   (S6c's 0.4956, S6c2's table, S6f's perturbations) was taken under the old template and stays
   on record as that.
 
+- **2026-11-16 — The switched prompt is kept after S6c2's re-run.** The KAN-38 owner confirmed it
+  with S6c2's figures in hand: top-1 flips more on children's drawings, the median confidence of an
+  unbinarised upload is 0.93, and `The Great Wall of China` is the most common answer. That is
+  accepted as a known trade-off for +4.8 on the gate's split. It binds S6d in two ways: its
+  stability is read against the 2026-11-16 table, not the 2026-11-15 one, and nothing may treat
+  the recogniser's sigmoid confidence as certainty without first measuring its calibration.
+
 ## Verified facts
 
 - **2026-11-13** — Local baseline on an Apple M4 (16 GB, MPS, fp16), SD 1.5 rev `451f4fe` +
@@ -1790,7 +1797,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   decided before these figures existed. *Options:* keep it and have S6d read its stability against
   the new table; revert to `This is a photo of {label}.`; or run S6c2 under `a sketch of a {label}.`
   (+3.3 on `val`) first, which selects on Amateur Drawings rather than on `test`. *Decides:* the
-  KAN-38 owner.
+  KAN-38 owner. **Answered 2026-11-16: keep it** (Decisions, same date).
 
 ## Out of scope
 

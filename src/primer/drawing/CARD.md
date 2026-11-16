@@ -74,6 +74,12 @@ gap**: none is established. Small slices are reported but not judged.
 ## Mitigations and trade-offs
 
 - **Zero-shot on sketches is weak**, and knowingly so — see above. The mitigation is S6d.
+- **The prompt trades children's-drawing stability for the gate's number.** `a child's drawing of
+  a {label}.` adds 4.8 top-5 points on rendered Quick, Draw!, but on S6c2's 1,000 children's
+  drawings top-1 changes more often between preprocessing variants (34 / 66 / 50% against 25 / 50 /
+  41%), the median top-1 confidence of an unbinarised upload is 0.93 rather than 0.10, and the
+  most common answer is `The Great Wall of China` rather than `squiggle`. Kept knowingly
+  (2026-11-16). A confidence near 1 from this model is not evidence the label is right.
 - **Confidences are sigmoid, not softmax.** SigLIP's training loss is pairwise, so each score is
   "does this label fit", independent of the others. They do not sum to 1. Ranking is unaffected,
   which is all `drawing_top5_acc` reads, but anything that later thresholds a confidence must know
