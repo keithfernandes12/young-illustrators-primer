@@ -309,15 +309,30 @@ def top5_hits(
     where the vocabulary capitalises them, and a string comparison would score those as misses.
     Ties keep vocabulary order (``scored``), so the same scores give the same hits on every run.
     """
-    hits: list[bool] = []
+    return [rank < TOP_K for rank in true_label_ranks(drawings, encoder, prompts, progress)]
+
+
+def true_label_ranks(
+    drawings: Iterable[tuple[bytes, int]],
+    encoder: ScoringEncoder,
+    prompts: Sequence[str],
+    progress: Any = None,
+) -> list[int]:
+    """For each ``(png, label index)``, the 0-based position of the true label in the ranking.
+
+    `top5_hits` is ``rank < TOP_K`` over this, so the per-drawing rows S6g's bias report reads
+    come from the very scoring pass that produced the gated number, not from a second loop that
+    could drift from it. Ties keep vocabulary order, as in `scored`.
+    """
+    ranks: list[int] = []
     for image, label in drawings:
         ranking = scored(encoder.encode(image, prompts).confidences).ranking
-        hits.append(label in ranking[:TOP_K])
+        ranks.append(ranking.index(label))
         if progress is not None:
-            progress(len(hits))
-    if not hits:
+            progress(len(ranks))
+    if not ranks:
         raise ValueError("no drawings to evaluate")
-    return hits
+    return ranks
 
 
 def chance_baseline(vocabulary_size: int) -> dict[str, Any]:
@@ -496,6 +511,13 @@ def accuracy_parser() -> argparse.ArgumentParser:
         default=None,
         help="score only the first N drawings (a timing probe, never a result)",
     )
+    parser.add_argument(
+        "--per-drawing",
+        type=Path,
+        default=None,
+        help="also write one row per scored drawing (record id, label, country, rank, hit) as "
+        "gzipped CSV, for `python -m primer.drawing.bias_report` (S6g). Written after --out",
+    )
     return parser
 
 
@@ -520,6 +542,8 @@ def _evaluate_accuracy(argv: list[str]) -> int:
     _set_previous_output_aside(parser, args.out)
     if args.limit is not None and args.limit < 1:
         parser.error("--limit must be at least 1")
+    if args.per_drawing is not None and not args.per_drawing.resolve().parent.is_dir():
+        parser.error(f"--per-drawing's folder does not exist: {args.per_drawing.parent}")
 
     if not args.version.strip():
         # `required=True` only demands the flag: `--version ""` would read the unfrozen current
@@ -572,7 +596,8 @@ def _evaluate_accuracy(argv: list[str]) -> int:
     git_sha, git_dirty = _git_state()
     start = time.perf_counter()
     encoder = SiglipEncoder(config, device=args.device)
-    hits = top5_hits(drawings(), encoder, prompts, progress)
+    ranks = true_label_ranks(drawings(), encoder, prompts, progress)
+    hits = [rank < TOP_K for rank in ranks]
     groups = {key: list(slice_values(part, key)) for key in SLICE_KEYS}
     result = metrics_file(
         hits,
@@ -600,6 +625,21 @@ def _evaluate_accuracy(argv: list[str]) -> int:
     partial = args.out.with_name(args.out.name + ".partial")
     partial.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     partial.replace(args.out)
+    if args.per_drawing is not None:
+        import pandas as pd
+
+        rows = pd.DataFrame(
+            {
+                "record_id": part["record_id"],
+                "label_index": [index[label.casefold()] for label in part["label"]],
+                "label": [labels[index[label.casefold()]] for label in part["label"]],
+                "country_code": list(slice_values(part, "country_code")),
+                "rank": ranks,
+                "hit": hits,
+            }
+        )
+        rows.to_csv(args.per_drawing, index=False, compression="gzip")
+        print(f"wrote {args.per_drawing}: {len(rows)} rows")
     judged = sum(1 for s in result["slices"] if s["judged"])
     print(
         f"wrote {args.out}: drawing_top5_acc={result['overall']['drawing_top5_acc']:.4f} over {len(hits)} drawings "
