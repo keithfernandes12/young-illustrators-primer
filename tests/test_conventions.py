@@ -80,11 +80,6 @@ class Allowed:
 
 #: ``.start_run(`` call sites outside the shared logger, by file, with how many each has today.
 START_RUN_ALLOWED: dict[str, Allowed] = {
-    "primer/drawing/sensitivity.py": Allowed(
-        1,
-        "mvp-cloud-deploy S6f built its own run before tracking.py existed; PR #46 moves it onto it",
-        "KAN-38",
-    ),
     "primer/speech/train.py": Allowed(
         2, "speech's own log_run, and one re-open of a run by id; gaps listed in KAN-128", "KAN-128"
     ),
@@ -97,7 +92,6 @@ START_RUN_ALLOWED: dict[str, Allowed] = {
 #: Tag dicts that cannot be read statically, by file. Checked only that they exist, so a site that
 #: later builds a literal is checked from then on.
 TAGS_UNCHECKED: dict[str, str] = {
-    "primer/drawing/sensitivity.py": "passes dict(tags) to start_run; PR #46 moves it onto run_tags (KAN-38)",
     "primer/story/grid.py": "tags arrive as a parameter of MlflowLogger.log_run / log_files (KAN-39)",
 }
 
@@ -114,9 +108,7 @@ GIT_ALLOWED: dict[tuple[str, str], Allowed] = {
 }
 
 #: Files with a literal owner in a dict, with how many.
-OWNER_ALLOWED: dict[str, Allowed] = {
-    "primer/drawing/sensitivity.py": Allowed(1, "hard-coded owner; removed by PR #46", "KAN-38"),
-}
+OWNER_ALLOWED: dict[str, Allowed] = {}
 
 
 # ------------------------------------------------------------------------------------------ scans

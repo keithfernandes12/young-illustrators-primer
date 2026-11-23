@@ -63,7 +63,7 @@ for that one file; this plan is about the class of problem, not that file.
 
 ### S0 · Move `sensitivity.py` onto `tracking.py`
 
-*size: small · in flight as PR #46*
+*size: small · merged as PR #46*
 
 `sensitivity.py` builds its MLflow tags with `tracking.run_tags` and its params with
 `tracking.run_params`, takes `--owner`, and drops the hardcoded owner. Confirm against #46 before
@@ -88,7 +88,7 @@ moment a new one appears.
 
 1. Every `mlflow.start_run(` in `src/` is either in an allowlisted file or inside the shared logging
    helper. Today's call sites outside `drawing/tracking.py`: `speech/train.py`, `story/grid.py`,
-   `illustration/consistency/experiment.py` (and, until S0 merges, `drawing/sensitivity.py`).
+   `illustration/consistency/experiment.py`.
 2. A run's tag dict contains the seven required tags from `docs/engineering/model-development.md`
    (`stage`, `owner`, `data_version`, `git_sha`, `base_model`, `gate_group`, `where`). The tests check
    `tracking.run_tags` (in `tests/drawing/test_tracking.py`) and each allowlisted site's tags where
@@ -105,10 +105,10 @@ moment a new one appears.
   carries a reason and a Jira key.
 - **Testing** — for each of the four checks, a fixture file in `tmp_path` that violates it and is
   caught; removing the `ast` visit for `start_run` makes the first one fail.
-- **Depends on** — nothing to build, but **merge order with S0 (#46) matters**. S1 allowlists
+- **Depends on** — nothing to build, but **merge order with S0 (#46) matters**. S1 allowed
   `drawing/sensitivity.py`'s `start_run`, its literal owner and its unchecked tag dict, and fails
-  on stale entries. Whichever of #46 and S1 merges second must delete those three entries.
-  Checked: the S1 scans run against #46's tree report exactly those three as stale. **Jira** —
+  on stale entries. #46 merged first, so S1 deleted those three entries (2026-11-23) and starts with
+  none for `drawing/sensitivity.py`. **Jira** —
   KAN-38 for drawing; KAN-128 for speech logging.
 
 ### S2 · One git-state helper, and the areas that can adopt it now
@@ -234,7 +234,7 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
 
 | Slice | State | PR | Notes |
 |---|---|---|---|
-| S0 | in review | [#46](https://github.com/keithfernandes12/young-illustrators-primer/pull/46) | confirmed against #46 at `2f418ed`, re-checked at `3db5f56`: tags built by `run_tags` (the CLI test asserts equality), owner from `--owner`, no literal owner, `git_dirty` `unknown`/`true`/`false` |
+| S0 | merged | [#46](https://github.com/keithfernandes12/young-illustrators-primer/pull/46) | confirmed against #46 at `2f418ed`, re-checked at `3db5f56`: tags built by `run_tags` (the CLI test asserts equality), owner from `--owner`, no literal owner, `git_dirty` `unknown`/`true`/`false`. Merged 2026-11-23 as `2d3f077` |
 | S1 | in review | [#47](https://github.com/keithfernandes12/young-illustrators-primer/pull/47) | `tests/test_conventions.py`: four scans, count-based allowlists with reasons and keys, stale entries fail |
 | S2 | not started | | needs S1 |
 | S3 | in review | [#48](https://github.com/keithfernandes12/young-illustrators-primer/pull/48) | reconcile step in `engineering-loop`, `loop-worker`, `create-pr` and the process doc; merge-order rule in the template and `docs/plans/AGENTS.md`. Merges after #47 (it links this plan and `tests/test_conventions.py`). Also the slice-naming rule (plan slug in front, outside the plan). The PR-template line is split out: `.github/` changes go in their own PR |
@@ -273,7 +273,7 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
   `mlflow` and `self._mlflow` and a literal there is held to all seven tags; a dict changed by
   `update`, `setdefault` or `|=` is unreadable. Today the
   unchecked list covers
-  `story/grid.py` (tags are a parameter) and `drawing/sensitivity.py` (`dict(tags)`, until #46).
+  `story/grid.py` (tags are a parameter) and (`drawing/sensitivity.py` was listed until #46 merged.)
 
 ## Verified facts
 
@@ -306,6 +306,9 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
   `start_run`, `TAGS_UNCHECKED` and `OWNER_ALLOWED` entries. This corrects the S0 sha above: the
   earlier check was at `2f418ed`, and #46 has since added tests, a plan note and a stricter
   occlusion read in `tracking.py`.
+- **2026-11-23** — #46 merged to `main` as `2d3f077`. S1 merged `main` and deleted the three
+  `drawing/sensitivity.py` entries (`start_run`, `TAGS_UNCHECKED`, `OWNER_ALLOWED`); the scans then
+  pass on the merged tree with no `drawing/sensitivity.py` allowance.
 - **2026-11-23** — The Jira keys for the allowlist come from each file's commit history:
   - illustration consistency: KAN-103;
   - golden runner: KAN-89;
