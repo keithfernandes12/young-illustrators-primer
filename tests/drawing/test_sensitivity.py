@@ -531,7 +531,7 @@ def test_the_cli_runs_end_to_end_on_a_stubbed_world(monkeypatch, tmp_path):
     assert result["device"] == "cpu" and result["dtype"] == "float32"
     # The commit and dirty flag come from `_git_state`, in the file and in the MLflow tags.
     assert (result["git_sha"], result["git_dirty"]) == ("abc1234", True)
-    assert logged["tags"]["git_sha"] == "abc1234" and logged["tags"]["git_dirty"] == "True"
+    assert logged["tags"]["git_sha"] == "abc1234" and logged["tags"]["git_dirty"] == "true"
     # The tags model-development.md requires on every run.
     required = {"stage", "owner", "data_version", "git_sha", "base_model", "gate_group", "where"}
     assert required <= logged["tags"].keys()

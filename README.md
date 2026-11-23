@@ -271,7 +271,7 @@ Being explicit about what isn't done yet:
 
 - **Alerts beyond email**: a Slack channel, and alerts for the model and serving side once those exist.
 - **Feature engineering**: rendering Quick, Draw! strokes to images, a safety filter for text, and mapping readability levels onto one scale are next.
-- **Splits**: by-book train/validation/test splits and the golden evaluation set.
+- **Splits**: the shared by-book split helper exists (`primer.data.splits`, KAN-120); building each model area's splits with it, and the golden evaluation set, are next.
 - Follow-ups from code review (tracked on the merged PRs): bind the Airflow UI to localhost only, unique run-manifest ids, and running the DAG tests in CI.
 
 ## 13. More docs, contributing, team

@@ -439,7 +439,8 @@ def main(argv: list[str] | None = None) -> int:
             "owner": "rishiparekh",
             "data_version": args.version,
             "git_sha": result["git_sha"],
-            "git_dirty": str(result["git_dirty"]),
+            # Spelled as tracking.run_tags spells it: "unknown" when git failed, else true/false.
+            "git_dirty": "unknown" if result["git_dirty"] is None else str(result["git_dirty"]).lower(),
             "base_model": config.encoder,
             "gate_group": "drawing",
             "where": "local",

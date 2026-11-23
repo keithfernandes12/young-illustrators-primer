@@ -43,7 +43,7 @@ illustration = [
 # `transformers>=5` because that is the API the encoder was written and run against: 5.x returns a
 # `BaseModelOutputWithPooling` from `get_text_features`, where the model card's 4.x example shows a
 # bare tensor. `model.pooled` handles both, but only the 5.x path has been exercised.
-drawing = ["torch>=2.4", "transformers>=5.0,<6"]
+drawing = ["torch>=2.4", "transformers>=5.0,<6", "mlflow>=2.14"]
 # The character sheet (src/primer/drawing/sheet.py, S6e): `drawing`'s torch and transformers plus
 # torchvision, which SAM 2's image processor imports. Separate from `drawing` so the recogniser
 # alone does not need it. torchvision must be the same build as torch (CPU or CUDA) and an extra
