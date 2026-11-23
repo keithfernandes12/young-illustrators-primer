@@ -20,7 +20,8 @@ re-implement the same shared conventions, and nobody owns the join. It adds a sh
 list, a reconcile step before handoff, a merge-order rule, one cross-slice review question, and a few
 mechanical scans. It is a process plan, so most slices change docs, skills and tests, not product code.
 
-The case that exposed it: S6f (PR #39, `sensitivity.py`) was built on `main` before S6c3 (#44)
+The case that exposed it: `mvp-cloud-deploy S6f` (PR #39, `sensitivity.py`) was built on `main` before
+`mvp-cloud-deploy S6c3` (#44)
 added `drawing/tracking.py`. It therefore wrote its own MLflow tags, params and git-state code, with
 the owner hardcoded. Nothing in build or review compared it with #44 until a merge of `main` showed
 the overlap. PR #46 (`refactor(drawing): log sensitivity runs through tracking.py`) already exists
@@ -33,7 +34,8 @@ for that one file; this plan is about the class of problem, not that file.
 - The PR 39 review history in-session: four independent reviews, each scoped to one PR against the
   `main` it had at the time.
 - `origin/main` as of 2026-11-22: a grep of `start_run(` and of git-state helpers (Verified facts).
-- PR #46's tree at `2f418ed`: the S1 scans were run against it (three stale `drawing/sensitivity.py`
+- PR #46's tree at `2f418ed`, re-checked at `3db5f56`: the S1 scans were run against it (three stale
+  `drawing/sensitivity.py`
   entries) and its CLI test was checked against S0.
 - Not read: `docs/engineering/review-checklist.md` and the `review-pr` skill, which S4 starts by
   reading. S3 read `loop-worker` and `engineering-loop` for its own PR. Assumed: the skills can be
@@ -180,9 +182,12 @@ Findings that stay open over two runs become Open questions in the owning plan.
 - **Touches** — `scripts/scan_duplicates.py`, the `verify` skill's script list.
 - **Acceptance** — on today's `main` it lists the five git-state copies and the `start_run` sites;
   on a branch with a new duplicate it lists that one. It also covers what the S1 scans cannot see:
-  inline `subprocess` calls to `git rev-parse` outside a function named for git state,
-  `mlflow.set_tag("owner", …)` (singular), `MlflowClient().create_run`, and `scripts/`, which S1
-  does not scan.
+  inline `subprocess` calls to `git rev-parse` outside a function named for git state (today
+  `src/primer/data/versioning.py:_git_commit`), `mlflow.set_tag("owner", …)` (singular),
+  `dict(owner="x", …)` and `{**base, "owner": "x"}`, `MlflowClient().create_run`, a `start_run`
+  reached by an alias (`from mlflow import start_run as sr`, `getattr(mlflow, "start_run")`,
+  `s = mlflow.start_run`) or with `tags` as the sixth positional argument or in `**opts`, and
+  `scripts/`, which S1 does not scan.
 - **Testing** — a fixture tree with two identical private helpers is reported; a single one is not.
 - **Depends on** — nothing. **Jira** — KAN-38.
 
@@ -229,7 +234,7 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
 
 | Slice | State | PR | Notes |
 |---|---|---|---|
-| S0 | in review | [#46](https://github.com/keithfernandes12/young-illustrators-primer/pull/46) | confirmed against #46 at `2f418ed`: tags built by `run_tags` (the CLI test asserts equality), owner from `--owner`, no literal owner, `git_dirty` `unknown`/`true`/`false` |
+| S0 | in review | [#46](https://github.com/keithfernandes12/young-illustrators-primer/pull/46) | confirmed against #46 at `2f418ed`, re-checked at `3db5f56`: tags built by `run_tags` (the CLI test asserts equality), owner from `--owner`, no literal owner, `git_dirty` `unknown`/`true`/`false` |
 | S1 | in review | [#47](https://github.com/keithfernandes12/young-illustrators-primer/pull/47) | `tests/test_conventions.py`: four scans, count-based allowlists with reasons and keys, stale entries fail |
 | S2 | not started | | needs S1 |
 | S3 | in review | [#48](https://github.com/keithfernandes12/young-illustrators-primer/pull/48) | reconcile step in `engineering-loop`, `loop-worker`, `create-pr` and the process doc; merge-order rule in the template and `docs/plans/AGENTS.md`. Merges after #47 (it links this plan and `tests/test_conventions.py`). Also the slice-naming rule (plan slug in front, outside the plan). The PR-template line is split out: `.github/` changes go in their own PR |
@@ -263,7 +268,10 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
   `tags["k"] = v` before the call count) is listed in `TAGS_UNCHECKED` with a reason. That the
   shared logger writes the seven tags is asserted once, by `tests/drawing/test_tracking.py`, not
   repeated in `test_conventions.py`. The owner scan counts a dict display that has a literal
-  `"owner"` and at least one other required tag key, so a config dict is not a tag dict. Today the
+  `"owner"` and at least three other required tag keys, or a name bound to one that later gets
+  `name["owner"] = "<str>"`, so a config dict is not a tag dict. `set_tags` is read only on
+  `mlflow` and `self._mlflow` and a literal there is held to all seven tags; a dict changed by
+  `update`, `setdefault` or `|=` is unreadable. Today the
   unchecked list covers
   `story/grid.py` (tags are a parameter) and `drawing/sensitivity.py` (`dict(tags)`, until #46).
 
@@ -289,6 +297,15 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
     with `set_tags(...)` inside the run.
   - **Tag dicts and owners.** Every literal tag dict (drawing, speech, illustration) has all seven
     required tags. The only literal owner is `drawing/sensitivity.py:439`.
+- **2026-11-23** — `src/primer/data/versioning.py:40` (`_git_commit`) is a sixth place that runs
+  `git rev-parse HEAD`, and S1's scan does not see it because its name is not `*git_sha*` or
+  `*git_state*`. It is deliberately out of scope: it records the commit of a dataset version
+  (`"git_commit"`, a full sha), not the provenance of a model run. S5 lists it.
+- **2026-11-23** — S1's tests were re-run against #46's head `3db5f56` (merged into a scratch tree
+  with this branch's `tests/test_conventions.py`): exactly three fail, the `drawing/sensitivity.py`
+  `start_run`, `TAGS_UNCHECKED` and `OWNER_ALLOWED` entries. This corrects the S0 sha above: the
+  earlier check was at `2f418ed`, and #46 has since added tests, a plan note and a stricter
+  occlusion read in `tracking.py`.
 - **2026-11-23** — The Jira keys for the allowlist come from each file's commit history:
   - illustration consistency: KAN-103;
   - golden runner: KAN-89;
