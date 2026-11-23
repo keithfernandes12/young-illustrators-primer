@@ -47,7 +47,8 @@ Fill every section:
   (a behaviour choice, data contract, privacy boundary, error handling, a name that will spread).
   If the author already made the call visibly, it is not a question. Write "None — mechanical
   change" only when true.
-- **Plan** — `docs/plans/<slug>.md` and slice, or "single-PR change".
+- **Plan** — `docs/plans/<slug>.md` and slice, or "single-PR change". Wherever the body names a
+  slice, write the plan's slug in front (`mvp-cloud-deploy S6f`): other plans reuse the labels.
 - **Agent provenance** — replace `N/A` with the session line from the session-start hook.
 
 ## 4. Open it
