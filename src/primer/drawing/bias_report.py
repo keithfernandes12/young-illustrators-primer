@@ -26,7 +26,7 @@ Reported beside the verdict, and not part of it:
 - A Wilson 95% interval on each slice's own top-5 accuracy.
 - A 95% interval on the difference itself (``difference_low`` / ``difference_high``), from the
   same variance as the test and **not** adjusted for the number of countries. It is the yardstick
-  for comparing a candidate with this baseline: for a named country below its label mix, reject a
+  for comparing a candidate with this baseline: for a country named below its label mix (in the baseline or the candidate), reject a
   candidate whose difference falls by more than the baseline's half-width; for one above, report
   the move and do not reject on it. A yardstick, not a test (two noisy estimates on the same
   drawings), so S6d may tighten it.
@@ -53,7 +53,6 @@ import argparse
 import json
 import math
 import sys
-import zlib
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -331,7 +330,7 @@ def findings(report: Mapping[str, Any]) -> list[str]:
             "cap any one country's share of the training sample (`capped_weights` in `primer.data.bias`), so a "
             f"fine-tune on a split as {largest}-heavy as this one ({largest} is {share:.0%} of the drawings "
             f"scored here) cannot buy {largest}'s accuracy with the other countries'; then re-run this report "
-            "on the candidate. For a named country below its label mix, reject a candidate whose difference "
+            "on the candidate. For a country named below its label mix (in the baseline or the candidate), reject a candidate whose difference "
             "falls by more than the baseline's 95% half-width (`difference_low` to `difference_high`, not "
             "adjusted for the number of countries); for one above its label mix, report the move and do not "
             "reject on it. A yardstick, not a test: S6d may tighten it."
@@ -479,9 +478,8 @@ def main(argv: list[str] | None = None) -> int:
             args.rows, compression="gzip", dtype={"country_code": str, "record_id": str}, keep_default_na=False
         )
     except (
-        OSError,  # missing, unreadable, or gzip.BadGzipFile (a subclass)
+        OSError,  # missing, unreadable, or gzip.BadGzipFile (a subclass, which is also what a corrupt body raises)
         EOFError,  # truncated gzip
-        zlib.error,  # corrupt body
         UnicodeDecodeError,
         pd.errors.EmptyDataError,
     ) as error:

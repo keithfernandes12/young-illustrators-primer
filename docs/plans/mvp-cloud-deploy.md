@@ -618,7 +618,7 @@ before an agent may run training at all, and no area has them yet.
   Stability is not accuracy either way: it can show the model became more brittle, or more rigid,
   never that it became wrong.
   **The bias report is re-run on the candidate** (S6g, `python -m primer.drawing.bias_report`), and
-  the candidate is held to the same bar as `CARD.md`'s *Slices*: for a named country below its label
+  the candidate is held to the same bar as `CARD.md`'s *Slices*: for a country named below its label
   mix, reject it if its difference falls by more than the baseline's 95% half-width; for one above,
   report the move and do not reject on it. A yardstick, not a test: S6d may tighten it.
 - **Depends on** — S6b2, S6c; S6c2 for the second half of its acceptance. **Jira** — KAN-38.

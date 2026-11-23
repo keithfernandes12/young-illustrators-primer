@@ -85,7 +85,7 @@ at a family-wise 5%.
 - **Mitigation, proposed for S6d and not applied:** a zero-shot model has nothing to reweight.
   - Cap any one country's share of the training sample with `capped_weights`, so a fine-tune on a
     US-heavy split cannot buy US accuracy with the other countries'.
-  - Re-run this report on every candidate. For a named country below its label mix, reject a
+  - Re-run this report on every candidate. For a country named below its label mix (in the baseline or the candidate), reject a
     candidate whose difference falls by more than the baseline's 95% half-width (from
     `difference_low` to `difference_high` in the report, not adjusted for the number of
     countries); for one above its label mix, report the move and do not reject on it. A

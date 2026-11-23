@@ -305,6 +305,12 @@ def test_the_cli_names_rows_that_are_empty_truncated_or_missing(tmp_path):
     with pytest.raises(SystemExit, match="not the gzipped CSV"):
         bias_report.main(args)
 
+    corrupt = bytearray(gzip.compress(b"record_id,x\n" * 2000))
+    corrupt[len(corrupt) // 2 : len(corrupt) // 2 + 20] = b"\xff" * 20  # a body that will not inflate
+    rows_path.write_bytes(bytes(corrupt))
+    with pytest.raises(SystemExit, match="not the gzipped CSV"):
+        bias_report.main(args)
+
     rows_path.write_bytes(gzip.compress(b""))  # valid gzip, no CSV inside
     with pytest.raises(SystemExit, match="not the gzipped CSV"):
         bias_report.main(args)

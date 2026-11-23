@@ -596,7 +596,10 @@ def _check_per_drawing(parser: argparse.ArgumentParser, path: Path, out: Path) -
     if path.exists():
         # Not set aside like --out: nothing reads a stale rows file for a gate, but a full run's rows
         # cost 16 minutes of GPU to recreate, and a --limit probe reusing the path would destroy them.
-        parser.error(f"--per-drawing already exists: {path}; move it or choose another path")
+        parser.error(
+            f"--per-drawing already exists: {path}; move it or choose another path. "
+            f"(An earlier --out, if there was one, was already set aside as {out.name}.previous.)"
+        )
     if path.resolve() == out.resolve():
         parser.error("--per-drawing and --out are the same file")
     if not path.resolve().parent.is_dir():

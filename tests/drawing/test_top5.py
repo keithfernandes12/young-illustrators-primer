@@ -724,6 +724,17 @@ def test_per_drawing_paths_that_would_fail_or_mislead_are_refused_before_the_buc
         )
 
 
+def test_the_gz_suffix_is_checked_without_regard_to_case(tmp_path):
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    out = tmp_path / "m.json"
+
+    evaluate._check_per_drawing(parser, tmp_path / "rows.CSV.GZ", out)  # accepted: no SystemExit
+    with pytest.raises(SystemExit):
+        evaluate._check_per_drawing(parser, tmp_path / "rows.csv", out)
+
+
 def test_an_existing_per_drawing_file_is_refused_and_left_alone(monkeypatch, tmp_path):
     from primer.data import catalog
 
