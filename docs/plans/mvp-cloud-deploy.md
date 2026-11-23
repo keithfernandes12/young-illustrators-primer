@@ -834,7 +834,8 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); S6c merged (#37); must beat 0.5436 under the switched prompt. Reads S6c2's stability figures |
 | S6e | merged | [#35](https://github.com/keithfernandes12/young-illustrators-primer/pull/35) | `sheet.py`: Florence-2 + SAM 2.1 + ViTPose beside SigLIP 2; every field filled on 82/82 real sheets; two figures found as two on 12/20. Unblocks KAN-42 |
 | S6f | merged | [#39](https://github.com/keithfernandes12/young-illustrators-primer/pull/39) | sensitivity: stroke drop, line width, erasure, prompt template, occlusion; paired bootstrap intervals; runs on `val`. Also carries the prompt switch to `a child's drawing of a {label}.` (S6c 0.5436 on `test`, S6c2 re-measured). Re-run under it: strokes -14.7 / -21.8, 7 px -2.5. KAN-38 |
-| S6f2 | not started | | move `sensitivity --mlflow` onto `tracking.py` and the shared `--owner` / early refusals; ten gaps against the S6 principles listed in the slice. Metric names unchanged. KAN-38 |
+| S6f2 | in review | | `sensitivity --mlflow` through `tracking.py` as kind `sensitivity`, with the shared `--owner` and early refusals; metric names unchanged (98 = 98 on a real run, values identical). Real-server round trip pending the tunnel. KAN-38 |
+| S6g2 | not started | | log S6g's bias report through `tracking.py` as a fourth kind (`bias`), and give `bias_report` the shared `--mlflow` / `--owner`. Waits on #45 (S6g) and S6f2. KAN-38 |
 | S7a | in progress | branch `feat/KAN-42-controlnet-baseline` | pretrained SD 1.5 + ControlNet-Scribble, one page, local output; synthetic inputs only until KAN-94 |
 | S7b | not started | | needs S1, GPU quota in region, a working `consistency()`, and KAN-94 |
 | S8 | not started | | |
@@ -1820,6 +1821,22 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
     for. Logging is unaffected; only listing a sub-folder from this client fails.
   - **Tests:** 29 new tests. Three mutation checks were each caught by one failing test: the
     collision refusal, the `--limit` refusal, and the `bool` exclusion.
+
+- **2026-11-23 — S6f2: the move to `tracking.py` leaves every sensitivity metric as it was.**
+  S6f re-run on 2,000 `val` drawings (seed 20261115, RTX 4060 bf16) from commit `2c7a3fc`, without
+  `--mlflow`. The figures match the 2026-11-16 re-run (baseline 0.518; prompts −0.085, −0.009 and
+  −0.043).
+  - **Names and values.** `main`'s `mlflow_metrics` at `a38c7ab` and the new
+    `tracking.sensitivity_metrics` were both run on that file. They give the same **98** names
+    with **identical** values, and the `prompt_<n>` params name the same templates.
+  - **Against the existing runs.** 98 is more than `dfaee7e2`'s set, because #39's review added
+    `top3_share_undefined` and `inked_patches_median` to the occlusion summary. S6f2 adds and
+    removes nothing.
+  - **Tests.** The fixture's 68 names are pinned. Two mutation checks were each caught: dropping
+    the early `--mlflow` refusal fails 2 tests, and logging a missing occlusion figure as 0 fails
+    2.
+  - **Not yet done:** the real-server round trip. The IAP tunnel was down at the time, so no run
+    was logged.
 
 ## Open questions
 
