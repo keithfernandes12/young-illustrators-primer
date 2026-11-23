@@ -216,7 +216,7 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
 | Slice | State | PR | Notes |
 |---|---|---|---|
 | S0 | in review | [#46](https://github.com/keithfernandes12/young-illustrators-primer/pull/46) | confirmed against #46 at `2f418ed`: tags built by `run_tags` (the CLI test asserts equality), owner from `--owner`, no literal owner, `git_dirty` `unknown`/`true`/`false` |
-| S1 | in review | | `tests/test_conventions.py`: four scans, count-based allowlists with reasons and keys, stale entries fail |
+| S1 | in review | [#47](https://github.com/keithfernandes12/young-illustrators-primer/pull/47) | `tests/test_conventions.py`: four scans, count-based allowlists with reasons and keys, stale entries fail |
 | S2 | not started | | needs S1 |
 | S3 | not started | | |
 | S4 | not started | | needs S3 |
