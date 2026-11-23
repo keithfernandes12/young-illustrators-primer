@@ -12,6 +12,7 @@ import statistics
 import sys
 from collections.abc import Sequence
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -27,10 +28,10 @@ from primer.drawing.sensitivity import (
     erasure_only,
     ink_mass,
     measure,
-    mlflow_metrics,
     occlusion,
     paired_delta,
 )
+from primer.drawing.tracking import sensitivity_metrics
 
 RENDER = default_config()
 PROMPTS = tuple(f"p{i}" for i in range(8))
@@ -185,7 +186,7 @@ def test_the_occlusion_summary_reports_the_median_inked_patches_and_undefined_sh
 
     assert summary["inked_patches_median"] == statistics.median(counts) > 0
     assert summary["top3_share_undefined"] == sum(m["top3_share"] is None for m in summary["maps"].values())
-    metrics = mlflow_metrics(result)
+    metrics = sensitivity_metrics(result)
     assert metrics["sensitivity/occlusion/inked_patches_median"] == summary["inked_patches_median"]
     assert metrics["sensitivity/occlusion/top3_share_undefined"] == summary["top3_share_undefined"]
 
@@ -411,45 +412,60 @@ def test_no_drawings_is_an_error():
 # ------------------------------------------------------------------------------------- MLflow
 
 
-def test_metric_names_are_ones_mlflow_accepts():
+#: The names main's own logger gave this fixture before S6f2 (captured from `sensitivity.mlflow_metrics`
+#: at a38c7ab). Runs d99d75b5 and dfaee7e2 carry these names; a renamed metric would split the history.
+PRE_S6F2_FIGURES = (
+    "confident_drawings",
+    "drawings",
+    "top1_change_rate",
+    "top1_change_rate_confident",
+    "top5_acc_after",
+    "top5_acc_before",
+    "top5_delta",
+    "top5_delta_ci_high",
+    "top5_delta_ci_low",
+    "top5_overlap",
+)
+PRE_S6F2_NAMES = (
+    {"baseline_top5_acc"}
+    | {
+        f"sensitivity/{name}/{figure}"
+        for name in ("drop_last_1", "drop_last_2", "line_width_1", "line_width_5", "line_width_7", "prompt_0")
+        for figure in PRE_S6F2_FIGURES
+    }
+    | {f"sensitivity/erasure/{f}" for f in ("below_floor", "drawings", "floor", "ink_removed_median")}
+    | {
+        f"sensitivity/occlusion/{f}"
+        for f in ("inked_patches_median", "max_drop_median", "top3_share_undefined")
+    }
+)
+
+
+def test_metric_names_are_unchanged_by_the_move_to_tracking():
     result = measure(drawings(), InkScorer(), PROMPTS, prompt_sets={"a {label}": PROMPTS}, seed=0, occlude=1)
 
-    names = mlflow_metrics(result)
+    names = sensitivity_metrics(result)
 
-    assert "sensitivity/prompt_0/top5_delta" in names
+    assert set(names) == PRE_S6F2_NAMES and len(PRE_S6F2_NAMES) == 68
     assert all(":" not in n and "=" not in n for n in names), "MLflow refuses ':' and '=' in metric names"
 
 
-def test_logging_writes_one_run_with_the_templates_and_the_report(monkeypatch, tmp_path):
-    calls: dict[str, object] = {}
+def test_sensitivity_no_longer_imports_mlflow_itself():
+    import ast
+    import inspect
 
-    class Run:
-        info = SimpleNamespace(run_id="r1")
+    imported = {
+        alias.name.split(".")[0] if isinstance(node, ast.Import) else (node.module or "").split(".")[0]
+        for node in ast.walk(ast.parse(inspect.getsource(sensitivity)))
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in (node.names if isinstance(node, ast.Import) else [None])
+    }
+    assert "mlflow" not in imported, "logging goes through tracking.log_run, one set of rules"
+    assert "mlflow" not in vars(sensitivity)
+    from primer.drawing import evaluate
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
-    fake = SimpleNamespace(
-        set_experiment=lambda name: calls.__setitem__("experiment", name),
-        start_run=lambda run_name, tags: calls.__setitem__("tags", tags) or Run(),
-        log_params=lambda params: calls.setdefault("params", {}).update(params),
-        log_metrics=lambda metrics: calls.__setitem__("metrics", metrics),
-        log_artifact=lambda path, artifact_path: calls.__setitem__("artifact", (path, artifact_path)),
-    )
-    monkeypatch.setitem(sys.modules, "mlflow", fake)
-    result = measure(drawings(), InkScorer(), PROMPTS, prompt_sets={"a {label}": PROMPTS}, seed=0, occlude=0)
-    result.update({"split": "val", "seed": 0})
-    out = tmp_path / "s.json"
-
-    run_id = sensitivity.log_to_mlflow(result, out, {"stage": "drawing"})
-
-    assert run_id == "r1" and calls["experiment"] == "yip-drawing"
-    assert calls["params"]["prompt_0"] == "a {label}"
-    assert calls["artifact"] == (str(out), "sensitivity")
-    assert calls["tags"] == {"stage": "drawing"}
+    assert not hasattr(sensitivity, "mlflow_metrics")
+    assert sensitivity.log_to_mlflow is evaluate.log_to_mlflow, "the shared logger, not a second copy"
 
 
 # ------------------------------------------------------------------------------------- CLI
@@ -509,13 +525,31 @@ def test_the_cli_runs_end_to_end_on_a_stubbed_world(monkeypatch, tmp_path):
             start_run=lambda run_name, tags: logged.__setitem__("tags", tags) or Run(),
             log_params=lambda params: None,
             log_metrics=lambda metrics: logged.__setitem__("metrics", metrics),
-            log_artifact=lambda path, artifact_path: None,
+            log_artifact=lambda path, artifact_path=None: logged.setdefault("artifacts", []).append(
+                (Path(path).name, artifact_path)
+            ),
         ),
     )
     out = tmp_path / "sens.json"
 
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
+    monkeypatch.delenv("MLFLOW_EXPERIMENT_NAME", raising=False)
+    monkeypatch.delenv("YIP_WHERE", raising=False)
+
     code = sensitivity.main(
-        ["--version", "v1.1", "--sample", "3", "--occlude", "1", "--mlflow", "--out", str(out)]
+        [
+            "--version",
+            "v1.1",
+            "--sample",
+            "3",
+            "--occlude",
+            "1",
+            "--mlflow",
+            "--owner",
+            "m1",
+            "--out",
+            str(out),
+        ]
     )
 
     result = json.loads(out.read_text(encoding="utf-8"))
@@ -536,6 +570,14 @@ def test_the_cli_runs_end_to_end_on_a_stubbed_world(monkeypatch, tmp_path):
     required = {"stage", "owner", "data_version", "git_sha", "base_model", "gate_group", "where"}
     assert required <= logged["tags"].keys()
     assert "sensitivity/occlusion/top3_share_undefined" in logged["metrics"]
+    # Through tracking.log_run (S6f2): the owner given, the shared kind tags, the file and the card.
+    assert logged["tags"]["owner"] == "m1" and logged["tags"]["kind"] == "sensitivity"
+    assert logged["tags"]["gate_eligible"] == "false"
+    # Exactly the shared tags, nothing written by hand beside them (cross-slice-coherence S0).
+    from primer.drawing.tracking import run_tags
+
+    assert logged["tags"] == run_tags(result, owner="m1", kind="sensitivity")
+    assert (out.name, "eval") in logged["artifacts"] and ("CARD.md", None) in logged["artifacts"]
 
 
 def test_the_shipped_template_is_the_one_every_recorded_figure_was_measured_under():
@@ -561,3 +603,31 @@ def test_render_and_preprocess_are_imported_not_reimplemented():
 
     assert sensitivity.render_strokes is render.render_strokes
     assert sensitivity.augment_canvas is preprocess.augment_canvas
+
+
+@pytest.mark.parametrize(
+    "extra, env, message",
+    [
+        (["--mlflow"], {"MLFLOW_TRACKING_URI": "http://localhost:5000"}, "--owner is required"),
+        (["--mlflow", "--owner", "m1"], {}, "MLFLOW_TRACKING_URI"),
+    ],
+    ids=["no-owner", "no-tracking-server"],
+)
+def test_a_bad_mlflow_request_is_refused_before_anything_is_read(
+    monkeypatch, tmp_path, capsys, extra, env, message
+):
+    from primer.data import catalog
+    from primer.drawing import model
+
+    def boom(*args, **kwargs):
+        raise AssertionError("the bucket and the GPU must not be touched")
+
+    monkeypatch.setattr(catalog, "read_dataset", boom)
+    monkeypatch.setattr(model, "SiglipEncoder", boom)
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+
+    with pytest.raises(SystemExit):
+        sensitivity.main(["--version", "v1.1", "--out", str(tmp_path / "s.json"), *extra])
+    assert message in capsys.readouterr().err
