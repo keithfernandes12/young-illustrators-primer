@@ -24,8 +24,8 @@ The case that exposed it: `mvp-cloud-deploy S6f` (PR #39, `sensitivity.py`) was 
 `mvp-cloud-deploy S6c3` (#44)
 added `drawing/tracking.py`. It therefore wrote its own MLflow tags, params and git-state code, with
 the owner hardcoded. Nothing in build or review compared it with #44 until a merge of `main` showed
-the overlap. PR #46 (`refactor(drawing): log sensitivity runs through tracking.py`) already exists
-for that one file; this plan is about the class of problem, not that file.
+the overlap. PR #46 (`refactor(drawing): log sensitivity runs through tracking.py`) fixed
+that one file and merged; this plan is about the class of problem, not that file.
 
 ## Sources read
 
@@ -59,18 +59,19 @@ for that one file; this plan is about the class of problem, not that file.
 
 ## Slices
 
-> One slice = one PR. S0 is already in flight; S1 is the first to build.
+> One slice = one PR. S0 has merged (#46); S1 is the first to build.
 
 ### S0 · Move `sensitivity.py` onto `tracking.py`
 
 *size: small · merged as PR #46*
 
 `sensitivity.py` builds its MLflow tags with `tracking.run_tags` and its params with
-`tracking.run_params`, takes `--owner`, and drops the hardcoded owner. Confirm against #46 before
-adding anything here.
+`tracking.run_params`, takes `--owner`, and drops the hardcoded owner. Done in #46.
 
 - **Why separate** — it is the concrete instance; it can merge before the tests exist.
-- **Touches** — `src/primer/drawing/sensitivity.py`, `tests/drawing/test_sensitivity.py`.
+- **Touches** — `src/primer/drawing/sensitivity.py`, `tests/drawing/test_sensitivity.py`; as merged,
+  #46 also changed `drawing/tracking.py`, `tests/drawing/test_tracking.py` and
+  `docs/plans/mvp-cloud-deploy.md`.
 - **Acceptance** — a `--mlflow` run carries every tag `tracking.run_tags` writes, including `owner`
   from the flag; there is no literal owner in `sensitivity.py`; `git_dirty` reads `unknown` or
   `true`/`false`.
@@ -271,15 +272,15 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
   `"owner"` and at least three other required tag keys, or a name bound to one that later gets
   `name["owner"] = "<str>"`, so a config dict is not a tag dict. `set_tags` is read only on
   `mlflow` and `self._mlflow` and a literal there is held to all seven tags; a dict changed by
-  `update`, `setdefault` or `|=` is unreadable. Today the
-  unchecked list covers
-  `story/grid.py` (tags are a parameter) and (`drawing/sensitivity.py` was listed until #46 merged.)
+  `update`, `setdefault` or `|=` is unreadable. Today the unchecked list covers only
+  `story/grid.py` (tags arrive as a parameter); `drawing/sensitivity.py` was listed until #46 merged.
 
 ## Verified facts
 
 - **2026-11-22** — On `origin/main`, `mlflow.start_run(` appears in `drawing/tracking.py`,
   `drawing/sensitivity.py`, `speech/train.py` (two sites), `story/grid.py` (two sites) and
   `illustration/consistency/experiment.py`. Checked with `git grep` over `src` and `scripts`.
+  (`drawing/sensitivity.py`'s was removed by #46.)
 - **2026-11-22** — On `origin/main`, a private or public git-sha or git-state function is defined in five
   places: `drawing/evaluate.py` (`_git_state`), `evaluation/golden.py` (`_git_sha`), `speech/evaluate.py`,
   `story/grid.py`, and `illustration/consistency/experiment.py`. Checked the same way.
@@ -296,7 +297,7 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
   - **Where tags are set.** `illustration/consistency/experiment.py` and `story/grid.py` set tags
     with `set_tags(...)` inside the run.
   - **Tag dicts and owners.** Every literal tag dict (drawing, speech, illustration) has all seven
-    required tags. The only literal owner is `drawing/sensitivity.py:439`.
+    required tags. The only literal owner was `drawing/sensitivity.py:439`, removed by #46.
 - **2026-11-23** — `src/primer/data/versioning.py:40` (`_git_commit`) is a sixth place that runs
   `git rev-parse HEAD`, and S1's scan does not see it because its name is not `*git_sha*` or
   `*git_state*`. It is deliberately out of scope: it records the commit of a dataset version
