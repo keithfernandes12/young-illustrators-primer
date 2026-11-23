@@ -1,8 +1,7 @@
 """Log the drawing stage's evaluation files to the shared MLflow server (S6c3, S6f2).
 
 `evaluate.py --mlflow` and `sensitivity.py --mlflow` call this after their file is written, so a
-run is a copy of a file
-that already exists on disk, never the only record of a number. The names follow
+run is a copy of a file that already exists on disk, never the only record of a number. The names follow
 `docs/engineering/model-development.md` (Tracking conventions): experiment ``yip-drawing``, the
 seven comparison tags, params from the settings the file records, ``overall`` and ``baseline``
 metrics, and slices as ``slice/<key>/<value>/<metric>``. MLflow rejects ``=`` in metric names
@@ -19,7 +18,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -247,7 +246,10 @@ def _no_params(result: Mapping[str, Any]) -> dict[str, str]:
 
 
 #: Each kind of file: how its metrics are named, and the params it records beyond `run_params`.
-BUILDERS: dict[str, tuple[Any, Any]] = {
+BUILDERS: dict[
+    str,
+    tuple[Callable[[Mapping[str, Any]], dict[str, float]], Callable[[Mapping[str, Any]], dict[str, str]]],
+] = {
     "accuracy": (accuracy_metrics, _no_params),
     "stability": (stability_metrics, _no_params),
     "sensitivity": (sensitivity_metrics, sensitivity_params),

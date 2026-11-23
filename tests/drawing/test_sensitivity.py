@@ -31,7 +31,7 @@ from primer.drawing.sensitivity import (
     occlusion,
     paired_delta,
 )
-from primer.drawing.tracking import sensitivity_metrics as mlflow_metrics
+from primer.drawing.tracking import sensitivity_metrics
 
 RENDER = default_config()
 PROMPTS = tuple(f"p{i}" for i in range(8))
@@ -186,7 +186,7 @@ def test_the_occlusion_summary_reports_the_median_inked_patches_and_undefined_sh
 
     assert summary["inked_patches_median"] == statistics.median(counts) > 0
     assert summary["top3_share_undefined"] == sum(m["top3_share"] is None for m in summary["maps"].values())
-    metrics = mlflow_metrics(result)
+    metrics = sensitivity_metrics(result)
     assert metrics["sensitivity/occlusion/inked_patches_median"] == summary["inked_patches_median"]
     assert metrics["sensitivity/occlusion/top3_share_undefined"] == summary["top3_share_undefined"]
 
@@ -444,17 +444,24 @@ PRE_S6F2_NAMES = (
 def test_metric_names_are_unchanged_by_the_move_to_tracking():
     result = measure(drawings(), InkScorer(), PROMPTS, prompt_sets={"a {label}": PROMPTS}, seed=0, occlude=1)
 
-    names = mlflow_metrics(result)
+    names = sensitivity_metrics(result)
 
     assert set(names) == PRE_S6F2_NAMES and len(PRE_S6F2_NAMES) == 68
     assert all(":" not in n and "=" not in n for n in names), "MLflow refuses ':' and '=' in metric names"
 
 
 def test_sensitivity_no_longer_imports_mlflow_itself():
+    import ast
     import inspect
 
-    source = inspect.getsource(sensitivity)
-    assert "import mlflow" not in source, "logging goes through tracking.log_run, one set of rules"
+    imported = {
+        alias.name.split(".")[0] if isinstance(node, ast.Import) else (node.module or "").split(".")[0]
+        for node in ast.walk(ast.parse(inspect.getsource(sensitivity)))
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in (node.names if isinstance(node, ast.Import) else [None])
+    }
+    assert "mlflow" not in imported, "logging goes through tracking.log_run, one set of rules"
+    assert "mlflow" not in vars(sensitivity)
     from primer.drawing import evaluate
 
     assert not hasattr(sensitivity, "mlflow_metrics")
@@ -599,14 +606,16 @@ def test_render_and_preprocess_are_imported_not_reimplemented():
 
 
 @pytest.mark.parametrize(
-    "extra, env",
+    "extra, env, message",
     [
-        (["--mlflow"], {"MLFLOW_TRACKING_URI": "http://localhost:5000"}),
-        (["--mlflow", "--owner", "m1"], {}),
+        (["--mlflow"], {"MLFLOW_TRACKING_URI": "http://localhost:5000"}, "--owner is required"),
+        (["--mlflow", "--owner", "m1"], {}, "MLFLOW_TRACKING_URI"),
     ],
     ids=["no-owner", "no-tracking-server"],
 )
-def test_a_bad_mlflow_request_is_refused_before_anything_is_read(monkeypatch, tmp_path, extra, env):
+def test_a_bad_mlflow_request_is_refused_before_anything_is_read(
+    monkeypatch, tmp_path, capsys, extra, env, message
+):
     from primer.data import catalog
     from primer.drawing import model
 
@@ -621,3 +630,4 @@ def test_a_bad_mlflow_request_is_refused_before_anything_is_read(monkeypatch, tm
 
     with pytest.raises(SystemExit):
         sensitivity.main(["--version", "v1.1", "--out", str(tmp_path / "s.json"), *extra])
+    assert message in capsys.readouterr().err

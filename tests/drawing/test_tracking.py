@@ -286,6 +286,41 @@ def test_an_unknown_kind_is_refused_before_any_run(fake_mlflow, tmp_path):
     assert fake_mlflow.calls == []
 
 
+def test_a_param_two_builders_disagree_on_is_refused_before_any_run(fake_mlflow, monkeypatch, tmp_path):
+    # No shipped kind collides today (their key sets are disjoint); the rule is what stops a future
+    # kind from silently overwriting what `run_params` took from the file.
+    def colliding_params(result):
+        return {"split": "not-the-files-split"}
+
+    monkeypatch.setitem(tracking.BUILDERS, "collides", (tracking.accuracy_metrics, colliding_params))
+
+    with pytest.raises(ValueError, match="param 'split'"):
+        tracking.log_run(
+            kind="collides",
+            result=accuracy_file(),
+            metrics_path=tmp_path / "m.json",
+            owner="m1",
+            run_name="r",
+        )
+    assert fake_mlflow.calls == []
+
+
+def test_a_param_two_builders_agree_on_is_logged_once(fake_mlflow, monkeypatch, tmp_path):
+    out = tmp_path / "m.json"
+    out.write_text("{}", encoding="utf-8")
+    card = tmp_path / "CARD.md"
+    card.write_text("card", encoding="utf-8")
+    monkeypatch.setitem(
+        tracking.BUILDERS, "agrees", (tracking.accuracy_metrics, lambda result: {"split": "test"})
+    )
+
+    tracking.log_run(
+        kind="agrees", result=accuracy_file(), metrics_path=out, owner="m1", run_name="r", card_path=card
+    )
+
+    assert next(call for call in fake_mlflow.calls if call[0] == "params")[1]["split"] == "test"
+
+
 # ------------------------------------------------------------------- stdout around the logging call
 
 
@@ -371,6 +406,14 @@ def test_a_prompt_metric_and_its_param_share_a_number():
     assert params["prompt_1"] == "This is a photo of {label}."
     assert params["sample"] == "2000" and params["seed"] == "20261115"
     assert params["render"] == '{"line_width": 3, "size": 224}'
+
+
+def test_a_flag_in_a_sensitivity_figure_is_not_logged_as_a_measurement():
+    figures = {"top5_delta": -0.1, "significant": True}
+    metrics = tracking.sensitivity_metrics(sensitivity_file(perturbations={"drop_last_1": figures}))
+
+    assert metrics["sensitivity/drop_last_1/top5_delta"] == -0.1
+    assert "sensitivity/drop_last_1/significant" not in metrics
 
 
 def test_an_occlusion_figure_no_map_defined_is_left_out_not_logged_as_zero():
