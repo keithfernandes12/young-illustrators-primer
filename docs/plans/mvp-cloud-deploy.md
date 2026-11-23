@@ -638,6 +638,77 @@ maps are the attribution step that the course guidelines meet with SHAP or LIME.
   `drawing_baseline.yaml`.
 - **Depends on** — S6a, S6b, S6b1. **Jira** — KAN-38.
 
+### S6f2 · Sensitivity logs through `tracking.py`
+
+*size: small*
+
+`sensitivity.py --mlflow` still builds its own run: `log_to_mlflow`, `mlflow_metrics`, and a tag
+dictionary written out in `main`. S6c3 deferred that ("it moves here after #39 merges"); both are
+now on `main`. This slice moves S6f onto `tracking.py` as a third `kind`, `sensitivity`, and onto
+`evaluate.py`'s shared `--mlflow` / `--owner` arguments, so all three drawing evaluations log by
+one set of rules.
+
+- **What `main` does today that the S6 principles (S6c3) do not allow** — checked against
+  `src/primer/drawing/sensitivity.py` at `a38c7ab`:
+  1. **The owner is hard-coded** (`"owner": "rishiparekh"`), with no `--owner`. Any other member's
+     run would be tagged as this member's.
+  2. **`where` is hard-coded to `local`.** `YIP_WHERE` is ignored, so a Vertex run would say local.
+  3. **The experiment is hard-coded to `yip-drawing`.** `MLFLOW_EXPERIMENT_NAME` is ignored, so a
+     check run cannot go to a scratch experiment.
+  4. **`--mlflow` is checked only at the end.** A missing `MLFLOW_TRACKING_URI` fails after about
+     five minutes of GPU scoring, not before it. `check_mlflow_arguments` refuses it up front.
+  5. **The run is opened before its metrics are built** (`mlflow_metrics` runs inside
+     `start_run`), so a malformed result leaves a partial run on the server.
+  6. **A `bool` would be logged as a number** (`isinstance(value, (int, float))`).
+  7. **No collision check.** Two figures that clean to the same name would overwrite each other
+     silently.
+  8. **Tags.** `kind` and `gate_eligible` are missing; it has `slice` and `jira` instead.
+  9. **Params.** Only the prompt templates, `sample`, `split` and `seed` are logged. The device,
+     dtype, encoder revision, prompts hash and render settings that the file records are not.
+  10. **Artifacts.** The file goes to `sensitivity/`, not `eval/`, and `CARD.md` is not logged. The
+      Windows stdout guard and its restore (#44 review) are not applied.
+- **Target behaviour.**
+  - **`tracking.sensitivity_metrics(result)`** builds the metrics through `_put` / `_merge`. It
+    keeps today's names: `sensitivity/<perturbation>/<figure>`, `sensitivity/prompt_<n>/…`,
+    `sensitivity/occlusion/<figure>`, and `baseline_top5_acc`. Runs `d99d75b5` and `dfaee7e2` stay
+    comparable with new ones.
+  - **The prompt params `prompt_<n>`** come from the same function, so the numbering cannot drift
+    between params and metrics.
+  - **`log_run(kind="sensitivity", …)`** gets the shared tags, `run_params`, `eval/<file>` and
+    `CARD.md`. `gate_eligible` is always `false`.
+  - **`sensitivity.main`:**
+    - uses `add_mlflow_arguments` and `check_mlflow_arguments` (so `--owner` is required, and a
+      missing tracking server is refused before the bucket or the GPU is touched);
+    - logs with `evaluate.log_to_mlflow("sensitivity", …, run_name="s6f-sensitivity")`;
+    - no longer has `log_to_mlflow` or `mlflow_metrics` of its own.
+- **Not doing** — any change to what S6f measures or to its output file; logging S6g's bias report
+  (#45 is unmerged, and it becomes the fourth `kind` after it lands); KAN-128 (speech); a backfill
+  of the two existing S6f runs (their names are unchanged, so nothing needs one).
+- **Test plan** — S6c3's pattern: hermetic, a fake `mlflow`, and each test failing when its
+  behaviour is reverted.
+  - Every name `sensitivity_metrics` produces is legal, and today's names are unchanged: a fixture
+    sensitivity file whose metric set is pinned.
+  - A `bool` figure is not logged, and colliding names are refused.
+  - `--mlflow` without `--owner`, or without `MLFLOW_TRACKING_URI`, exits before the bucket is
+    read.
+  - The CLI logs a copy of the file it wrote, `kind="sensitivity"`, through the shared helper.
+  - An import guard checks that `sensitivity.py` no longer imports `mlflow`.
+  - Mutation checks on the collision refusal and the early refusal.
+- **Proof table**
+
+  | File | Covered by |
+  |---|---|
+  | `src/primer/drawing/tracking.py` | `tests/drawing/test_tracking.py` (sensitivity builder, names, `kind`) |
+  | `src/primer/drawing/sensitivity.py` | `tests/drawing/test_sensitivity.py` (CLI refusals, routing to `log_to_mlflow`, no `mlflow` import) |
+  | `src/primer/drawing/evaluate.py` | unchanged unless `log_to_mlflow` needs `sensitivity` in its kinds; then `test_top5.py`'s existing logging tests |
+  | `docs/plans/mvp-cloud-deploy.md` | `scripts/check_docs.py` |
+
+- **Acceptance** — `python -m primer.drawing.sensitivity … --mlflow --owner <name>` logs to a
+  scratch experiment (`MLFLOW_EXPERIMENT_NAME`) with the same metric names and counts as
+  `dfaee7e2`, plus the shared tags and params. verify passes, apart from the known Windows-only
+  illustration tests.
+- **Depends on** — S6c3 (#44) and S6f (#39), both merged on 2026-11-23. **Jira** — KAN-38.
+
 ### S7a · Illustration model, pretrained baseline
 
 *size: small*
@@ -759,10 +830,11 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6b2 | merged | [#32](https://github.com/keithfernandes12/young-illustrators-primer/pull/32) | `data.py`: hashed 80/10/10 split of v1.1 (506k/63k/63k), rendered on demand through `render_strokes` → `augment_canvas` (train only) → `prepare_drawing`. Unblocks S6c |
 | S6c | merged | [#37](https://github.com/keithfernandes12/young-illustrators-primer/pull/37) | baseline `drawing_top5_acc` **0.5436** over all 63,310 rendered test drawings (GPU, bf16) under the prompt `a child's drawing of a {label}.` (switched 2026-11-16; was 0.4956 under the model card's prompt): gate FAIL against 0.85, chance 0.0145. MLflow run `b72bc442`, superseding `c2b68187`, in `yip-drawing`. The gate's number, not the product's. KAN-38 |
 | S6c2 | merged | [#33](https://github.com/keithfernandes12/young-illustrators-primer/pull/33) | 1,000 frozen drawings (unstratified), four variants: under the model card's prompt, top-1 moves 25% / 50% / 41% between adjacent variants and over half the drawings come out `squiggle`; under the shipped prompt (re-measured 2026-11-16) 34% / 66% / 50% and the most common answer is `The Great Wall of China`. Reproduces exactly. KAN-109 |
-| S6c3 | in review | [#44](https://github.com/keithfernandes12/young-illustrators-primer/pull/44) | `evaluate.py --mlflow --owner` for accuracy and stability through `tracking.py`; refuses probes, owner-less runs, a missing `MLFLOW_TRACKING_URI` and colliding names. Round-tripped on the real server. KAN-38 |
+| S6c3 | merged | [#44](https://github.com/keithfernandes12/young-illustrators-primer/pull/44) | `evaluate.py --mlflow --owner` for accuracy and stability through `tracking.py`; refuses probes, owner-less runs, a missing `MLFLOW_TRACKING_URI` and colliding names. Round-tripped on the real server. KAN-38 |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); S6c merged (#37); must beat 0.5436 under the switched prompt. Reads S6c2's stability figures |
 | S6e | merged | [#35](https://github.com/keithfernandes12/young-illustrators-primer/pull/35) | `sheet.py`: Florence-2 + SAM 2.1 + ViTPose beside SigLIP 2; every field filled on 82/82 real sheets; two figures found as two on 12/20. Unblocks KAN-42 |
-| S6f | in review | [#39](https://github.com/keithfernandes12/young-illustrators-primer/pull/39) | sensitivity: stroke drop, line width, erasure, prompt template, occlusion; paired bootstrap intervals; runs on `val`. Also carries the prompt switch to `a child's drawing of a {label}.` (S6c 0.5436 on `test`, S6c2 re-measured). Re-run under it: strokes -14.7 / -21.8, 7 px -2.5. KAN-38 |
+| S6f | merged | [#39](https://github.com/keithfernandes12/young-illustrators-primer/pull/39) | sensitivity: stroke drop, line width, erasure, prompt template, occlusion; paired bootstrap intervals; runs on `val`. Also carries the prompt switch to `a child's drawing of a {label}.` (S6c 0.5436 on `test`, S6c2 re-measured). Re-run under it: strokes -14.7 / -21.8, 7 px -2.5. KAN-38 |
+| S6f2 | not started | | move `sensitivity --mlflow` onto `tracking.py` and the shared `--owner` / early refusals; ten gaps against the S6 principles listed in the slice. Metric names unchanged. KAN-38 |
 | S7a | in progress | branch `feat/KAN-42-controlnet-baseline` | pretrained SD 1.5 + ControlNet-Scribble, one page, local output; synthetic inputs only until KAN-94 |
 | S7b | not started | | needs S1, GPU quota in region, a working `consistency()`, and KAN-94 |
 | S8 | not started | | |
