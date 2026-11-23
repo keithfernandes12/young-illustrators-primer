@@ -834,7 +834,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); S6c merged (#37); must beat 0.5436 under the switched prompt. Reads S6c2's stability figures |
 | S6e | merged | [#35](https://github.com/keithfernandes12/young-illustrators-primer/pull/35) | `sheet.py`: Florence-2 + SAM 2.1 + ViTPose beside SigLIP 2; every field filled on 82/82 real sheets; two figures found as two on 12/20. Unblocks KAN-42 |
 | S6f | merged | [#39](https://github.com/keithfernandes12/young-illustrators-primer/pull/39) | sensitivity: stroke drop, line width, erasure, prompt template, occlusion; paired bootstrap intervals; runs on `val`. Also carries the prompt switch to `a child's drawing of a {label}.` (S6c 0.5436 on `test`, S6c2 re-measured). Re-run under it: strokes -14.7 / -21.8, 7 px -2.5. KAN-38 |
-| S6f2 | in review | [#46](https://github.com/keithfernandes12/young-illustrators-primer/pull/46) | `sensitivity --mlflow` through `tracking.py` as kind `sensitivity`, with the shared `--owner` and early refusals; metric names unchanged (98 = 98 on a real run, values identical). Real-server round trip pending the tunnel. KAN-38 |
+| S6f2 | in review | [#46](https://github.com/keithfernandes12/young-illustrators-primer/pull/46) | `sensitivity --mlflow` through `tracking.py` as kind `sensitivity`, with the shared `--owner` and early refusals; metric names unchanged (98 = 98 on a real run, values identical). Round-tripped on the real server (run `8abefd45`; all 96 of `dfaee7e2`'s metrics reproduced exactly). KAN-38 |
 | S6g2 | not started | | log S6g's bias report through `tracking.py` as a fourth kind (`bias`), and give `bias_report` the shared `--mlflow` / `--owner`. Waits on #45 (S6g) and S6f2. KAN-38 |
 | S7a | in progress | branch `feat/KAN-42-controlnet-baseline` | pretrained SD 1.5 + ControlNet-Scribble, one page, local output; synthetic inputs only until KAN-94 |
 | S7b | not started | | needs S1, GPU quota in region, a working `consistency()`, and KAN-94 |
@@ -1835,8 +1835,17 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   - **Tests.** The fixture's 68 names are pinned. Two mutation checks were each caught: dropping
     the early `--mlflow` refusal fails 2 tests, and logging a missing occlusion figure as 0 fails
     2.
-  - **Not yet done:** the real-server round trip. The IAP tunnel was down at the time, so no run
-    was logged.
+  - **Real-server round trip (the slice's acceptance), done the same day.** The CLI itself ran
+    with `--mlflow --owner s6f2-check` into the scratch experiment `yip-drawing-s6f2-check`, so
+    `yip-drawing` holds no duplicate, from clean commit `a542d7d`. Run
+    `8abefd45c455492c90322a20f72abc01` ended `FINISHED`.
+    - It carries the shared tags: the owner given, `where=local`, `kind=sensitivity`,
+      `git_dirty=false`, `gate_eligible=false`.
+    - Its 98 metrics are the names and values `sensitivity_metrics` builds from the file. Its 14
+      params include the same `prompt_<n>` templates. Its artifacts are `CARD.md` and `eval/`.
+    - **Against `dfaee7e2`:** all 96 of that run's metrics are present with **identical values**,
+      so the measurement reproduces exactly, a week apart. The only new names are #39's two
+      occlusion figures.
 
 ## Open questions
 
