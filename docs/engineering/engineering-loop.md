@@ -67,17 +67,30 @@ In the plan (or the PR body, for a single-PR change):
 
 ## 5. Review yourself before anyone else does
 
-Run the `review-pr` skill in local mode on your branch and deal with what it finds. Then open a
-draft PR with the `create-pr` skill.
+Run the `review-pr` skill in local mode on your branch and deal with what it finds. Then reconcile
+with `main` (step 6) and open a draft PR with the `create-pr` skill.
 
-## 6. Finish by what is actually true
+## 6. Reconcile with `main` before handing off
 
-A PR is ready for review when: it is based on current `main`; CI is green on its latest commit
+Slices are built in parallel by agents that never read each other's branches, so one can copy what
+another just landed (S6f wrote its own MLflow logging before `drawing/tracking.py` existed). Before
+opening the PR and again before marking it ready, fetch `main`, read what landed since the branch
+point (`git log --stat <merge-base>..origin/main`) and the open PRs, and for every new helper in the
+slice's area either use it or say in the PR body why not. Run `tests/test_conventions.py`, which
+fails on the known kinds of drift. The PR body says `Reconciled with main at <sha>: …`.
+
+A slice that adds a shared helper merges before the slices that should use it, and those list it
+under *Depends on*. See `docs/plans/cross-slice-coherence.md`.
+
+## 7. Finish by what is actually true
+
+A PR is ready for review when: it is based on current `main` and reconciled with it (step 6); CI is
+green on its latest commit
 (if not, use the `fix-ci` skill — never re-run a failed job hoping it passes);
 every review finding has a disposition; the PR body matches the final diff; and the plan's status
 table says what landed.
 
-## 7. Keep the lesson
+## 8. Keep the lesson
 
 When the same mistake is caught twice, add a line to `docs/engineering/review-checklist.md` or the
 relevant `AGENTS.md` in the PR that fixes it, so nobody pays for the same correction a third time.

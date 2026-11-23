@@ -40,7 +40,9 @@ cp .github/pull_request_template.md "$BODY"
 Fill every section:
 - **What changed / Why** — behaviour, not a file list.
 - **Jira** — `KAN-<n>`.
-- **How it was checked** — commands and results (`pytest` → N passed). Name anything not run.
+- **How it was checked** — commands and results (`pytest` → N passed). Name anything not run. End
+  with `Reconciled with main at <sha>: reused … / not applicable / differs because …`
+  (`engineering-loop` step 6).
 - **Where the reviewer's judgement is needed** — at most 3 lines, each `file:line — the question`
   (a behaviour choice, data contract, privacy boundary, error handling, a name that will spread).
   If the author already made the call visibly, it is not a question. Write "None — mechanical

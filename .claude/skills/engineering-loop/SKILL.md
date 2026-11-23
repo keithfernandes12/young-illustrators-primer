@@ -27,6 +27,9 @@ Read and keep a short list of what you read:
 - `docs/solutions/` for earlier problems in this area.
 - The code you will change **and its tests**.
 - Git state: current branch, base, uncommitted work. If the PR exists, its live state (`pr-status`).
+- **Siblings**: open PRs (`gh pr list --state open`) and what landed on `main` since the plan was
+  written. A slice is only "independent" if no open PR adds a helper it would use; otherwise that
+  PR goes under *Depends on* (`docs/plans/cross-slice-coherence.md`).
 
 Write down what you did not read and what you assumed.
 
@@ -64,14 +67,28 @@ behaviour would be reasonable. Do not pick the smallest interpretation silently.
 Run `review-pr` in local mode. Every finding gets a disposition (Fixed / Rebutted with evidence /
 Tracked in Jira). If the shape is wrong, reshape it rather than polishing it.
 
-## 6. Update the record, then open the PR
+## 6. Reconcile with `main`, then update the record and open the PR
 
-In the same branch: mark the slice in the plan's status table, append any dated Decisions or
+Slices are built in parallel and never read each other, so a slice can re-implement something that
+landed while it was being built. Before opening the PR, and again before marking it ready:
+
+- `git fetch origin`, then `git log --stat $(git merge-base HEAD origin/main)..origin/main`. For
+  every module or helper that landed in the area of this slice, either use it or say in the PR body
+  why not.
+- `gh pr list --state open --json number,title,headRefName,files`: for any open PR that adds a helper
+  this slice also adds, or touches the same convention (logging, git state, tags, a shared config),
+  either depend on it (list it under *Depends on* and wait for it) or say why they stay separate.
+- `python -m pytest tests/test_conventions.py` when it exists: it fails on the known kinds of drift.
+- Write one line in the PR body, under **How it was checked**:
+  `Reconciled with main at <sha>: reused <x> / not applicable / differs because <reason>.`
+
+Then, in the same branch: mark the slice in the plan's status table, append any dated Decisions or
 Verified facts, and fix any document the change made untrue. Then `create-pr`.
 
 ## 7. Finish on what is true
 
-Before saying the work is ready: the branch is on current `main`; CI is green on the latest commit
+Before saying the work is ready: the branch is on current `main` and reconciled with it again
+(step 6); CI is green on the latest commit
 (`gh pr checks <n>`; if red, use `fix-ci`); the PR body matches the final diff; every review finding
 has a disposition.
 Green CI alone does not mean ready.

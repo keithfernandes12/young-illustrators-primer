@@ -18,6 +18,8 @@ for the loop to read.
    PRs make it worse).
 2. **Pick** the first slice whose State is `not started`, whose `Depends on` slices are `merged`,
    that has a `Jira` key, and that is not marked `person-only`. If none, print `LOOP_EMPTY` and stop.
+   Skip a slice if an open PR adds a shared helper it should use: build it after that PR merges, so
+   it reuses the helper instead of copying it (`docs/plans/cross-slice-coherence.md`, merge order).
 3. **Check the contract.** If its Acceptance cannot be shown false, or the sources disagree, do not
    guess: add the question under Open questions in the plan (on a `docs/KAN-<n>-<slug>` branch,
    as a draft PR) and print `LOOP_BLOCKED <slice> needs-decision`. This replaces "ask the person",
@@ -30,9 +32,13 @@ for the loop to read.
    prompts or storage need `privacy-guard`. At most 3 fix attempts on the same failure; then
    record what you tried as a dated Verified fact, mark the slice `blocked` in the Status table,
    and print `LOOP_BLOCKED <slice> <reason>`.
-6. **Ship** with `create-pr` (draft, `agent-authored`, `needs-reviewer`, Jira key, provenance
-   line). Update the plan's Status row to `in review` with the PR number in the same branch.
-7. **End** the turn with exactly one line:
+6. **Reconcile** with `main` (`engineering-loop` step 6): fetch, read
+   `git log --stat <merge-base>..origin/main` and the open PRs, reuse anything that landed in this
+   slice's area, and run `tests/test_conventions.py`. If a merge of `main` is needed, do it now.
+7. **Ship** with `create-pr` (draft, `agent-authored`, `needs-reviewer`, Jira key, provenance
+   line, and the `Reconciled with main at <sha>` line). Update the plan's Status row to
+   `in review` with the PR number in the same branch.
+8. **End** the turn with exactly one line:
    `LOOP_DONE <slice> <PR URL>` | `LOOP_BLOCKED <slice> <reason>` | `LOOP_EMPTY` | `LOOP_WAIT <reason>`.
 
 ## Things unattended agents must not do here

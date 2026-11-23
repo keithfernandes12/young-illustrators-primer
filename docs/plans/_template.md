@@ -33,7 +33,9 @@ related: []
 
 ## Slices
 
-> One slice = one PR. Order them so each one leaves `main` working.
+> One slice = one PR. Order them so each one leaves `main` working. A slice that adds a shared
+> helper (logging, git state, a config loader) comes before every slice that should use it, and
+> those list it under *Depends on* — merge order follows dependencies, not readiness.
 
 ### S1 · <short name>
 
@@ -45,7 +47,8 @@ related: []
 - **Touches** — files or modules.
 - **Acceptance** — what will be observably true; written so it could be shown false.
 - **Testing** — the test cases, and the change to the code that would make each one fail.
-- **Depends on** — earlier slices, or "nothing".
+- **Depends on** — earlier slices, or "nothing". Include an open PR in another plan if it adds a
+  helper this slice should use.
 - **Jira** — KAN-<n>.
 
 ### S2 · <short name>
