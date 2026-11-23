@@ -33,8 +33,10 @@ for that one file; this plan is about the class of problem, not that file.
 - The PR 39 review history in-session: four independent reviews, each scoped to one PR against the
   `main` it had at the time.
 - `origin/main` as of 2026-11-22: a grep of `start_run(` and of git-state helpers (Verified facts).
-- Not read: PR #46's diff, the `loop-worker`, `engineering-loop` and `review-pr` skill files, and
-  `docs/engineering/review-checklist.md`. S3 and S4 start by reading them. Assumed: the skills can be
+- PR #46's tree at `2f418ed`: the S1 scans were run against it (three stale `drawing/sensitivity.py`
+  entries) and its CLI test was checked against S0.
+- Not read: `docs/engineering/review-checklist.md` and the `review-pr` skill, which S4 starts by
+  reading. S3 read `loop-worker` and `engineering-loop` for its own PR. Assumed: the skills can be
   edited in this repo, and CI may run a new test file.
 
 ## Contract
@@ -86,8 +88,9 @@ moment a new one appears.
    helper. Today's call sites outside `drawing/tracking.py`: `speech/train.py`, `story/grid.py`,
    `illustration/consistency/experiment.py` (and, until S0 merges, `drawing/sensitivity.py`).
 2. A run's tag dict contains the seven required tags from `docs/engineering/model-development.md`
-   (`stage`, `owner`, `data_version`, `git_sha`, `base_model`, `gate_group`, `where`). The test checks
-   `tracking.run_tags` directly and each allowlisted site's tags where they are built from a literal.
+   (`stage`, `owner`, `data_version`, `git_sha`, `base_model`, `gate_group`, `where`). The tests check
+   `tracking.run_tags` (in `tests/drawing/test_tracking.py`) and each allowlisted site's tags where
+   they are built from a literal.
 3. Git state comes from one function. Allowlist today's copies: `evaluation/golden.py:_git_sha`,
    `speech/evaluate.py:git_sha`, `story/grid.py:git_sha`, `illustration/consistency/experiment.py:git_sha`.
    A new function named `*git_sha*` or `*git_state*` anywhere else fails.
@@ -176,7 +179,10 @@ Findings that stay open over two runs become Open questions in the owning plan.
 - **Why separate** — heuristic, so it must not share a PR with the hard tests.
 - **Touches** — `scripts/scan_duplicates.py`, the `verify` skill's script list.
 - **Acceptance** — on today's `main` it lists the five git-state copies and the `start_run` sites;
-  on a branch with a new duplicate it lists that one.
+  on a branch with a new duplicate it lists that one. It also covers what the S1 scans cannot see:
+  inline `subprocess` calls to `git rev-parse` outside a function named for git state,
+  `mlflow.set_tag("owner", …)` (singular), `MlflowClient().create_run`, and `scripts/`, which S1
+  does not scan.
 - **Testing** — a fixture tree with two identical private helpers is reported; a single one is not.
 - **Depends on** — nothing. **Jira** — KAN-38.
 
@@ -253,8 +259,12 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
   migration. No expiry dates yet: that is an Open question for the repository owner, and the
   entry shape (`Allowed`) leaves room for one.
 - **2026-11-23** — S1's tag check reads literals only. A tag dict that is neither a literal at the
-  call site nor a name bound to one in the same function is listed in `TAGS_UNCHECKED` with a
-  reason; the shared logger is checked by calling `run_tags` directly. Today that covers
+  call site nor a name bound to one in the same or an enclosing scope (keys added with
+  `tags["k"] = v` before the call count) is listed in `TAGS_UNCHECKED` with a reason. That the
+  shared logger writes the seven tags is asserted once, by `tests/drawing/test_tracking.py`, not
+  repeated in `test_conventions.py`. The owner scan counts a dict display that has a literal
+  `"owner"` and at least one other required tag key, so a config dict is not a tag dict. Today the
+  unchecked list covers
   `story/grid.py` (tags are a parameter) and `drawing/sensitivity.py` (`dict(tags)`, until #46).
 
 ## Verified facts

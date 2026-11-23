@@ -10,11 +10,17 @@ network, no MLflow):
 1. **Starting an MLflow run** -- every ``.start_run(`` call is in the shared helper or an allowlisted
    file, at no more than its allowlisted count.
 2. **The seven required tags** (`docs/engineering/model-development.md`) are in every tag dict that is
-   a literal at the call site, or a name bound to a literal in the same function. A dict built
-   elsewhere cannot be checked statically; its allowlist entry says so.
+   a literal at the call site, or a name bound to a literal in the same or an enclosing scope (keys
+   added later with ``tags["k"] = v`` count, in source order). A dict built elsewhere cannot be
+   checked statically; its allowlist entry says so. What it cannot see: a dict passed through another
+   function's argument, ``tags.update(...)``, and ``mlflow.set_tag("k", v)`` (singular).
 3. **Git state comes from one function.** A new ``*git_sha*`` or ``*git_state*`` function fails.
-4. **No literal owner.** A dict with an ``"owner"`` key and a string-literal value fails: every member
-   would be logged as the one person whose name is in the code.
+4. **No literal owner in a tag dict.** A dict that has an ``"owner"`` key with a string-literal value
+   *and* at least one other required tag key fails: every member would be logged as the one person
+   whose name is in the code. A config dict that only has an owner is not a tag dict.
+
+That the shared logger itself writes the seven tags is asserted once, by
+`tests/drawing/test_tracking.py`; this file does not repeat it (nor import the scanned code).
 
 **The allowlists are today's exceptions, not permission.** Each entry names a reason and a Jira key.
 An entry that no longer matches the code also fails, so the list shrinks as areas migrate instead of
@@ -105,17 +111,11 @@ def _modules(root: Path) -> Iterator[tuple[str, ast.Module]]:
 
 
 def start_run_counts(root: Path) -> dict[str, int]:
-    """``.start_run(`` calls per file: ``mlflow.start_run`` and any attribute so named
-    (``self._mlflow.start_run`` in the story grid)."""
+    """``start_run(`` calls per file: ``mlflow.start_run``, any attribute so named
+    (``self._mlflow.start_run`` in the story grid) and a bare ``start_run`` imported from mlflow."""
     counts: dict[str, int] = {}
     for name, tree in _modules(root):
-        n = sum(
-            1
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "start_run"
-        )
+        n = sum(1 for node in ast.walk(tree) if isinstance(node, ast.Call) and _callee(node) == "start_run")
         if n:
             counts[name] = n
     return counts
@@ -127,40 +127,175 @@ def _literal_keys(node: ast.AST) -> set[str] | None:
     return None
 
 
-def _bound_literal(name: str, scope: ast.AST) -> ast.AST | None:
-    """The dict literal last assigned to ``name`` in ``scope``, if that is how it was built."""
-    found = None
-    for node in ast.walk(scope):
-        if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == name for t in node.targets
-        ):
-            found = node.value
-    return found
+def _callee(node: ast.Call) -> str | None:
+    """The called name: ``x.start_run(...)`` and ``start_run(...)`` are both ``start_run``."""
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    return None
+
+
+@dataclass
+class _TagDict:
+    """A dict literal as it stands at one point in the source: its keys and whether its owner is a
+    string literal. ``keys`` is ``None`` for a dict that cannot be read (``**spread``, a call)."""
+
+    keys: set[str] | None
+    literal_owner: bool = False
+
+    def snapshot(self) -> set[str] | None:
+        return None if self.keys is None else set(self.keys)
+
+
+def _literal(node: ast.AST) -> _TagDict | None:
+    """The `_TagDict` for a dict display with constant keys, else ``None``."""
+    keys = _literal_keys(node)
+    if keys is None or not isinstance(node, ast.Dict):
+        return None
+    owner = any(
+        isinstance(k, ast.Constant)
+        and k.value == "owner"
+        and isinstance(v, ast.Constant)
+        and isinstance(v.value, str)
+        for k, v in zip(node.keys, node.values, strict=True)
+    )
+    return _TagDict(keys, owner)
+
+
+_Scope = dict[str, _TagDict | None]
+
+
+class _TagScan(ast.NodeVisitor):
+    """Visit every call once, in source order, and record the tag dict each ``start_run(tags=...)`` or
+    ``set_tags(...)`` receives.
+
+    A name resolves to the dict literal last bound to it in the nearest scope that binds it, with keys
+    added by ``name["k"] = v`` up to that call. A function body is read after the scope that defines it
+    (a closure sees the enclosing function's final bindings, as it would when called). Parameters shadow
+    outer names and are unreadable.
+    """
+
+    def __init__(self) -> None:
+        self.chain: list[_Scope] = [{}]
+        self.deferred: list[tuple[ast.AST, list[_Scope]]] = []
+        self.class_scopes: set[int] = set()
+        self.given: list[_TagDict | None] = []
+
+    # scopes
+    def scan(self, tree: ast.Module) -> list[_TagDict | None]:
+        self._scope(tree.body, self.chain)
+        return self.given
+
+    def _scope(self, body: list[ast.stmt], chain: list[_Scope]) -> None:
+        saved_chain, saved_deferred = self.chain, self.deferred
+        self.chain, self.deferred = chain, []
+        for stmt in body:
+            self.visit(stmt)
+        pending = self.deferred
+        self.chain, self.deferred = saved_chain, saved_deferred
+        for fn, fn_chain in pending:
+            self._function(fn, fn_chain)
+
+    def _function(self, fn: ast.AST, chain: list[_Scope]) -> None:
+        assert isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda)
+        args = fn.args
+        params = [a.arg for a in [*args.posonlyargs, *args.args, *args.kwonlyargs]]
+        params += [a.arg for a in (args.vararg, args.kwarg) if a is not None]
+        stmts: list[ast.stmt] = fn.body if isinstance(fn.body, list) else [ast.Expr(fn.body)]
+        self._scope(stmts, [*chain, dict.fromkeys(params)])
+
+    def _defer(self, node: ast.AST) -> None:
+        self.deferred.append((node, [s for s in self.chain if id(s) not in self.class_scopes]))
+
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        self._bind(node.name, None)
+        self._defer(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self.visit_FunctionDef(node)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        self._defer(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self._bind(node.name, None)
+        scope: _Scope = {}
+        self.class_scopes.add(id(scope))
+        self._scope(node.body, [*self.chain, scope])
+
+    # bindings
+    def _bind(self, name: str, value: _TagDict | None) -> None:
+        self.chain[-1][name] = value
+
+    def _lookup(self, name: str) -> _TagDict | None:
+        for scope in reversed(self.chain):
+            if name in scope:
+                return scope[name]
+        return None
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        self.visit(node.value)
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                self._bind(target.id, _literal(node.value))
+            elif isinstance(target, ast.Subscript):
+                self._add_key(target, node.value)
+            else:
+                self.visit(target)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if node.value is not None:
+            self.visit(node.value)
+            if isinstance(node.target, ast.Name):
+                self._bind(node.target.id, _literal(node.value))
+
+    def _add_key(self, target: ast.Subscript, value: ast.AST) -> None:
+        if not isinstance(target.value, ast.Name):
+            return
+        held = self._lookup(target.value.id)
+        key = target.slice
+        if held is None:
+            return
+        if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
+            held.keys = None  # a key we cannot read: the dict can no longer be checked
+            return
+        if held.keys is not None:
+            held.keys.add(key.value)
+        if key.value == "owner":
+            held.literal_owner = isinstance(value, ast.Constant) and isinstance(value.value, str)
+
+    # calls
+    def visit_Call(self, node: ast.Call) -> None:
+        self.generic_visit(node)
+        callee = _callee(node)
+        given: ast.AST | None
+        if callee == "start_run":
+            given = next((k.value for k in node.keywords if k.arg == "tags"), None)
+        elif callee == "set_tags" and isinstance(node.func, ast.Attribute) and node.args:
+            given = node.args[0]
+        else:
+            return
+        if given is None:
+            return  # a run with no tags here, e.g. re-opened by id
+        if isinstance(given, ast.Name):
+            held = self._lookup(given.id)
+            self.given.append(_TagDict(held.snapshot(), held.literal_owner) if held else None)
+        else:
+            self.given.append(_literal(given))
 
 
 def tag_dicts(root: Path) -> dict[str, list[set[str] | None]]:
-    """Per file, the key sets of every tag dict given to ``.start_run(tags=…)`` or ``.set_tags(…)``.
+    """Per file, the key sets of every tag dict given to ``start_run(tags=...)`` or ``.set_tags(...)``.
 
-    ``None`` stands for a dict that is not a literal and is not bound to one in the same function.
+    ``None`` stands for a dict that is not a literal and is not bound to one (see `_TagScan`).
     """
     found: dict[str, list[set[str] | None]] = {}
     for name, tree in _modules(root):
-        scopes = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]
-        for scope in scopes:
-            for node in ast.walk(scope):
-                if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
-                    continue
-                if node.func.attr == "start_run":
-                    given = next((k.value for k in node.keywords if k.arg == "tags"), None)
-                elif node.func.attr == "set_tags" and node.args:
-                    given = node.args[0]
-                else:
-                    continue
-                if given is None:
-                    continue  # a run with no tags here, e.g. re-opened by id
-                if isinstance(given, ast.Name):
-                    given = _bound_literal(given.id, scope) or given
-                found.setdefault(name, []).append(_literal_keys(given))
+        for given in _TagScan().scan(tree):
+            found.setdefault(name, []).append(None if given is None else given.keys)
     return found
 
 
@@ -175,20 +310,19 @@ def git_helpers(root: Path) -> set[tuple[str, str]]:
 
 
 def literal_owners(root: Path) -> dict[str, int]:
-    """Per file, dicts whose ``"owner"`` key maps to a string literal."""
+    """Per file, tag dicts whose ``"owner"`` key maps to a string literal.
+
+    A tag dict is a dict display that also has another required tag key, so a config dict with only an
+    owner is not counted.
+    """
     counts: dict[str, int] = {}
+    others = REQUIRED_TAGS - {"owner"}
     for name, tree in _modules(root):
         n = 0
         for node in ast.walk(tree):
-            if isinstance(node, ast.Dict):
-                for key, value in zip(node.keys, node.values, strict=True):
-                    if (
-                        isinstance(key, ast.Constant)
-                        and key.value == "owner"
-                        and isinstance(value, ast.Constant)
-                        and isinstance(value.value, str)
-                    ):
-                        n += 1
+            dict_ = _literal(node)
+            if dict_ is not None and dict_.literal_owner and dict_.keys and dict_.keys & others:
+                n += 1
         if n:
             counts[name] = n
     return counts
@@ -289,13 +423,6 @@ def test_every_checkable_tag_dict_has_the_seven_required_tags():
     assert tag_problems(tag_dicts(SRC), TAGS_UNCHECKED) == []
 
 
-def test_the_shared_logger_writes_the_seven_required_tags():
-    from primer.drawing.tracking import run_tags
-
-    tags = run_tags({"data_version": "v1.1", "encoder": "e", "git_sha": "abc"}, owner="m1", kind="accuracy")
-    assert REQUIRED_TAGS <= set(tags)
-
-
 def test_git_state_comes_from_one_function_or_a_listed_exception():
     assert git_problems(git_helpers(SRC), GIT_ALLOWED) == []
 
@@ -393,12 +520,85 @@ def test_a_new_git_helper_is_caught_and_the_shared_one_is_not(tmp_path):
 def test_a_hard_coded_owner_is_caught_and_a_variable_one_is_not(tmp_path):
     root = _tree(
         tmp_path,
-        {"a.py": "tags = {'owner': 'someone'}\n", "b.py": "def f(who):\n    return {'owner': who}\n"},
+        {
+            "a.py": "tags = {'stage': 's', 'owner': 'someone'}\n",
+            "b.py": "def f(who):\n    return {'stage': 's', 'owner': who}\n",
+        },
     )
 
     problems = owner_problems(literal_owners(root), {})
 
     assert len(problems) == 1 and problems[0].startswith("a.py")
+
+
+def test_an_owner_in_a_config_dict_that_is_not_a_tag_dict_is_not_caught(tmp_path):
+    root = _tree(tmp_path, {"a.py": "CFG = {'owner': 'team-a', 'lr': 0.1}\n"})
+
+    assert literal_owners(root) == {}
+
+
+def test_a_bare_start_run_imported_from_mlflow_is_counted(tmp_path):
+    root = _tree(tmp_path, {"a.py": "from mlflow import start_run\n\n\ndef f():\n    start_run()\n"})
+
+    assert start_run_counts(root) == {"a.py": 1}
+
+
+def test_a_module_level_tag_call_is_checked(tmp_path):
+    root = _tree(tmp_path, {"a.py": "import mlflow\n\nmlflow.set_tags({'stage': 's'})\n"})
+
+    problems = tag_problems(tag_dicts(root), {})
+
+    assert len(problems) == 1 and problems[0].startswith("a.py")
+
+
+def test_keys_added_to_a_tag_dict_before_the_call_count(tmp_path):
+    adds = "".join(f"    tags['{k}'] = 'x'\n" for k in sorted(REQUIRED_TAGS - {"stage"}))
+    root = _tree(
+        tmp_path, {"a.py": f"def f(m):\n    tags = {{'stage': 's'}}\n{adds}    m.start_run(tags=tags)\n"}
+    )
+
+    assert tag_problems(tag_dicts(root), {}) == []
+
+
+def test_keys_added_after_the_call_do_not_count(tmp_path):
+    late = "def f(m):\n    tags = {'stage': 's'}\n    m.start_run(tags=tags)\n    tags['owner'] = 'x'\n"
+    root = _tree(tmp_path, {"a.py": late})
+
+    assert tag_problems(tag_dicts(root), {})
+
+
+def test_a_closure_is_checked_once_against_the_dict_its_outer_function_built(tmp_path):
+    source = (
+        "def outer(m, owner):\n"
+        f"    tags = {TAGS_OK}\n"
+        "    def inner():\n"
+        "        m.start_run(tags=tags)\n"
+        "    inner()\n"
+    )
+    root = _tree(tmp_path, {"a.py": source})
+
+    assert tag_dicts(root) == {"a.py": [REQUIRED_TAGS]}
+    assert tag_problems(tag_dicts(root), {}) == []
+
+
+def test_a_closure_defined_before_the_dict_is_bound_still_sees_it(tmp_path):
+    source = (
+        "def outer(m, owner):\n"
+        "    def inner():\n"
+        "        m.start_run(tags=tags)\n"
+        f"    tags = {TAGS_OK}\n"
+        "    inner()\n"
+    )
+    root = _tree(tmp_path, {"a.py": source})
+
+    assert tag_dicts(root) == {"a.py": [REQUIRED_TAGS]}
+
+
+def test_a_parameter_shadows_a_tag_dict_of_the_same_name_outside(tmp_path):
+    source = f"tags = {TAGS_OK}\n\n\ndef f(m, tags):\n    m.set_tags(tags)\n"
+    root = _tree(tmp_path, {"a.py": source})
+
+    assert tag_dicts(root) == {"a.py": [None]}
 
 
 @pytest.mark.parametrize("name", ["_git_sha", "git_sha", "_git_state", "read_git_state"])
