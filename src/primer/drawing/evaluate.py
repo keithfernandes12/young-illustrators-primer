@@ -589,10 +589,14 @@ def _check_per_drawing(parser: argparse.ArgumentParser, path: Path, out: Path) -
     now. The file is gzip whatever its name, so it must say so: `bias_report` reads it as gzip, and a
     ``.csv`` holding gzip bytes would pass for text until something tried to read it.
     """
-    if path.suffix != ".gz":
+    if path.suffix.lower() != ".gz":
         parser.error(f"--per-drawing must end in .gz (it is written as gzipped CSV): {path}")
     if path.is_dir():
         parser.error(f"--per-drawing is a directory: {path}")
+    if path.exists():
+        # Not set aside like --out: nothing reads a stale rows file for a gate, but a full run's rows
+        # cost 16 minutes of GPU to recreate, and a --limit probe reusing the path would destroy them.
+        parser.error(f"--per-drawing already exists: {path}; move it or choose another path")
     if path.resolve() == out.resolve():
         parser.error("--per-drawing and --out are the same file")
     if not path.resolve().parent.is_dir():

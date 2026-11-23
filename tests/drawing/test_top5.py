@@ -724,7 +724,39 @@ def test_per_drawing_paths_that_would_fail_or_mislead_are_refused_before_the_buc
         )
 
 
-def test_per_drawing_rows_are_written_after_out_and_a_failed_write_leaves_no_partial(monkeypatch, tmp_path):
+def test_an_existing_per_drawing_file_is_refused_and_left_alone(monkeypatch, tmp_path):
+    from primer.data import catalog
+
+    def boom(*args, **kwargs):
+        raise AssertionError("the bucket must not be touched")
+
+    monkeypatch.setattr(catalog, "read_dataset", boom)
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+    precious = tmp_path / "rows.csv.gz"
+    precious.write_bytes(b"A FULL RUN'S ROWS")
+
+    with pytest.raises(SystemExit):
+        evaluate.main(
+            [
+                "--model",
+                str(model_yaml),
+                "--version",
+                "v1.1",
+                "--limit",
+                "2",
+                "--out",
+                str(tmp_path / "m.json"),
+                "--per-drawing",
+                str(precious),
+            ]
+        )
+
+    assert precious.read_bytes() == b"A FULL RUN'S ROWS"
+
+
+def test_per_drawing_rows_are_written_after_out_and_a_failed_write_never_reaches_the_real_path(
+    monkeypatch, tmp_path
+):
     _stub_world(monkeypatch, _test_split_frame(6), winner="The Eiffel Tower")
     out, rows_path = tmp_path / "m.json", tmp_path / "rows.csv.gz"
     model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"

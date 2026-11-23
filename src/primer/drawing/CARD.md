@@ -85,10 +85,12 @@ at a family-wise 5%.
 - **Mitigation, proposed for S6d and not applied:** a zero-shot model has nothing to reweight.
   - Cap any one country's share of the training sample with `capped_weights`, so a fine-tune on a
     US-heavy split cannot buy US accuracy with the other countries'.
-  - Re-run this report on every candidate, and reject one if a named country's difference falls
-    below its baseline value by more than the half-width of the baseline's 95% interval on that
-    difference (`difference_low` to `difference_high` in the report, not adjusted for the number
-    of countries).
+  - Re-run this report on every candidate. For a named country below its label mix, reject a
+    candidate whose difference falls by more than the baseline's 95% half-width (from
+    `difference_low` to `difference_high` in the report, not adjusted for the number of
+    countries); for one above its label mix, report the move and do not reject on it. A
+    yardstick, not a test: the candidate's and baseline's differences are two noisy estimates on
+    the same drawings, so S6d may tighten it.
 - **Read with two limits.** Drawings are treated as independent, and Quick, Draw! rows carry no
   drawer id, so a player who drew many items would make the p-values too small and this cannot be
   adjusted for. "Named" is statistical, not practical: at the US's size a gap of two or three

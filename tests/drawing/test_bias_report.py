@@ -164,10 +164,17 @@ def test_a_metrics_file_without_country_slices_is_refused(world):
         check_rows(rows, metrics)
 
 
-def test_rows_whose_label_and_index_disagree_are_refused(world):
+def test_one_label_under_two_indices_is_refused(world):
     # The categories key on the label and the country tests on its index: they must name one thing.
     rows, metrics = world
-    rows.loc[0, "label_index"] = 1  # still called "easy"
+    rows.loc[0, "label_index"] = 7  # an index no other row has, still called "easy"
+    with pytest.raises(ValueError, match="one-to-one"):
+        check_rows(rows, metrics)
+
+
+def test_one_index_under_two_labels_is_refused(world):
+    rows, metrics = world
+    rows.loc[0, "label"] = "other"  # a label no other row has, still index 0
     with pytest.raises(ValueError, match="one-to-one"):
         check_rows(rows, metrics)
 
@@ -281,6 +288,40 @@ def test_the_cli_reads_the_rows_as_gzip_whatever_they_are_called(tmp_path):
 def test_the_cli_names_rows_that_are_not_gzip(tmp_path):
     with pytest.raises(SystemExit, match="not the gzipped CSV"):
         bias_report.main(_cli_inputs(tmp_path, compression=None))
+
+
+def test_the_cli_names_rows_that_are_empty_truncated_or_missing(tmp_path):
+    import gzip
+
+    args = _cli_inputs(tmp_path)
+    rows_path = tmp_path / "rows.csv.gz"
+    whole = rows_path.read_bytes()
+
+    rows_path.write_bytes(b"")
+    with pytest.raises(SystemExit, match="not the gzipped CSV"):
+        bias_report.main(args)
+
+    rows_path.write_bytes(whole[: len(whole) // 2])
+    with pytest.raises(SystemExit, match="not the gzipped CSV"):
+        bias_report.main(args)
+
+    rows_path.write_bytes(gzip.compress(b""))  # valid gzip, no CSV inside
+    with pytest.raises(SystemExit, match="not the gzipped CSV"):
+        bias_report.main(args)
+
+    rows_path.unlink()
+    with pytest.raises(SystemExit, match="not the gzipped CSV"):
+        bias_report.main(args)
+
+
+def test_the_cli_names_a_metrics_file_it_cannot_read(tmp_path):
+    args = _cli_inputs(tmp_path)
+    (tmp_path / "m.json").write_text("{not json", encoding="utf-8")
+    with pytest.raises(SystemExit, match="not a readable metrics file"):
+        bias_report.main(args)
+    (tmp_path / "m.json").unlink()
+    with pytest.raises(SystemExit, match="not a readable metrics file"):
+        bias_report.main(args)
 
 
 def test_a_console_that_cannot_print_the_report_does_not_fail_a_good_run(tmp_path, monkeypatch):

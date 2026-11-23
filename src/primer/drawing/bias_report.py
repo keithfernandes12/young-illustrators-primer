@@ -26,7 +26,10 @@ Reported beside the verdict, and not part of it:
 - A Wilson 95% interval on each slice's own top-5 accuracy.
 - A 95% interval on the difference itself (``difference_low`` / ``difference_high``), from the
   same variance as the test and **not** adjusted for the number of countries. It is the yardstick
-  for "moved against it beyond its interval" when a candidate is compared with this baseline.
+  for comparing a candidate with this baseline: for a named country below its label mix, reject a
+  candidate whose difference falls by more than the baseline's half-width; for one above, report
+  the move and do not reject on it. A yardstick, not a test (two noisy estimates on the same
+  drawings), so S6d may tighten it.
 - The unadjusted test (against the other countries' overall rate), so a reader can see how much of
   a raw gap the label mix accounts for.
 
@@ -47,10 +50,10 @@ own recogniser.
 from __future__ import annotations
 
 import argparse
-import gzip
 import json
 import math
 import sys
+import zlib
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -141,11 +144,9 @@ def check_rows(rows: pd.DataFrame, metrics: Mapping[str, Any]) -> None:
     if {str(entry["value"]) for entry in entries} != set(by_country.index.astype(str)):
         raise ValueError("the rows' countries are not the metrics file's country slices")
     for entry in entries:
-        got = by_country.loc[entry["value"]] if entry["value"] in by_country.index else None
-        if (
-            got is None
-            or int(got["count"]) != entry["n"]
-            or (int(got["sum"]) / int(got["count"]) != entry["metrics"]["drawing_top5_acc"])
+        got = by_country.loc[entry["value"]]  # present: the sets were just checked equal
+        if int(got["count"]) != entry["n"] or (
+            int(got["sum"]) / int(got["count"]) != entry["metrics"]["drawing_top5_acc"]
         ):
             raise ValueError(f"country {entry['value']!r} does not match the metrics file's slice")
 
@@ -218,8 +219,11 @@ def country_tests(rows: pd.DataFrame, judged: Sequence[str]) -> pd.DataFrame:
         variance = _mix_variance(k, outside["count"], outside["sum"] / outside["count"], n)
         if variance == 0:
             # Every outside rate is exactly 0 or 1, so the plug-in variance is zero and any gap
-            # would read as "no evidence" (p=1). Shrink the rates by half a drawing: identical to
-            # the plug-in wherever it is non-zero, and an honest tiny variance where it is not.
+            # would read as "no evidence" (p=1). Add half a hit and half a miss to each outside
+            # rate. This is a floor, not a model: it applies only when *every* compared label is
+            # exactly 0 or 1 (so it is a cliff, and identical to the plug-in everywhere else), and
+            # it gives a small variance only when the outside counts are large. With a handful of
+            # outside drawings the interval it yields is wide, which is the honest answer.
             shrunk_rate = (outside["sum"] + 0.5) / (outside["count"] + 1)
             variance = _mix_variance(k, outside["count"], shrunk_rate, n)
         z_mix = (observed - expected) / math.sqrt(variance)
@@ -325,11 +329,12 @@ def findings(report: Mapping[str, Any]) -> list[str]:
             f"Above it: {listed(above)}. "
             "*Mitigation, proposed for S6d, not applied here* (a zero-shot model has nothing to reweight): "
             "cap any one country's share of the training sample (`capped_weights` in `primer.data.bias`), so a "
-            f"fine-tune on a split where {largest} is {share:.0%} of the drawings cannot buy {largest}'s "
-            "accuracy with the other countries'; then re-run this report on the candidate and reject it if a "
-            "named country's difference falls below its baseline value by more than the half-width of the "
-            "baseline's 95% interval on that difference (`difference_low` to `difference_high`, not adjusted "
-            "for the number of countries)."
+            f"fine-tune on a split as {largest}-heavy as this one ({largest} is {share:.0%} of the drawings "
+            f"scored here) cannot buy {largest}'s accuracy with the other countries'; then re-run this report "
+            "on the candidate. For a named country below its label mix, reject a candidate whose difference "
+            "falls by more than the baseline's 95% half-width (`difference_low` to `difference_high`, not "
+            "adjusted for the number of countries); for one above its label mix, report the move and do not "
+            "reject on it. A yardstick, not a test: S6d may tighten it."
         )
     else:
         out.append(
@@ -463,14 +468,23 @@ def parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
-    metrics = json.loads(args.metrics.read_text(encoding="utf-8"))
+    try:
+        metrics = json.loads(args.metrics.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise SystemExit(f"{args.metrics} is not a readable metrics file: {error}") from error
     try:
         # Explicitly gzip, whatever the name: `evaluate --per-drawing` always writes gzip, and
         # pandas would otherwise go by the extension and fail on gzip bytes in a `.csv`.
         rows = pd.read_csv(
             args.rows, compression="gzip", dtype={"country_code": str, "record_id": str}, keep_default_na=False
         )
-    except (gzip.BadGzipFile, UnicodeDecodeError) as error:
+    except (
+        OSError,  # missing, unreadable, or gzip.BadGzipFile (a subclass)
+        EOFError,  # truncated gzip
+        zlib.error,  # corrupt body
+        UnicodeDecodeError,
+        pd.errors.EmptyDataError,
+    ) as error:
         raise SystemExit(f"{args.rows} is not the gzipped CSV that evaluate --per-drawing writes: {error}") from error
     report = build_report(rows, metrics)
     args.out.write_text(json.dumps(report_to_json(report), indent=2) + "\n", encoding="utf-8")
