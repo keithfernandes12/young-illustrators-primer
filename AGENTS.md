@@ -189,7 +189,7 @@ slug. Each folder has an `AGENTS.md` and a `_template.md`. Use the `write-doc` s
 
 For anything bigger than a one-file fix, follow `docs/engineering/engineering-loop.md` (the
 `engineering-loop` skill): read the sources, write the contract in the plan, build one slice per
-PR, review yourself with `review-pr`, then open the PR. Before asking for review, apply
+PR, review yourself with `review-pr`, reconcile with `main`, then open the PR. Before asking for review, apply
 `docs/engineering/review-checklist.md`.
 
 ## Skills (`.claude/skills/`)

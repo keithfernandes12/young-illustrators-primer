@@ -91,9 +91,8 @@ Verified facts, and fix any document the change made untrue. Then `create-pr`.
 
 Before saying the work is ready: the branch is on current `main` and reconciled with it again
 (step 6); CI is green on the latest commit (`gh pr checks <n>`; if red, use `fix-ci`); the PR body
-matches the final diff; every review finding
-has a disposition.
-Green CI alone does not mean ready.
+matches the final diff; every review finding has a disposition. Green CI alone does not mean
+ready.
 
 ## 8. Keep the lesson
 

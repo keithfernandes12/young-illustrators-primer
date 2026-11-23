@@ -15,7 +15,9 @@ for the loop to read.
    `docs/plans/mvp-cloud-deploy.md`), its Status table, Decisions, Verified facts and Open
    questions. Run `gh pr list --label agent-authored --state open`. If 3 or more agent PRs are
    waiting for review, stop with `LOOP_WAIT review-queue-full` (humans are the bottleneck; more
-   PRs make it worse).
+   PRs make it worse). Then run `gh pr list --state open --json number,title,headRefName,files`
+   (all open PRs, not only labelled ones) for step 2: a helper file or module an open PR adds that
+   a slice's *Touches* would also use is a reason to wait.
 2. **Pick** the first slice whose State is `not started`, whose `Depends on` slices are `merged`,
    that has a `Jira` key, and that is not marked `person-only`. A slice is not ready while an open PR
    adds a shared helper it should use: build it after that PR merges, so it reuses the helper
@@ -29,10 +31,11 @@ for the loop to read.
 4. **Build** the slice with `engineering-loop` steps 2 to 5, on a branch named
    `<type>/KAN-<n>-<slug>` from current `main`. Narrowest test first, then
    `python .claude/skills/verify/scripts/verify.py --quick` while iterating.
-5. **Reconcile** with `main` (`engineering-loop` step 6): fetch, read
+5. **Reconcile** with `main` and update the record (`engineering-loop` step 6, all of it): fetch, read
    `git log --stat <merge-base>..origin/main` and the open PRs, reuse anything that landed in this
    slice's area, and run `tests/test_conventions.py` when it exists. If a merge of `main` is needed,
-   do it now, before the proof below, so the proof describes the tree you push.
+   do it now, before the proof below, so the proof describes the tree you push. Then append dated
+   Decisions and Verified facts to the plan and fix any document the change made untrue.
 6. **Prove.** Full `python .claude/skills/verify/scripts/verify.py` must print `VERIFY_RESULT: PASS`.
    Model slices also need `golden-gate` for their group; slices touching child data, logs,
    prompts or storage need `privacy-guard`. At most 3 fix attempts on the same failure; then
@@ -42,7 +45,7 @@ for the loop to read.
    line, and the `Reconciled with main at <sha>` line). Update the plan's Status row to
    `in review` with the PR number in the same branch.
 8. **End** the turn with exactly one line:
-   `LOOP_DONE <slice> <PR URL>` | `LOOP_BLOCKED <slice> <reason>` | `LOOP_EMPTY` | `LOOP_WAIT <reason>`.
+   `LOOP_DONE <slice> <PR URL>` | `LOOP_BLOCKED <slice> <reason>` | `LOOP_EMPTY` | `LOOP_WAIT <slice or plan> <reason>`.
 
 ## Things unattended agents must not do here
 

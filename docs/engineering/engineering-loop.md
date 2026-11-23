@@ -79,7 +79,8 @@ another just landed (`mvp-cloud-deploy S6f` wrote its own MLflow logging before
 the open PRs, and for every new helper in the slice's area either use it or say in the PR body why
 not. Run `tests/test_conventions.py` when it exists: it fails on the known kinds of drift. The PR
 body says `Reconciled with main at <sha>: …`, where `<sha>` is the `origin/main` commit you read up
-to.
+to. On the second pass, read from the `<sha>` of the earlier line, because the merge base moves
+when you merge `main`.
 
 A slice that adds a shared helper merges before the slices that should use it, and those list it
 under *Depends on*. See `docs/plans/cross-slice-coherence.md`.

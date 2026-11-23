@@ -42,7 +42,8 @@ Fill every section:
 - **Jira** — `KAN-<n>`.
 - **How it was checked** — commands and results (`pytest` → N passed). Name anything not run. End
   with `Reconciled with main at <sha>: reused … / not applicable / differs because …`, where
-  `<sha>` is the `origin/main` commit you read up to (`engineering-loop` step 6).
+  `<sha>` is the `origin/main` commit you read up to; on the second pass read from the earlier line's
+  `<sha>` (`engineering-loop` step 6).
 - **Where the reviewer's judgement is needed** — at most 3 lines, each `file:line — the question`
   (a behaviour choice, data contract, privacy boundary, error handling, a name that will spread).
   If the author already made the call visibly, it is not a question. Write "None — mechanical
