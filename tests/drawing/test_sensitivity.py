@@ -527,6 +527,7 @@ def test_the_cli_runs_end_to_end_on_a_stubbed_world(monkeypatch, tmp_path):
 
     monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
     monkeypatch.delenv("MLFLOW_EXPERIMENT_NAME", raising=False)
+    monkeypatch.delenv("YIP_WHERE", raising=False)
 
     code = sensitivity.main(
         [
@@ -565,6 +566,10 @@ def test_the_cli_runs_end_to_end_on_a_stubbed_world(monkeypatch, tmp_path):
     # Through tracking.log_run (S6f2): the owner given, the shared kind tags, the file and the card.
     assert logged["tags"]["owner"] == "m1" and logged["tags"]["kind"] == "sensitivity"
     assert logged["tags"]["gate_eligible"] == "false"
+    # Exactly the shared tags, nothing written by hand beside them (cross-slice-coherence S0).
+    from primer.drawing.tracking import run_tags
+
+    assert logged["tags"] == run_tags(result, owner="m1", kind="sensitivity")
     assert (out.name, "eval") in logged["artifacts"] and ("CARD.md", None) in logged["artifacts"]
 
 
