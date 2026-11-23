@@ -328,3 +328,82 @@ def test_stdout_is_restored_even_when_logging_fails(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError):
         evaluate.log_to_mlflow("accuracy", {}, tmp_path / "m.json", "m1", "r")
     assert stream.errors == "strict"
+
+
+# ------------------------------------------------------------------------------- sensitivity (S6f2)
+
+
+def sensitivity_file(**overrides):
+    result = {
+        "drawings": 2000,
+        "baseline_top5_acc": 0.518,
+        "perturbations": {
+            "drop_last_1": {"top5_delta": -0.147, "drawings": 1728},
+            "prompt:{label}": {"top5_delta": -0.085},
+            "prompt:This is a photo of {label}.": {"top5_delta": -0.043},
+        },
+        "occlusion": {"top3_share_median": None, "max_drop_median": 0.178, "maps": {}},
+        "data_version": "v1.1",
+        "split": "val",
+        "seed": 20261115,
+        "shipped_prompt_template": "a child's drawing of a {label}.",
+        "encoder": "google/siglip2-base-patch16-224",
+        "encoder_revision": "abc",
+        "device": "cuda",
+        "dtype": "bfloat16",
+        "prompts_sha256": "d34",
+        "render": {"size": 224, "line_width": 3},
+        "license": ["CC-BY-4.0"],
+        "git_sha": "5b57dee",
+        "git_dirty": False,
+    }
+    result.update(overrides)
+    return result
+
+
+def test_a_prompt_metric_and_its_param_share_a_number():
+    result = sensitivity_file()
+
+    metrics = tracking.sensitivity_metrics(result)
+    params = tracking.sensitivity_params(result)
+
+    assert metrics["sensitivity/prompt_1/top5_delta"] == -0.043
+    assert params["prompt_1"] == "This is a photo of {label}."
+    assert params["sample"] == "2000" and params["seed"] == "20261115"
+    assert params["render"] == '{"line_width": 3, "size": 224}'
+
+
+def test_an_occlusion_figure_no_map_defined_is_left_out_not_logged_as_zero():
+    metrics = tracking.sensitivity_metrics(sensitivity_file())
+
+    assert "sensitivity/occlusion/top3_share_median" not in metrics
+    assert metrics["sensitivity/occlusion/max_drop_median"] == 0.178
+
+
+def test_two_perturbations_that_clean_to_one_name_are_refused():
+    figures = {"top5_delta": 0.0}
+    with pytest.raises(ValueError, match="both be logged"):
+        tracking.sensitivity_metrics(sensitivity_file(perturbations={"a:b": figures, "a_b": figures}))
+
+
+def test_a_sensitivity_run_logs_through_the_shared_rules(fake_mlflow, tmp_path):
+    out = tmp_path / "sens.json"
+    out.write_text("{}", encoding="utf-8")
+    card = tmp_path / "CARD.md"
+    card.write_text("card", encoding="utf-8")
+
+    tracking.log_run(
+        kind="sensitivity",
+        result=sensitivity_file(),
+        metrics_path=out,
+        owner="m1",
+        run_name="s6f",
+        card_path=card,
+    )
+
+    start = next(call for call in fake_mlflow.calls if call[0] == "start")
+    params = next(call for call in fake_mlflow.calls if call[0] == "params")[1]
+    assert start[2]["kind"] == "sensitivity" and start[2]["gate_eligible"] == "false"
+    assert CONVENTION_TAGS <= set(start[2])
+    assert params["device"] == "cuda" and params["prompt_0"] == "{label}" and params["split"] == "val"
+    assert ("artifact", "sens.json", "eval") in fake_mlflow.calls
