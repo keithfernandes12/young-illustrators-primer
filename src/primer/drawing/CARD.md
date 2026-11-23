@@ -45,13 +45,17 @@ Gated keys this stage owns are listed in `evaluate.py` as `OWNED_METRICS`, taken
 
 | Key | Value | Baseline | Run |
 |---|---|---|---|
-| `drawing_top5_acc` | 0.4956 over all 63,310 test drawings (**fails** the 0.85 gate) | chance 0.0145 (5 of 345); target 0.85 | MLflow `c2b6818759af457e972d868b77019225`, experiment `yip-drawing` |
+| `drawing_top5_acc` | 0.5436 over all 63,310 test drawings (**fails** the 0.85 gate) | chance 0.0145 (5 of 345); target 0.85 | MLflow `b72bc442f32f43cba857e9127f2b6c6f`, experiment `yip-drawing` |
 
-Measured on 2026-11-15 with `python -m primer.drawing.evaluate`: data version v1.1, RTX 4060, bf16.
-It is a number over **rendered Quick, Draw! drawings**, not children's uploads, and only comparable
-with another run on the same device and dtype (a CPU/fp32 run ranks near-ties differently and was
-not done). The run was backfilled to MLflow from the metrics file, so the logged value is that
-file's four-place display; the file the code now writes carries the unrounded ratio.
+Measured on 2026-11-16 with `python -m primer.drawing.evaluate`: data version v1.1, RTX 4060, bf16,
+prompt template `a child's drawing of a {label}.`, commit `b749f34`. It is a number over **rendered
+Quick, Draw! drawings**, not children's uploads, and only comparable with another run on the same
+device, dtype and prompt (a CPU/fp32 run ranks near-ties differently and was not done).
+
+**The previous figure, 0.4956** (2026-11-15, MLflow `c2b6818759af457e972d868b77019225`), was the
+same model and split under the model card's template, `This is a photo of {label}.`. The template
+was switched on S6f's `val` sweep (+4.3 points there), and the switch measured +4.8 on `test`. That
+is a better prompt, not a better model: S6d's fine-tune must beat 0.5436.
 
 **Do not read a number into the zero-shot setup.** The brief's survey of the sketch literature puts
 plain CLIP near 43% top-1 on Quick, Draw!, and the gate wants 0.85 top-5. This baseline exists to
@@ -95,6 +99,12 @@ drawings each). Top-5 runs from 0.00 to 0.996.
 ## Mitigations and trade-offs
 
 - **Zero-shot on sketches is weak**, and knowingly so — see above. The mitigation is S6d.
+- **The prompt trades children's-drawing stability for the gate's number.** `a child's drawing of
+  a {label}.` adds 4.8 top-5 points on rendered Quick, Draw!, but on S6c2's 1,000 children's
+  drawings top-1 changes more often between preprocessing variants (34 / 66 / 50% against 25 / 50 /
+  41%), the median top-1 confidence of an unbinarised upload is 0.93 rather than 0.10, and the
+  most common answer is `The Great Wall of China` rather than `squiggle`. Kept knowingly
+  (2026-11-16). A confidence near 1 from this model is not evidence the label is right.
 - **Confidences are sigmoid, not softmax.** SigLIP's training loss is pairwise, so each score is
   "does this label fit", independent of the others. They do not sum to 1. Ranking is unaffected,
   which is all `drawing_top5_acc` reads, but anything that later thresholds a confidence must know
@@ -126,3 +136,37 @@ drawings each). Top-5 runs from 0.00 to 0.996.
   norm being exactly 1 (the ranking is a dot product of two vectors scaled the same way), but a
   consumer that assumes a unit vector should know it holds to three decimals, not to float
   precision.
+
+## Sensitivity
+
+Measured by `python -m primer.drawing.sensitivity` (S6f) on 2,000 `val` drawings of v1.1, on GPU in
+bf16, under the shipped prompt `a child's drawing of a {label}.`. The run is MLflow
+`dfaee7e263744e9e85ce939c30489128` (2026-11-16), and the full table is in the plan's Verified facts.
+Each figure is the change in top-5 accuracy against the same drawings unperturbed, with a 95%
+interval. Baseline top-5 on the sample is 0.518.
+
+- **Missing strokes hurt most.** Dropping the last stroke costs 14.7 points [12.8, 16.6], and the
+  last two cost 21.8 [19.6, 24.2]. A child who stops early, or a scan that loses faint lines, will
+  cost far more accuracy than any change of pen.
+- **Line thickness: no clear change for 1 and 5 px on this sample, and 7 px is worse.** 7 px
+  costs 2.5 points [1.1, 3.8]. No equivalence margin is claimed, so this is consistent with 3 px,
+  not proof that it is best. Top-1 still changes on 27–38% of drawings, so the label shown first
+  is less stable than the gated number suggests.
+- **The prompt is a real setting.** The shipped template beats the model card's `This is a photo of
+  {label}.` by 4.3 points [2.9, 5.9], and `{label}` alone by 8.5. `a sketch of a {label}.` is
+  within noise of it (-0.95 [-2.1, +0.25]).
+- **The answer rests on a few regions.** In occlusion maps of 20 correctly ranked drawings, the
+  three most important 32 px patches carry a median 58% of the confidence drop. The share counts
+  positive drops only, and a drawing with three or fewer inked patches scores 1.0 trivially. Here
+  the median drawing has 25.5 inked patches (range 12–37), so none is trivial, and no map had an
+  undefined share (such a map reports `None`, is counted in `top3_share_undefined`, and is left out of the median).
+- **Partial erasure is too weak to read.** The training erasure removes a median 0.5% of ink; on
+  the 202 drawings that lost at least 5%, the change is -2.0 [-5.4, +1.0].
+- **Uncorrected intervals.** About ten 95% intervals are reported with no multiplicity correction;
+  the 7 px result is the one line-width interval that excludes zero, so treat it as suggestive
+  given the uncorrected intervals.
+- **Not covered:** training hyperparameters (S6d), and children's drawings, for which see S6c2's
+  preprocessing stability.
+- **History:** the first run (MLflow `d99d75b514934b18836e4ad94ddbc32f`, 2026-11-15) was under the
+  old prompt and gave the same picture: -11.7 and -19.9 for strokes, no clear line-width change, and
+  +4.3 for this prompt.

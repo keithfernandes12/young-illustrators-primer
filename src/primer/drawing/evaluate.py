@@ -36,6 +36,7 @@ import argparse
 import hashlib
 import itertools
 import json
+import os
 import statistics
 import sys
 import time
@@ -214,6 +215,57 @@ def _scored_under(config: Any, device: str, dtype: str) -> dict[str, Any]:
     }
 
 
+def add_mlflow_arguments(parser: argparse.ArgumentParser) -> None:
+    """``--mlflow`` and ``--owner``, the same on every drawing evaluation (S6c3)."""
+    parser.add_argument(
+        "--mlflow",
+        action="store_true",
+        help="after writing --out, log a copy of it to MLflow (experiment yip-drawing, server "
+        "MLFLOW_TRACKING_URI). The file stays the record; the run is a copy",
+    )
+    parser.add_argument("--owner", default="", help="who ran it; required with --mlflow")
+
+
+def check_mlflow_arguments(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Refuse a bad --mlflow request before minutes of scoring, not after."""
+    if not args.mlflow:
+        return
+    if not args.owner.strip():
+        parser.error("--owner is required with --mlflow: runs from six machines are told apart by it")
+    if getattr(args, "limit", None) is not None:
+        # A first-N probe is label-ordered and "never a result" (S6c); a run on the shared server
+        # would sit beside real ones with a drawing_top5_acc metric of its own.
+        parser.error("--mlflow does not log a --limit probe: it is a timing check, never a result")
+    if not os.environ.get("MLFLOW_TRACKING_URI", "").strip():
+        # Unset, the client quietly logs to a local mlflow.db in the working directory and the run
+        # id is printed as if it reached the shared server. Refuse before minutes of scoring.
+        parser.error(
+            "--mlflow needs MLFLOW_TRACKING_URI (open the IAP tunnel, see docs/runbooks/mlflow-server.md)"
+        )
+
+
+def log_to_mlflow(kind: str, result: dict[str, Any], out: Path, owner: str, run_name: str) -> str:
+    """Log ``out`` and print the run id. Imported lazily: the package is only needed here."""
+    from primer.drawing.tracking import log_run
+
+    # The 3.x client prints an emoji when a run ends. On a cp1252 Windows console that raises
+    # inside `end_run` and leaves the run RUNNING on the server, so what cannot be printed is
+    # replaced -- for the logging call only. The stream's own error mode comes back afterwards,
+    # even if logging fails, so nothing printed later in the process is silently altered.
+    stream = sys.stdout
+    reconfigure = getattr(stream, "reconfigure", None)
+    previous = getattr(stream, "errors", None)
+    if reconfigure is not None and previous is not None:
+        reconfigure(errors="replace")
+    try:
+        run_id = log_run(kind=kind, result=result, metrics_path=out, owner=owner, run_name=run_name)
+    finally:
+        if reconfigure is not None and previous is not None:
+            reconfigure(errors=previous)
+    print(f"logged MLflow run {run_id}")
+    return run_id
+
+
 def stability_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="evaluate stability")
     parser.add_argument("--version", required=True)
@@ -225,6 +277,7 @@ def stability_parser() -> argparse.ArgumentParser:
         help="default: cuda if available, else cpu. Pass cpu to reproduce the recorded CPU baseline "
         "(fp32) on a machine with a GPU, whose bf16 moves the thin margins",
     )
+    add_mlflow_arguments(parser)
     return parser
 
 
@@ -236,6 +289,7 @@ def _stability(argv: list[str]) -> int:
 
     parser = stability_parser()
     args = parser.parse_args(argv)
+    check_mlflow_arguments(parser, args)
     out = Path(args.out)
     if not out.resolve().parent.is_dir():
         parser.error(f"--out's folder does not exist: {out.parent}; the run takes minutes, so say so now")
@@ -260,6 +314,8 @@ def _stability(argv: list[str]) -> int:
             yield data, (row.bbox_x, row.bbox_y, row.bbox_width, row.bbox_height)
 
     config = DrawingConfig.from_yaml()
+    # Read before the run, as S6c does: an edit meanwhile should not be recorded as the code.
+    git_sha, git_dirty = _git_state()
     start = time.perf_counter()
     encoder = SiglipEncoder(config, device=args.device)
     summary = measure_stability(drawings(), encoder, config.prompts())
@@ -277,11 +333,15 @@ def _stability(argv: list[str]) -> int:
             "encoder": config.encoder,
             "encoder_revision": config.encoder_revision,
             "seconds": round(time.perf_counter() - start, 1),
+            "git_sha": git_sha,
+            "git_dirty": git_dirty,
             **describe_run(config, str(encoder.device), encoder.dtype_name or "unknown"),
         }
     )
     out.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(json.dumps(summary, indent=2))
+    if args.mlflow:
+        log_to_mlflow("stability", summary, out, args.owner, "s6c2-preprocessing-stability")
     return 0
 
 
@@ -518,6 +578,7 @@ def accuracy_parser() -> argparse.ArgumentParser:
         help="also write one row per scored drawing (record id, label, country, rank, hit) as "
         "gzipped CSV, for `python -m primer.drawing.bias_report` (S6g). Written after --out",
     )
+    add_mlflow_arguments(parser)
     return parser
 
 
@@ -544,6 +605,7 @@ def _evaluate_accuracy(argv: list[str]) -> int:
         parser.error("--limit must be at least 1")
     if args.per_drawing is not None and not args.per_drawing.resolve().parent.is_dir():
         parser.error(f"--per-drawing's folder does not exist: {args.per_drawing.parent}")
+    check_mlflow_arguments(parser, args)
 
     if not args.version.strip():
         # `required=True` only demands the flag: `--version ""` would read the unfrozen current
@@ -645,6 +707,8 @@ def _evaluate_accuracy(argv: list[str]) -> int:
         f"wrote {args.out}: drawing_top5_acc={result['overall']['drawing_top5_acc']:.4f} over {len(hits)} drawings "
         f"(chance {result['baseline']['drawing_top5_acc']}; {judged} of {len(result['slices'])} slices judged)"
     )
+    if args.mlflow:
+        log_to_mlflow("accuracy", result, args.out, args.owner, f"s6c-drawing-top5-{args.split}")
     return 0
 
 
