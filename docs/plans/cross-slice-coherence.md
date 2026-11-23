@@ -139,7 +139,11 @@ helper lands before any slice that should use it, and the consumer lists it unde
 - **Acceptance** — the step is in both skills; the PR template has a line "Reconciled with `main` at
   `<sha>`: reused / not applicable / differs because …".
 - **Testing** — `scripts/check_docs.py` passes; none otherwise.
-- **Depends on** — nothing. **Jira** — KAN-38.
+- **Depends on** — nothing to build; merges after S1, whose test file and this plan its text links.
+  **Jira** — KAN-38.
+- **Split (2026-11-23)** — the PR-template line goes in its own one-line PR, because `AGENTS.md`
+  puts `.github/` changes in their own PR. Until it lands, `create-pr` asks for the line at the
+  end of "How it was checked".
 
 ### S4 · A cross-slice question for the reviewer sessions
 
@@ -218,7 +222,7 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
 | S0 | in review | [#46](https://github.com/keithfernandes12/young-illustrators-primer/pull/46) | confirmed against #46 at `2f418ed`: tags built by `run_tags` (the CLI test asserts equality), owner from `--owner`, no literal owner, `git_dirty` `unknown`/`true`/`false` |
 | S1 | in review | [#47](https://github.com/keithfernandes12/young-illustrators-primer/pull/47) | `tests/test_conventions.py`: four scans, count-based allowlists with reasons and keys, stale entries fail |
 | S2 | not started | | needs S1 |
-| S3 | not started | | |
+| S3 | in review | [#48](https://github.com/keithfernandes12/young-illustrators-primer/pull/48) | reconcile step in `engineering-loop`, `loop-worker`, `create-pr` and the process doc; merge-order rule in the template and `docs/plans/AGENTS.md`. Merges after #47 (it links this plan and `tests/test_conventions.py`). The PR-template line is split out: `.github/` changes go in their own PR |
 | S4 | not started | | needs S3 |
 | S5 | not started | | |
 | S6 | not started | | needs S1 |
