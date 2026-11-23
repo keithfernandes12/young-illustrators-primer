@@ -595,7 +595,12 @@ def test_a_template_without_label_is_refused_before_anything_is_read(monkeypatch
     monkeypatch.setattr(catalog, "read_dataset", boom)
     monkeypatch.setattr(model, "SiglipEncoder", boom)
     base = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
-    text = base.read_text(encoding="utf-8").replace("This is a photo of {label}.", "a drawing")
+    # Replace whatever the shipped template is, so the test does not go vacuous when it changes:
+    # an unchanged copy would trip `boom` instead of the refusal this checks.
+    shipped = model.DrawingConfig.from_yaml(base).prompt_template
+    original = base.read_text(encoding="utf-8")
+    text = original.replace(f'"{shipped}"', '"a drawing"')
+    assert text != original
     bad = tmp_path / "bad.yaml"
     bad.write_text(text, encoding="utf-8")
     # `labels_file` resolves beside the config, so the vocabulary has to sit next to the copy.

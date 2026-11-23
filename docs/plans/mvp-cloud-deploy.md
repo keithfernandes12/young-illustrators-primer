@@ -2,7 +2,7 @@
 title: MVP on Google Cloud — models v0, serving, deploy, gates and monitoring
 type: plan
 created: 2026-11-07
-updated: 2026-11-15
+updated: 2026-11-16
 status: active
 author: rishiparekh
 tags: [mvp, gcp, serving, models, deploy, loops]
@@ -612,6 +612,32 @@ the licence constraint on each.
   sets; who owns that step is still open between KAN-38 and KAN-42.
 - **Depends on** — S6a. **Jira** — KAN-38.
 
+### S6f · Sensitivity analysis of the recogniser
+
+*size: small · added 2026-11-15 at the KAN-38 owner's request*
+
+`src/primer/drawing/sensitivity.py`: how far the recogniser's top-5 moves when the drawing changes.
+The perturbations are the ones `docs/engineering/model-development.md` lists for this stage —
+stroke count, line thickness and partial erasure. It also measures how far the answer moves when
+the prompt template changes, which is the one inference-time setting a zero-shot model has. Occlusion
+maps are the attribution step that the course guidelines meet with SHAP or LIME.
+
+- **Why separate** — as first built, the measurement code reads nothing that S6c (#37) or the
+  MLflow server (#38) change. It builds only on `main`: the renderer, `augment_canvas`, and S6c2's
+  `scored` and `pair_stats`. A fake scorer covers all of it in CI. (The prompt switch this PR
+  also carries does change S6c's and S6c2's recorded figures, and the card's results; Decisions,
+  2026-11-16.)
+- **Acceptance** — each perturbation is reported against the unperturbed drawing over the same
+  drawings, with a paired bootstrap interval on the top-5 change. One real run is recorded as a
+  dated Verified fact, logged to MLflow if a server is reachable.
+- **Not in this slice** — sensitivity to training hyperparameters, which belongs to S6d because
+  nothing here trains. The sweep itself does not change `prompt_template`: a better-scoring
+  template is a KAN-38 decision. That decision was made on 2026-11-16 (Decisions), and the PR
+  carries the owner-approved switch to `a child's drawing of a {label}.` at the owner's request.
+  The measurement code never edits the config; the switch is a separate, one-line change to
+  `drawing_baseline.yaml`.
+- **Depends on** — S6a, S6b, S6b1. **Jira** — KAN-38.
+
 ### S7a · Illustration model, pretrained baseline
 
 *size: small*
@@ -731,11 +757,12 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6b3 | merged | [#29](https://github.com/keithfernandes12/young-illustrators-primer/pull/29) | strata and two samplers, measured over the real 174,981 rows. KAN-117 |
 | S6b4 | not started | | **spike, person-only**: waits on S6b3, S6a and KAN-24, plus DINOv2 and a captioner that no slice supplies. Can only add a stratum. KAN-117 |
 | S6b2 | merged | [#32](https://github.com/keithfernandes12/young-illustrators-primer/pull/32) | `data.py`: hashed 80/10/10 split of v1.1 (506k/63k/63k), rendered on demand through `render_strokes` → `augment_canvas` (train only) → `prepare_drawing`. Unblocks S6c |
-| S6c | in review | [#37](https://github.com/keithfernandes12/young-illustrators-primer/pull/37) | baseline `drawing_top5_acc` **0.4956** over all 63,310 rendered test drawings (GPU, bf16): gate FAIL against 0.85, chance 0.0145. MLflow run `c2b68187` in `yip-drawing`. The gate's number, not the product's. KAN-38 |
-| S6c2 | merged | [#33](https://github.com/keithfernandes12/young-illustrators-primer/pull/33) | 1,000 frozen drawings (unstratified), four variants: top-1 moves 25% / 50% / 41% between adjacent variants; over half the drawings come out `squiggle`. Reproduces exactly. KAN-109 |
+| S6c | merged | [#37](https://github.com/keithfernandes12/young-illustrators-primer/pull/37) | baseline `drawing_top5_acc` **0.5436** over all 63,310 rendered test drawings (GPU, bf16) under the prompt `a child's drawing of a {label}.` (switched 2026-11-16; was 0.4956 under the model card's prompt): gate FAIL against 0.85, chance 0.0145. MLflow run `b72bc442`, superseding `c2b68187`, in `yip-drawing`. The gate's number, not the product's. KAN-38 |
+| S6c2 | merged | [#33](https://github.com/keithfernandes12/young-illustrators-primer/pull/33) | 1,000 frozen drawings (unstratified), four variants: under the model card's prompt, top-1 moves 25% / 50% / 41% between adjacent variants and over half the drawings come out `squiggle`; under the shipped prompt (re-measured 2026-11-16) 34% / 66% / 50% and the most common answer is `The Great Wall of China`. Reproduces exactly. KAN-109 |
 | S6c3 | in review | [#44](https://github.com/keithfernandes12/young-illustrators-primer/pull/44) | `evaluate.py --mlflow --owner` for accuracy and stability through `tracking.py`; refuses probes, owner-less runs, a missing `MLFLOW_TRACKING_URI` and colliding names. Round-tripped on the real server. KAN-38 |
-| S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); still waits on S6c (#37). Reads S6c2's stability figures |
+| S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); S6c merged (#37); must beat 0.5436 under the switched prompt. Reads S6c2's stability figures |
 | S6e | merged | [#35](https://github.com/keithfernandes12/young-illustrators-primer/pull/35) | `sheet.py`: Florence-2 + SAM 2.1 + ViTPose beside SigLIP 2; every field filled on 82/82 real sheets; two figures found as two on 12/20. Unblocks KAN-42 |
+| S6f | in review | [#39](https://github.com/keithfernandes12/young-illustrators-primer/pull/39) | sensitivity: stroke drop, line width, erasure, prompt template, occlusion; paired bootstrap intervals; runs on `val`. Also carries the prompt switch to `a child's drawing of a {label}.` (S6c 0.5436 on `test`, S6c2 re-measured). Re-run under it: strokes -14.7 / -21.8, 7 px -2.5. KAN-38 |
 | S7a | in progress | branch `feat/KAN-42-controlnet-baseline` | pretrained SD 1.5 + ControlNet-Scribble, one page, local output; synthetic inputs only until KAN-94 |
 | S7b | not started | | needs S1, GPU quota in region, a working `consistency()`, and KAN-94 |
 | S8 | not started | | |
@@ -873,6 +900,38 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   the same pixels training will. Labels are compared by vocabulary index (`data.label_index`,
   case-insensitive), never by string. The cut is a literal 5 (`evaluate.TOP_K`), not
   `DrawingConfig.top_k`.
+- **2026-11-15 — S6f perturbs evaluation drawings on purpose, and runs on `val`.**
+  - `data.py` refuses augmentation on `val` and `test` because an augmented evaluation measures the
+    augmentation. Measuring it is S6f's point, and every figure sits beside the unperturbed drawing.
+  - `val` is the default because the prompt sweep compares templates. Acting on a comparison taken
+    on `test` would tune on the test split.
+  - Erasure is `augment_canvas` with every other operation off, not a second eraser.
+- **2026-11-15 — S6f's perturbations are measured so that the outcome is not decided in advance.**
+  - Strokes are dropped by count (the last 1 or 2), not by fraction. A fraction collapses on
+    drawings with few strokes.
+  - Erasure records the ink mass it actually removed. Erasures that remove less than 5% are left
+    out, because `augment_canvas` places rectangles at random and many land on blank paper.
+  - Occlusion paints patches paper-white, which erases them and is in-distribution. Blank patches
+    are not scored, since their drop is 0 by construction. The report is how concentrated the drop
+    is, not "ink matters more than paper", which would be true by construction.
+  - Only drawings the baseline already ranks in its top five are occluded.
+  - Every change in accuracy is paired over the same drawings and carries a 95% bootstrap interval.
+
+- **2026-11-16 — The prompt template is `a child's drawing of a {label}.`, chosen on `val`.** S6f's
+  sweep over 2,000 `val` drawings (MLflow `d99d75b5`) scored it +4.3 top-5 points [+2.9, +5.9] above
+  the model card's `This is a photo of {label}.`, and the KAN-38 owner switched to it before S6d.
+  It was chosen on `val` so that `test` stays a report: S6c was re-measured on `test` once under
+  it, and no other template was scored there. It is kept exactly as measured, "a airplane"
+  included; correcting the article would be a new, unmeasured prompt. Every earlier drawing figure
+  (S6c's 0.4956, S6c2's table, S6f's perturbations) was taken under the old template and stays
+  on record as that.
+
+- **2026-11-16 — The switched prompt is kept after S6c2's re-run.** The KAN-38 owner confirmed it
+  with S6c2's figures in hand: top-1 flips more on children's drawings, the median confidence of an
+  unbinarised upload is 0.93, and `The Great Wall of China` is the most common answer. That is
+  accepted as a known trade-off for +4.8 on the gate's split. It binds S6d in two ways: its
+  stability is read against the 2026-11-16 table, not the 2026-11-15 one, and nothing may treat
+  the recogniser's sigmoid confidence as certainty without first measuring its calibration.
 
 - **2026-11-16 — S6c3 sets its own logging conventions rather than reusing the speech stage's
   helper.** `speech/train.py`'s `log_run` was read first and judged against the S6 principles in
@@ -1546,6 +1605,133 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
     over 16 distinct `drawing_label`s. All 16 are in the 345, case-insensitively and exactly, so a
     flawless recogniser reaches 1.0. That is a property of the golden set, not of this number,
     which is not taken over it.
+- **2026-11-15 — S6f: what moves S6a's zero-shot answer, measured.**
+  - **The run.** `python -m primer.drawing.sensitivity --version v1.1 --split val --sample 2000
+    --device cuda --mlflow` scored a seeded uniform draw (seed 20261115) of 2,000 **val** drawings
+    on the RTX 4060 in bf16, at code `8c47145`, in 285 s. It is MLflow run
+    `d99d75b514934b18836e4ad94ddbc32f` in `yip-drawing`. Baseline top-5 on the sample is 0.4755.
+    That is lower than S6c's 0.4956 on `test`, but this is a different split and 2,000 drawings,
+    so the two are not comparable figures.
+  - **Reading the figures below.** Each is the top-5 change against the same drawings unperturbed,
+    with its 95% paired bootstrap interval, then the top-1 change rate (S6c2's `pair_stats`).
+
+    | Perturbation | Drawings | Top-5 change [95% CI] | Top-1 changes |
+    |---|---|---|---|
+    | drop the last stroke | 1,728 | −0.117 [−0.134, −0.098] | 40% |
+    | drop the last two | 1,440 | −0.199 [−0.222, −0.176] | 53% |
+    | line width 1 px (shipped: 3) | 2,000 | −0.004 [−0.017, +0.009] | 32% |
+    | line width 5 px | 2,000 | +0.002 [−0.009, +0.013] | 24% |
+    | line width 7 px | 2,000 | +0.000 [−0.014, +0.013] | 31% |
+    | erasure, ≥5% of ink removed | 202 | −0.045 [−0.089, −0.005] | 18% |
+    | prompt `{label}` | 2,000 | −0.042 [−0.054, −0.029] | 29% |
+    | prompt `a sketch of a {label}.` | 2,000 | +0.033 [+0.019, +0.047] | 42% |
+    | prompt `a child's drawing of a {label}.` | 2,000 | +0.043 [+0.029, +0.059] | 50% |
+
+  - **Stroke count matters most.** Losing the last one or two strokes costs 12–20 points.
+  - **No clear average change in top-5 accuracy from line width on this sample** at 1–7 px: all
+    three intervals span zero. That is absence of evidence, not equivalence: no margin was stated
+    or justified, though all three intervals fit within ±2 points. Top-1 changes on 24–32% of
+    drawings, so the label the product shows first does move. (The re-run below finds 7 px worse.)
+  - **The prompt template is worth +4.3 points on `val`.** `a child's drawing of a {label}.` beats
+    the then-shipped `This is a photo of {label}.`. The KAN-38 owner switched `prompt_template` to
+    it on 2026-11-16 (Decisions); every figure in this entry predates the switch. The figure was taken on `val`, so
+    a decision taken on it leaves `test` clean.
+  - **The training erasure barely erases.** With erasure forced on at the shipped settings (up to 3
+    rectangles of up to 20% a side), the median drawing loses **0.5%** of its ink. Only 202 of
+    2,000 lose ≥5%, so the erasure row is measured on a tenth of the sample and its interval is
+    wide. In training, erasure fires on 30% of drawings, so most training canvases are not
+    meaningfully erased. This is an Open question for S6d.
+  - **Occlusion**, on the first 20 sample drawings the baseline ranked in its top five, with 32 px
+    patches. The median drawing loses 0.076 of the true label's confidence when its single most
+    important patch is erased. Its three most important patches carry half the total drop
+    (median `top3_share` 0.50), so the answer rests on a few regions but not on one. The
+    per-drawing maps are in the run's `sensitivity/` artifact.
+  - **What this does not cover.** Sensitivity to training hyperparameters, which is S6d's; and
+    children's drawings, where S6c2 measured the preprocessing.
+
+- **2026-11-16 — S6c under the switched prompt: `drawing_top5_acc` = 0.5436, still a gate FAIL.**
+  The same command as S6c's 0.4956, over all **63,310** test drawings, RTX 4060 in bf16, encoder
+  revision `75de2d55`, from clean commit `b749f34`, with only `prompt_template` changed (prompts
+  sha256 `d3425b53…`). It ran in 942 s. `check_gate.py --only drawing` prints `FAIL
+  drawing_top5_acc >= 0.85: actual=0.5436`. MLflow run `b72bc442f32f43cba857e9127f2b6c6f` in
+  `yip-drawing`, run name `s6c-siglip2-zero-shot-child-prompt`, tagged `supersedes_run` =
+  `c2b68187…` and `gate_passed=false`, logged from the metrics file by the same path as the
+  backfill.
+  - **+4.8 points on `test`** against +4.3 [+2.9, +5.9] on `val` in S6f: the gain carried over
+    from the split it was chosen on, and it is a better prompt, not a better model. S6d's
+    fine-tune must beat 0.5436 under this prompt, not 0.4956.
+  - **Per country.** The same 54 judged slices now run from 0.4735 (RO, n=452) to 0.6765 (CL,
+    n=102). US 0.5282 (n=28,557), GB 0.5183, CA 0.5343, DE 0.5573, AU 0.5712: every large slice
+    rose by 4–6 points, so the switch did not open a gap between countries.
+
+- **2026-11-16 — S6c2 under the switched prompt: children's drawings get less stable, and
+  confidently wrong.** S6c2's command (`evaluate stability --version v1.1 --device cpu`), CPU fp32,
+  the same 1,000 frozen drawings, 999.8 s, prompts sha256 `d3425b53…`. Between #33's merge and
+  `b749f34` nothing on the stability path changed except comments and this template, and the old
+  table reproduced exactly, so the template is the only variable. Old figures in brackets.
+
+  | Adjacent pair | top-1 changes | ... where the margin was above median | top-5 overlap |
+  |---|---|---|---|
+  | as published → greyscale | **33.7%** [25.5%] | 22.2% [10.0%] | 0.745 [0.765] |
+  | greyscale → binarised | **66.4%** [49.9%] | 60.2% [35.8%] | 0.534 [0.393] |
+  | binarised → cropped to the box | **49.5%** [41.3%] | 44.0% [24.6%] | 0.681 [0.561] |
+
+  | Variant | top-1 confidence median | margin median | distinct top-1 | most common top-1 share |
+  |---|---|---|---|---|
+  | as published | **0.929** [0.103] | 0.035 [0.051] | 160 [108] | 16.8% [53.3%] |
+  | greyscale | 0.851 [0.081] | 0.053 [0.037] | 144 [110] | 20.3% [50.8%] |
+  | binarised | 0.212 [0.085] | 0.032 [0.039] | 135 [127] | 42.8% [51.5%] |
+  | cropped, binarised | 0.257 [0.093] | 0.035 [0.044] | 123 [141] | 36.2% [54.6%] |
+
+  - **The most common answer is now `The Great Wall of China`**, not `squiggle`, under every
+    variant. One possible mechanism, unmeasured: the template reads "a child's drawing of a The
+    Great Wall of China.", and the shared prefix "a child's drawing of" fits every drawing here.
+  - **Confidence jumped tenfold on unbinarised uploads** (median 0.10 → 0.93) while the margin did
+    not grow, so a high sigmoid score now says little about which label is right. Nothing in
+    `src/` thresholds the recogniser's confidence today; anything that later does would read it
+    as certainty.
+  - **Top-1 flips rose in every pair**, and in the confident half they roughly doubled. Top-5
+    overlap rose for two pairs, so the top five as a set is steadier there while its order is not.
+  - This is the pattern S6d's acceptance names: a gain on rendered Quick, Draw! (+4.8, above)
+    together with a drop in stability. It is measured here on the prompt, before any training.
+
+- **2026-11-16 — S6f re-run under the switched prompt: the same picture, a little sharper.** The
+  same command and seed (20261115, 2,000 `val` drawings, RTX 4060 bf16) at commit `5b57dee`, 308 s,
+  MLflow `dfaee7e263744e9e85ce939c30489128`. The shipped template is now the baseline, so the model
+  card's template is one of the alternatives. Baseline top-5 **0.518** (was 0.4755).
+
+  | Perturbation | n | top-5 change [95% CI] | top-1 changes | earlier run |
+  |---|---|---|---|---|
+  | drop the last stroke | 1,728 | **-0.147** [-0.166, -0.128] | 46.8% | -0.117 |
+  | drop the last two | 1,440 | **-0.218** [-0.242, -0.196] | 60.9% | -0.199 |
+  | line width 1 px | 2,000 | -0.012 [-0.026, +0.004] | 36.6% | ≈ 0 |
+  | line width 5 px | 2,000 | +0.000 [-0.011, +0.012] | 27.3% | ≈ 0 |
+  | line width 7 px | 2,000 | **-0.025** [-0.038, -0.011] | 37.6% | ≈ 0 |
+  | erasure (≥ 5% ink removed) | 202 | -0.020 [-0.054, +0.010] | 24.8% | -0.045 |
+  | prompt `{label}` | 2,000 | **-0.085** [-0.100, -0.071] | 51.7% | -0.042 vs old |
+  | prompt `a sketch of a {label}.` | 2,000 | -0.010 [-0.021, +0.003] | 32.3% | +0.033 vs old |
+  | prompt `This is a photo of {label}.` | 2,000 | **-0.043** [-0.059, -0.029] | 49.5% | baseline then |
+
+  - **A reproducibility check.** The model card's template scores 0.4755 here, exactly the earlier
+    run's baseline: same drawings, same seed, two GPU bf16 runs. (Its -0.043 is the earlier +0.043
+    with before and after swapped, so it is the negation by construction and checks nothing.)
+  - **Uncorrected intervals.** About ten 95% intervals are reported with no multiplicity
+    correction, so one in twenty could clear zero by chance. The 7 px result is the only
+    line-width interval that excludes zero; treat it as suggestive given the uncorrected intervals.
+  - **Missing strokes cost more under this prompt** (-14.7 against -11.7), from a higher baseline.
+  - **7 px is worse than 3 px on this sample**, by 2.5 points [1.1, 3.8]; for 1 and 5 px we detect
+    no clear change (1 px: -1.2 [-2.6, +0.4]). This is consistent with keeping the shipped 3 px,
+    not proof that 3 px is best: no equivalence margin is claimed.
+  - **Erasure no longer clears zero.** It still removes a median 0.5% of ink (1,798 of 2,000 below
+    the 5% floor), so the earlier -4.5 and this -2.0 are both thin; the Open question on its
+    strength stands.
+  - **Occlusion:** median `top3_share` 0.58 (was 0.50), median `max_drop` 0.178 (was 0.076). The
+    drops are larger in absolute terms because confidences are higher under this prompt. Read
+    the share beside the patch counts, which this run's JSON holds per map and the summary
+    reports as `inked_patches_median`: a median of 25.5 inked patches per drawing (range 12–37),
+    so none of the 20 maps is trivially 1.0, and none has an undefined share (`top3_share` is
+    `None` when no patch lowers confidence; `top3_share_undefined` counts those, and it was 0
+    here). Computed from the run's saved JSON, not re-scored.
 
 - **2026-11-16 — S6c3: both evaluation files round-trip through the real MLflow server.**
   `tracking.log_run` logged S6c's re-measured metrics file and S6c2's stability summary into the
@@ -1786,6 +1972,40 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   worker), and a content-hash name means two children's identical crops would share one object
   once the GCS store exists, which complicates deleting one child's data. *Recommended:* serving
   passes a store explicitly and the GCS one decides its naming against the deletion path (KAN-64).
+- **Should the recogniser's prompt template change?** S6f measured `a child's drawing of a {label}.`
+  at +4.3 top-5 points [+2.9, +5.9] over the shipped `This is a photo of {label}.` on 2,000 `val`
+  drawings. The product reads children's drawings, so the wording also fits. Changing it moves
+  every score, including S6c's and S6c2's, so they would need re-measuring. It also bears on S6d,
+  because fine-tuning learns against whatever text the prompts give it. *Recommended:* decide
+  before S6d starts. If it changes, re-run S6c on `test` once under the new template.
+  *Decides:* the KAN-38 owner. **Answered 2026-11-16: switched**, and S6c and S6c2 re-measured
+  (Verified facts, same date).
+- **Is the training erasure too weak to matter?** At the shipped `erasure_*` settings, forced on,
+  it removes a median of 0.5% of a drawing's ink, and it fires on only 30% of training drawings.
+  S6f found that losing real strokes costs 12–20 points, so robustness to missing ink is worth
+  training for, and this augmentation barely provides it. *Recommended:* in S6d, try larger or more
+  rectangles, or dropping whole strokes before rendering, against the shipped setting. Measure each
+  on `val` with `sensitivity.py`. *Decides:* S6d, with the KAN-38 owner.
+
+- **Keep `a child's drawing of a {label}.` now that S6c2 has been re-measured under it?** It gains
+  +4.8 top-5 on the gate's split, but on children's drawings top-1 flips more often, the median
+  confidence of an unbinarised upload goes from 0.10 to 0.93, and `The Great Wall of China`
+  replaces `squiggle` as the most common answer (Verified facts, 2026-11-16). The switch was
+  decided before these figures existed. *Options:* keep it and have S6d read its stability against
+  the new table; revert to `This is a photo of {label}.`; or run S6c2 under `a sketch of a {label}.`
+  (+3.3 on `val`) first, which selects on Amateur Drawings rather than on `test`. *Decides:* the
+  KAN-38 owner. **Answered 2026-11-16: keep it** (Decisions, same date).
+
+- **The shipped template is ungrammatical for many labels.** It is kept exactly as measured, so
+  "a airplane" and "a The Great Wall of China" are in the prompts. The "a The ..." shared-prefix
+  effect is the unmeasured mechanism behind the stability drop above. *Recommended:* before or
+  inside S6d, try a label-aware article (or a template that avoids one), measure it on `val`, run
+  S6c2's stability table, and score `test` once. *Decides:* the KAN-38 owner. *Tracked:* KAN-129.
+- **There is no accuracy measure for children's drawings.** The +4.8 is on rendered Quick, Draw!;
+  the recorded effect on the product's input is less stability and confidence near 1, and nothing
+  gated says which way accuracy moved. *Recommended:* S6d's acceptance names a proxy (for example
+  hand-labelled Amateur Drawings) so a gain can be told from a stability loss. *Decides:* the
+  KAN-38 owner. *Tracked:* KAN-130.
 
 ## Out of scope
 
