@@ -81,6 +81,8 @@ landed while it was being built. Before opening the PR, and again before marking
 - `python -m pytest tests/test_conventions.py` when it exists: it fails on the known kinds of drift.
 - Write one line in the PR body, under **How it was checked**:
   `Reconciled with main at <sha>: reused <x> / not applicable / differs because <reason>.`
+  `<sha>` is the `origin/main` commit you read up to. On the second pass, read from the `<sha>` of
+  the earlier line (`<that sha>..origin/main`), not from a merge base that has since moved.
 
 Then, in the same branch: mark the slice in the plan's status table, append any dated Decisions or
 Verified facts, and fix any document the change made untrue. Then `create-pr`.
@@ -88,8 +90,8 @@ Verified facts, and fix any document the change made untrue. Then `create-pr`.
 ## 7. Finish on what is true
 
 Before saying the work is ready: the branch is on current `main` and reconciled with it again
-(step 6); CI is green on the latest commit
-(`gh pr checks <n>`; if red, use `fix-ci`); the PR body matches the final diff; every review finding
+(step 6); CI is green on the latest commit (`gh pr checks <n>`; if red, use `fix-ci`); the PR body
+matches the final diff; every review finding
 has a disposition.
 Green CI alone does not mean ready.
 

@@ -35,9 +35,9 @@ related: []
 
 > One slice = one PR. Outside this plan, name a slice with the plan's slug in front
 > (`<this-file-name> S2`), because other plans have an S2 too. Order the slices so each one leaves
-> `main` working. A slice that adds a shared
-> helper (logging, git state, a config loader) comes before every slice that should use it, and
-> those list it under *Depends on* — merge order follows dependencies, not readiness.
+> `main` working. A slice that adds a shared helper (logging, git state, a config loader) comes
+> before every slice that should use it, and those list it under *Depends on* — merge order
+> follows dependencies, not readiness.
 
 ### S1 · <short name>
 
