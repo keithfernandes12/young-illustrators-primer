@@ -7,13 +7,15 @@ accuracy must be.
 
 from __future__ import annotations
 
+import io
 import json
+import sys
 
 import pandas as pd
 import pytest
 
 from primer.drawing import bias_report
-from primer.drawing.bias_report import build_report, check_rows, holm, wilson
+from primer.drawing.bias_report import build_report, check_rows, country_tests, holm, rates_by, wilson
 
 
 def make_rows(groups):
@@ -139,6 +141,37 @@ def test_a_row_whose_hit_disagrees_with_its_rank_is_refused(world):
         check_rows(rows, metrics)
 
 
+def test_a_drawing_listed_twice_is_refused(world):
+    rows, metrics = world
+    rows.loc[1, "record_id"] = rows.loc[0, "record_id"]
+    with pytest.raises(ValueError, match="twice"):
+        check_rows(rows, metrics)
+
+
+def test_a_country_the_metrics_file_does_not_list_is_refused(world):
+    # Reconciling only the file's slices would let rows carry a country the file never saw, so long
+    # as the totals still agreed.
+    rows, metrics = world
+    metrics["slices"] = [s for s in metrics["slices"] if s["value"] != "S"]
+    with pytest.raises(ValueError, match="country slices"):
+        check_rows(rows, metrics)
+
+
+def test_a_metrics_file_without_country_slices_is_refused(world):
+    rows, metrics = world
+    metrics["slices"] = []
+    with pytest.raises(ValueError, match="country slices"):
+        check_rows(rows, metrics)
+
+
+def test_rows_whose_label_and_index_disagree_are_refused(world):
+    # The categories key on the label and the country tests on its index: they must name one thing.
+    rows, metrics = world
+    rows.loc[0, "label_index"] = 1  # still called "easy"
+    with pytest.raises(ValueError, match="one-to-one"):
+        check_rows(rows, metrics)
+
+
 # ---------------------------------------------------------------------------------------- report
 
 
@@ -231,6 +264,36 @@ def test_the_cli_keeps_a_country_called_na(tmp_path):
     assert report["provenance"]["prompt_template"] == "a child's drawing of a {label}."
 
 
+def _cli_inputs(tmp_path, rows_name="rows.csv.gz", compression="gzip"):
+    rows = make_rows([("NA", 0, "easy", 150, 120), ("US", 0, "easy", 150, 90)])
+    rows_path = tmp_path / rows_name
+    rows.to_csv(rows_path, index=False, compression=compression)
+    metrics_path = tmp_path / "m.json"
+    metrics_path.write_text(json.dumps(metrics_for(rows)), encoding="utf-8")
+    return ["--metrics", str(metrics_path), "--rows", str(rows_path), "--out", str(tmp_path / "bias.json")]
+
+
+def test_the_cli_reads_the_rows_as_gzip_whatever_they_are_called(tmp_path):
+    # `evaluate` always writes gzip; a `.csv` name must not make the reader treat the bytes as text.
+    assert bias_report.main(_cli_inputs(tmp_path, rows_name="rows.csv")) == 0
+
+
+def test_the_cli_names_rows_that_are_not_gzip(tmp_path):
+    with pytest.raises(SystemExit, match="not the gzipped CSV"):
+        bias_report.main(_cli_inputs(tmp_path, compression=None))
+
+
+def test_a_console_that_cannot_print_the_report_does_not_fail_a_good_run(tmp_path, monkeypatch):
+    # The heading holds ">=" as a single character that cp1252 has no code for; both files are
+    # written before it is printed, so exit 1 would report a failure that did not happen.
+    console = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+    monkeypatch.setattr(sys, "stdout", console)
+    args = _cli_inputs(tmp_path)
+
+    assert bias_report.main(args) == 0
+    assert (tmp_path / "bias.json").exists()
+
+
 def test_the_expectation_s_own_uncertainty_is_in_the_test():
     # X scores 0.6 on a label that the only other country, Y, scored 0.5 on from just 20 drawings.
     # By hand: own part 200 x 0.25 = 50; estimate part 200^2 x 0.25 / 20 = 500; sd = sqrt(550)/200,
@@ -242,3 +305,93 @@ def test_the_expectation_s_own_uncertainty_is_in_the_test():
 
     assert tests.loc["X", "p_label_mix"] == pytest.approx(0.3938, abs=1e-3)
     assert not tests.loc["X", "named"]
+    # The 95% interval on the difference uses the same variance: 0.1 +- 1.96 x sqrt(550) / 200.
+    assert tests.loc["X", "difference_low"] == pytest.approx(0.1 - 0.22981, abs=1e-4)
+    assert tests.loc["X", "difference_high"] == pytest.approx(0.1 + 0.22981, abs=1e-4)
+
+
+def test_a_gap_against_outside_rates_of_exactly_one_is_not_read_as_no_evidence():
+    # Y scored 150 of 150 on the label, so the plug-in variance is zero. X's 50-point deficit must
+    # not come out as p = 1: that would be "no evidence" for the largest gap there could be.
+    rows = make_rows([("X", 0, "easy", 150, 75), ("Y", 0, "easy", 150, 150)])
+
+    tests = build_report(rows, metrics_for(rows))["country"]["tests"]
+
+    assert tests.loc["X", "difference"] == pytest.approx(-0.5)
+    assert tests.loc["X", "p_label_mix"] < 1e-6 and tests.loc["X", "p_raw"] < 1e-6
+    assert bool(tests.loc["X", "named"])
+
+
+def test_no_gap_against_outside_rates_of_exactly_one_is_still_p_one():
+    rows = make_rows([("X", 0, "easy", 150, 150), ("Y", 0, "easy", 150, 150)])
+
+    tests = build_report(rows, metrics_for(rows))["country"]["tests"]
+
+    assert (tests["p_label_mix"] == 1.0).all() and not tests["named"].any()
+
+
+def test_holm_is_what_decides_who_is_named(world, monkeypatch):
+    rows, metrics = world
+    tests = build_report(rows, metrics)["country"]["tests"]
+    assert tests["p_label_mix_holm"].to_dict() == pytest.approx(holm(tests["p_label_mix"].to_dict()))
+    assert (tests["p_label_mix_holm"] > tests["p_label_mix"]).any(), "the correction must bite somewhere"
+
+    # A line between B's raw p and its Holm p: named on the raw p, not named after the correction.
+    raw, adjusted = tests.loc["B", "p_label_mix"], tests.loc["B", "p_label_mix_holm"]
+    assert raw < adjusted
+    monkeypatch.setattr(bias_report, "ALPHA", (raw + adjusted) / 2)
+    assert "B" not in build_report(rows, metrics)["country"]["named"]
+
+
+def test_top_five_and_top_one_are_not_the_same_column():
+    # Ranks 0..4 are hits for top-5 only, except rank 0.
+    rows = make_rows([("X", 0, "easy", 100, 0)])
+    rows["rank"] = [0] * 20 + [3] * 30 + [7] * 50
+    rows["hit"] = rows["rank"] < 5
+
+    group = rates_by(rows, "country_code").loc["X"]
+
+    assert group["top5"] == pytest.approx(0.5) and group["top1"] == pytest.approx(0.2)
+    assert group["hits"] == 50 and bool(group["judged"])
+
+
+def test_drawings_of_a_label_no_other_country_drew_are_left_out_and_said_so():
+    rows = make_rows(
+        [("X", 0, "easy", 120, 60), ("X", 1, "solo", 30, 0), ("Y", 0, "easy", 150, 75)],
+    )
+
+    report = build_report(rows, metrics_for(rows))
+    x = report["country"]["tests"].loc["X"]
+
+    assert x["compared"] == 120 and x["no_outside_label"] == 30
+    assert x["expected_from_label_mix"] == pytest.approx(0.5), "the solo drawings do not drag it down"
+    assert any("30 drawings are left out" in line for line in bias_report.findings(report))
+
+
+def test_a_country_none_of_whose_labels_is_drawn_elsewhere_is_refused_clearly():
+    rows = make_rows([("X", 0, "easy", 150, 75), ("Y", 1, "other", 150, 75)])
+    with pytest.raises(ValueError, match="cannot be tested"):
+        build_report(rows, metrics_for(rows))
+
+
+def test_a_split_with_no_judged_country_is_refused_clearly():
+    rows = make_rows([("X", 0, "easy", 20, 10), ("Y", 0, "easy", 20, 10)])
+    with pytest.raises(ValueError, match="nothing to judge"):
+        country_tests(rows, [])
+    with pytest.raises(ValueError, match="nothing to judge"):
+        build_report(rows, metrics_for(rows))
+
+
+def test_the_mitigation_names_the_largest_country_from_the_numbers(world):
+    rows, metrics = world
+
+    first = bias_report.findings(build_report(rows, metrics))[0]
+
+    assert " is 44% of the drawings" in first  # X and Y tie at 4,000 of 9,020
+    assert "difference_low" in first and "Mitigation, proposed for S6d" in first
+
+    bigger = rows.copy()
+    extra = make_rows([("Z", 0, "easy", 6000, 5400)])
+    bigger = pd.concat([bigger, extra], ignore_index=True)
+    again = bias_report.findings(build_report(bigger, metrics_for(bigger)))[0]
+    assert "Z is 40% of the drawings" in again

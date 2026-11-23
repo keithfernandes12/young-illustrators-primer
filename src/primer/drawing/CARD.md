@@ -85,8 +85,14 @@ at a family-wise 5%.
 - **Mitigation, proposed for S6d and not applied:** a zero-shot model has nothing to reweight.
   - Cap any one country's share of the training sample with `capped_weights`, so a fine-tune on a
     US-heavy split cannot buy US accuracy with the other countries'.
-  - Re-run this report on every candidate, and reject one if a named country's difference moves
-    against it beyond its interval.
+  - Re-run this report on every candidate, and reject one if a named country's difference falls
+    below its baseline value by more than the half-width of the baseline's 95% interval on that
+    difference (`difference_low` to `difference_high` in the report, not adjusted for the number
+    of countries).
+- **Read with two limits.** Drawings are treated as independent, and Quick, Draw! rows carry no
+  drawer id, so a player who drew many items would make the p-values too small and this cannot be
+  adjusted for. "Named" is statistical, not practical: at the US's size a gap of two or three
+  points is named, so read the difference and its interval, not only the verdict.
 
 **Category: per-class difficulty, not a fairness gap.** All 345 categories are judged (146–227
 drawings each). Top-5 runs from 0.00 to 0.996.

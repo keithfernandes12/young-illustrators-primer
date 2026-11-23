@@ -10,19 +10,30 @@ two slice keys, ``country_code`` and category (the label), with every disparity 
 ruled out by the numbers, and a mitigation proposed or ruled out for `CARD.md`.
 
 **What makes a disparity "named" here, and not noise.** With 54 judged countries, many near the
-100-drawing floor, best minus worst mostly measures sample size. So each judged country is tested,
-and a country is named only if it survives all of the following:
+100-drawing floor, best minus worst mostly measures sample size. So only countries with at least
+`SMALL_SLICE` drawings are judged, each is tested, and a judged country is named when:
 
-- **A Wilson 95% interval** on its own top-5 accuracy.
 - **Its label mix is controlled for.** Countries draw different things, and labels differ in
   difficulty by a factor of ten. A country's *expected* accuracy is the mean, over its own
   drawings, of each label's accuracy **in the other countries** (leave-country-out, so the US,
   with 45% of the split, is not compared with itself). Observed minus expected is the disparity
   that label mix does not explain.
-- **A two-sided z-test on that difference, Holm-corrected** across the judged countries.
+- **A two-sided z-test on that difference, Holm-corrected** across the judged countries, gives
+  p < ``ALPHA``.
 
-The unadjusted test (against the other countries' overall rate) is reported beside it, so a reader
-can see how much of a raw gap the label mix accounts for.
+Reported beside the verdict, and not part of it:
+
+- A Wilson 95% interval on each slice's own top-5 accuracy.
+- A 95% interval on the difference itself (``difference_low`` / ``difference_high``), from the
+  same variance as the test and **not** adjusted for the number of countries. It is the yardstick
+  for "moved against it beyond its interval" when a candidate is compared with this baseline.
+- The unadjusted test (against the other countries' overall rate), so a reader can see how much of
+  a raw gap the label mix accounts for.
+
+Limits: drawings are treated as independent. Quick, Draw! rows carry no drawer id, so a player who
+drew many items, or a country-by-label style effect, would make the p-values too small and this
+cannot be adjusted for. "Named" is statistical, not practical: at the US's size a gap of a couple of
+points is named, so read ``difference`` and its interval, not only the verdict.
 
 The rows are checked against the metrics file before anything is computed. They must reproduce
 its drawing count, its ``drawing_top5_acc`` and every slice exactly; otherwise they are not the run
@@ -36,6 +47,7 @@ own recogniser.
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import math
 import sys
@@ -46,6 +58,7 @@ from typing import Any
 import pandas as pd
 from fairlearn.metrics import MetricFrame, count, selection_rate
 
+from primer.drawing.evaluate import TOP_K
 from primer.drawing.slices import SMALL_SLICE
 
 #: The two-sided z for a 95% interval.
@@ -103,8 +116,15 @@ def check_rows(rows: pd.DataFrame, metrics: Mapping[str, Any]) -> None:
         raise ValueError("the metrics file is a --limit probe: a timing check, never a result")
     if rows["record_id"].duplicated().any():
         raise ValueError("a drawing appears twice in the rows file")
-    if (rows["hit"] != (rows["rank"] < 5)).any():
+    if (rows["hit"] != (rows["rank"] < TOP_K)).any():
         raise ValueError("a row's hit disagrees with its rank")
+    # The categories key on `label` and the country tests on `label_index`: if the two disagree,
+    # the report would describe one set of categories and test another.
+    if (
+        rows.groupby("label_index")["label"].nunique().gt(1).any()
+        or rows.groupby("label")["label_index"].nunique().gt(1).any()
+    ):
+        raise ValueError("label and label_index are not one-to-one in the rows")
     n = int(metrics["overall"]["drawings"])
     if len(rows) != n:
         raise ValueError(f"the rows file has {len(rows)} drawings; the metrics file scored {n}")
@@ -115,9 +135,12 @@ def check_rows(rows: pd.DataFrame, metrics: Mapping[str, Any]) -> None:
             f"{metrics['overall']['drawing_top5_acc']!r}: they are not the same run"
         )
     by_country = rows.groupby("country_code")["hit"].agg(["sum", "count"])
-    for entry in metrics["slices"]:
-        if entry["key"] != "country_code":
-            continue
+    entries = [entry for entry in metrics["slices"] if entry["key"] == "country_code"]
+    # Both directions: every slice the file lists must be in the rows (below), and every country the
+    # rows carry must be a slice the file lists, or a country could hide behind the totals.
+    if {str(entry["value"]) for entry in entries} != set(by_country.index.astype(str)):
+        raise ValueError("the rows' countries are not the metrics file's country slices")
+    for entry in entries:
         got = by_country.loc[entry["value"]] if entry["value"] in by_country.index else None
         if (
             got is None
@@ -152,8 +175,21 @@ def rates_by(rows: pd.DataFrame, key: str) -> pd.DataFrame:
     return frame.sort_values("drawings", ascending=False)
 
 
+def _mix_variance(drawn: pd.Series, elsewhere: pd.Series, rate: pd.Series, n: int) -> float:
+    """Variance of observed minus the label-mix expectation, for a country of ``n`` compared drawings.
+
+    Per label: ``drawn`` times here, ``elsewhere`` drawings in the other countries, ``rate`` their
+    accuracy. The country's own hits contribute k p(1-p); estimating p from ``elsewhere`` drawings
+    contributes k² p(1-p)/m.
+    """
+    spread = rate * (1 - rate)
+    return float((drawn * spread).sum() + (drawn * drawn * spread / elsewhere).sum()) / (n * n)
+
+
 def country_tests(rows: pd.DataFrame, judged: Sequence[str]) -> pd.DataFrame:
     """For each judged country: observed vs the label-mix expectation, and vs the rest, Holm-corrected."""
+    if not judged:
+        raise ValueError(f"no country has {SMALL_SLICE} drawings, so there is nothing to judge")
     results = []
     for country in judged:
         own = rows[rows["country_code"] == country]
@@ -165,6 +201,10 @@ def country_tests(rows: pd.DataFrame, judged: Sequence[str]) -> pd.DataFrame:
         # are counted and left out rather than given a made-up expectation.
         usable = matched.dropna(subset=["p"])
         n = len(usable)
+        if n == 0:
+            raise ValueError(
+                f"country {country!r} cannot be tested: no label it drew was drawn in any other country"
+            )
         observed = float(usable["hit"].mean())
         expected = float(usable["p"].mean())
         # Two sources of variance. The country's own hits vary around their expectations. And the
@@ -172,16 +212,24 @@ def country_tests(rows: pd.DataFrame, judged: Sequence[str]) -> pd.DataFrame:
         # l, drawn k times here and estimated from m drawings elsewhere, adds k² p(1-p)/m. Leaving
         # that term out understates the error most for the largest country, whose "elsewhere" is
         # comparatively small (about √2 for the US on v1.1's test split).
-        own_part = float((usable["p"] * (1 - usable["p"])).sum())
         k = usable.groupby("label_index").size()
         outside = per_label.loc[k.index]
-        p = outside["sum"] / outside["count"]
-        estimate_part = float((k * k * p * (1 - p) / outside["count"]).sum())
-        variance = (own_part + estimate_part) / (n * n)
-        z_mix = (observed - expected) / math.sqrt(variance) if variance > 0 else 0.0
+
+        variance = _mix_variance(k, outside["count"], outside["sum"] / outside["count"], n)
+        if variance == 0:
+            # Every outside rate is exactly 0 or 1, so the plug-in variance is zero and any gap
+            # would read as "no evidence" (p=1). Shrink the rates by half a drawing: identical to
+            # the plug-in wherever it is non-zero, and an honest tiny variance where it is not.
+            shrunk_rate = (outside["sum"] + 0.5) / (outside["count"] + 1)
+            variance = _mix_variance(k, outside["count"], shrunk_rate, n)
+        z_mix = (observed - expected) / math.sqrt(variance)
+        half_width = Z95 * math.sqrt(variance)
         rest_rate = float(rest["hit"].mean())
         raw_variance = rest_rate * (1 - rest_rate) * (1 / n + 1 / len(rest))
-        z_raw = (observed - rest_rate) / math.sqrt(raw_variance) if raw_variance > 0 else 0.0
+        if raw_variance == 0:
+            shrunk = (float(rest["hit"].sum()) + 0.5) / (len(rest) + 1)
+            raw_variance = shrunk * (1 - shrunk) * (1 / n + 1 / len(rest))
+        z_raw = (observed - rest_rate) / math.sqrt(raw_variance)
         results.append(
             {
                 "country_code": country,
@@ -191,6 +239,8 @@ def country_tests(rows: pd.DataFrame, judged: Sequence[str]) -> pd.DataFrame:
                 "observed": observed,
                 "expected_from_label_mix": expected,
                 "difference": observed - expected,
+                "difference_low": observed - expected - half_width,
+                "difference_high": observed - expected + half_width,
                 "p_label_mix": two_sided_p(z_mix),
                 "rest_rate": rest_rate,
                 "raw_difference": observed - rest_rate,
@@ -266,24 +316,38 @@ def findings(report: Mapping[str, Any]) -> list[str]:
 
         below = [c for c in country["named"] if tests.loc[c, "difference"] < 0]
         above = [c for c in country["named"] if tests.loc[c, "difference"] > 0]
+        sizes = country["by_group"]["drawings"]
+        largest = str(sizes.idxmax())
+        share = sizes.max() / sizes.sum()
         out.append(
             f"**Country disparity named** after controlling for label mix, at a family-wise {ALPHA:.0%} "
             f"(Holm, {country['judged']} judged countries). Below what their label mix predicts: {listed(below)}. "
             f"Above it: {listed(above)}. "
             "*Mitigation, proposed for S6d, not applied here* (a zero-shot model has nothing to reweight): "
             "cap any one country's share of the training sample (`capped_weights` in `primer.data.bias`), so a "
-            "fine-tune on a split that is 45% US cannot buy the US's accuracy with the other countries'; then "
-            "re-run this report on the candidate and reject it if a named country's difference moves against it "
-            "beyond its interval."
+            f"fine-tune on a split where {largest} is {share:.0%} of the drawings cannot buy {largest}'s "
+            "accuracy with the other countries'; then re-run this report on the candidate and reject it if a "
+            "named country's difference falls below its baseline value by more than the half-width of the "
+            "baseline's 95% interval on that difference (`difference_low` to `difference_high`, not adjusted "
+            "for the number of countries)."
         )
     else:
         out.append(
             f"**No country disparity survives** controlling for label mix at a family-wise {ALPHA:.0%} "
             f"(Holm, {country['judged']} judged countries). "
             f"Without that control, {len(country['raw_named'])} would have been named "
-            f"({', '.join(country['raw_named']) or 'none'}), so their raw gaps are explained by what they drew. "
-            "*Mitigation ruled out* for country at this sample size; S6d re-runs this report on the "
+            f"({', '.join(country['raw_named']) or 'none'}). "
+            "*Mitigation ruled out* for country at this sample size, which is not the same as no gap: "
+            "a gap smaller than these intervals could remain. S6d re-runs this report on the "
             "fine-tuned model, since fine-tuning on a US-heavy split could open a gap the baseline lacks."
+        )
+    left_out = int(tests["no_outside_label"].sum())
+    if left_out:
+        out.append(
+            f"**{left_out} drawings are left out of the label-mix comparison**, in "
+            f"{int((tests['no_outside_label'] > 0).sum())} countries: they carry a label no other country "
+            "drew, so there is no outside accuracy to compare with. Each country's top-5 above counts them; "
+            "its difference does not."
         )
     low, high = report["category"]["spread"]
     hardest = report["category"]["hardest"]
@@ -329,7 +393,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
         "",
         legend,
         "",
-        "| Country | n | top-5 [95% CI] | expected from label mix | difference | p (Holm) | raw p (Holm) |",
+        "| Country | n | top-5 [95% CI] | expected from label mix | difference [95% CI] | p (Holm) | raw p (Holm) |",
         "|---|---|---|---|---|---|---|",
     ]
     by_group = country["by_group"]
@@ -337,7 +401,8 @@ def render_markdown(report: Mapping[str, Any]) -> str:
         g = by_group.loc[code]
         lines.append(
             f"| {code} | {int(row['drawings'])} | {g['top5']:.3f} [{g['top5_low']:.3f}, {g['top5_high']:.3f}] | "
-            f"{row['expected_from_label_mix']:.3f} | {row['difference']:+.3f} | {row['p_label_mix_holm']:.3g} | "
+            f"{row['expected_from_label_mix']:.3f} | {row['difference']:+.3f} "
+            f"[{row['difference_low']:+.3f}, {row['difference_high']:+.3f}] | {row['p_label_mix_holm']:.3g} | "
             f"{row['p_raw_holm']:.3g} |"
         )
     category = report["category"]
@@ -399,12 +464,23 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     metrics = json.loads(args.metrics.read_text(encoding="utf-8"))
-    rows = pd.read_csv(args.rows, dtype={"country_code": str, "record_id": str}, keep_default_na=False)
+    try:
+        # Explicitly gzip, whatever the name: `evaluate --per-drawing` always writes gzip, and
+        # pandas would otherwise go by the extension and fail on gzip bytes in a `.csv`.
+        rows = pd.read_csv(
+            args.rows, compression="gzip", dtype={"country_code": str, "record_id": str}, keep_default_na=False
+        )
+    except (gzip.BadGzipFile, UnicodeDecodeError) as error:
+        raise SystemExit(f"{args.rows} is not the gzipped CSV that evaluate --per-drawing writes: {error}") from error
     report = build_report(rows, metrics)
     args.out.write_text(json.dumps(report_to_json(report), indent=2) + "\n", encoding="utf-8")
     text = render_markdown(report)
     if args.markdown is not None:
         args.markdown.write_text(text, encoding="utf-8")
+    # The report holds characters (≥) that a Windows console's cp1252 cannot print; both files are
+    # already written, so a console that cannot show it must not turn a good run into exit 1.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     print(text)
     return 0
 

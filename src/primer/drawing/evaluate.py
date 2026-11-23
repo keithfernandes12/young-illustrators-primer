@@ -576,10 +576,33 @@ def accuracy_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="also write one row per scored drawing (record id, label, country, rank, hit) as "
-        "gzipped CSV, for `python -m primer.drawing.bias_report` (S6g). Written after --out",
+        "gzipped CSV, for `python -m primer.drawing.bias_report` (S6g). Must end in .gz. Written after --out",
     )
     add_mlflow_arguments(parser)
     return parser
+
+
+def _check_per_drawing(parser: argparse.ArgumentParser, path: Path, out: Path) -> None:
+    """Refuse a ``--per-drawing`` path that would fail after the run, when its ranks are all there is.
+
+    The rows are written last, after a run of minutes, so every way the write can fail is checked
+    now. The file is gzip whatever its name, so it must say so: `bias_report` reads it as gzip, and a
+    ``.csv`` holding gzip bytes would pass for text until something tried to read it.
+    """
+    if path.suffix != ".gz":
+        parser.error(f"--per-drawing must end in .gz (it is written as gzipped CSV): {path}")
+    if path.is_dir():
+        parser.error(f"--per-drawing is a directory: {path}")
+    if path.resolve() == out.resolve():
+        parser.error("--per-drawing and --out are the same file")
+    if not path.resolve().parent.is_dir():
+        parser.error(f"--per-drawing's folder does not exist: {path.parent}")
+    probe = path.with_name(path.name + ".partial")
+    try:
+        probe.write_bytes(b"")
+    except OSError as error:
+        parser.error(f"--per-drawing cannot be written: {error}")
+    probe.unlink()
 
 
 def _evaluate_accuracy(argv: list[str]) -> int:
@@ -603,8 +626,8 @@ def _evaluate_accuracy(argv: list[str]) -> int:
     _set_previous_output_aside(parser, args.out)
     if args.limit is not None and args.limit < 1:
         parser.error("--limit must be at least 1")
-    if args.per_drawing is not None and not args.per_drawing.resolve().parent.is_dir():
-        parser.error(f"--per-drawing's folder does not exist: {args.per_drawing.parent}")
+    if args.per_drawing is not None:
+        _check_per_drawing(parser, args.per_drawing, args.out)
     check_mlflow_arguments(parser, args)
 
     if not args.version.strip():
@@ -700,7 +723,10 @@ def _evaluate_accuracy(argv: list[str]) -> int:
                 "hit": hits,
             }
         )
-        rows.to_csv(args.per_drawing, index=False, compression="gzip")
+        # Beside and renamed into place, like --out: a crash mid-write leaves no truncated gzip.
+        partial = args.per_drawing.with_name(args.per_drawing.name + ".partial")
+        rows.to_csv(partial, index=False, compression="gzip")
+        partial.replace(args.per_drawing)
         print(f"wrote {args.per_drawing}: {len(rows)} rows")
     judged = sum(1 for s in result["slices"] if s["judged"])
     print(

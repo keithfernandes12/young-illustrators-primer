@@ -569,11 +569,17 @@ and category, with every disparity named or ruled out and a mitigation proposed 
 
 - **Why separate** — it changes no number. It is the last of the eight steps a zero-shot model can
   complete, and it is independent of #39 and #44.
-- **How a disparity is named** — a slice is named only after all three of:
-  - a Wilson interval on its own accuracy;
+- **How a disparity is named** — only countries with at least `SMALL_SLICE` (100) drawings are
+  judged, and a judged country is named when:
   - its label mix is controlled for: expected accuracy is each label's accuracy in the other
     countries, averaged over the country's own drawings;
-  - a z-test that includes the expectation's own estimation error, Holm-corrected.
+  - and a z-test on observed minus expected, which includes the expectation's own estimation
+    error and is Holm-corrected, gives p below 5%.
+
+  Reported beside the verdict, not part of it: a Wilson interval on each slice's accuracy, a 95%
+  interval on the difference itself (unadjusted for the number of countries), and the raw test
+  against the other countries' rate. Drawings are treated as independent (Quick, Draw! has no drawer
+  id), and "named" is statistical rather than practical, so read the difference and its interval.
 - **Rows must reconcile first** — they must reproduce the metrics file's count, its
   `drawing_top5_acc` and every country slice exactly. A `--limit` probe is refused.
 - **Not doing** — mitigation itself (nothing to reweight in a zero-shot model; proposed for S6d),
@@ -1811,8 +1817,28 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
     a country test.
   - **Not covered:** why the gaps exist (style is the guess; it is not measured); children's
     drawings; and a CPU/fp32 run.
+  - **Review round, 2026-11-23:** an independent review of #45 added a 95% interval on each
+    difference, a variance floor, and stricter reconciliation. The floor applies only when every
+    outside rate is exactly 0 or 1, which the real run is not, so the numbers above do not move by
+    construction. They were **not** re-derived: that needs the 16-minute GPU run, and the rows,
+    metrics and report files from the real run are in no durable store (scratchpad only).
 
 ## Open questions
+
+- **Where does the bias report get logged, and where do its inputs live?** *Not yet ticketed.*
+  `model-development.md` step 3 says per-slice metrics are logged. #45 writes JSON and Markdown
+  but logs nothing, because it was written before #44's `tracking.py` merged, and the rows and report from
+  the real run are in no durable store, so every figure in `CARD.md` needs another GPU run to
+  re-derive. *Recommended:* a follow-up slice that logs the report's JSON and the rows file as
+  artifacts of the S6c run (`eval/`), through `tracking.py`. *Decides:* the KAN-38 owner, who also
+  opens the ticket.
+- **Is "named" the right bar, or should it need a minimum effect size?** At the US's size a gap of
+  2.5 points is named at p=1.3e-11, while the data stage's rule was a fixed 2-point gap, so this
+  rule now follows power at the large end instead of sample size at the small end. TH (+5.0) is
+  named at Holm p=0.0495 and TW (+6.8) misses at 0.055. Drawings are treated as independent, and
+  Quick, Draw! has no drawer id to cluster on. *Recommended:* keep the test, read it with the
+  interval on the difference (now reported), and decide an effect-size floor with S6d's
+  acceptance. *Decides:* the KAN-38 owner.
 
 - **What S6c hands to S6d, found in review of #37.** None is a defect in S6c as shipped. S6d is
   KAN-38's, so these are hand-offs to its owner, not a claim that all four are done under that

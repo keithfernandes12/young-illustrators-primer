@@ -689,6 +689,79 @@ def test_per_drawing_into_a_missing_folder_is_refused_before_anything_is_read(mo
         )
 
 
+@pytest.mark.parametrize(
+    "path_for",
+    [
+        lambda tmp: tmp / "rows.csv",  # gzip bytes under a text name
+        lambda tmp: tmp,  # a directory
+        lambda tmp: tmp / "m.json",  # the metrics file itself
+    ],
+    ids=["not-gz", "directory", "same-as-out"],
+)
+def test_per_drawing_paths_that_would_fail_or_mislead_are_refused_before_the_bucket(
+    monkeypatch, tmp_path, path_for
+):
+    from primer.data import catalog
+
+    def boom(*args, **kwargs):
+        raise AssertionError("the bucket must not be touched")
+
+    monkeypatch.setattr(catalog, "read_dataset", boom)
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    with pytest.raises(SystemExit):
+        evaluate.main(
+            [
+                "--model",
+                str(model_yaml),
+                "--version",
+                "v1.1",
+                "--out",
+                str(tmp_path / "m.json"),
+                "--per-drawing",
+                str(path_for(tmp_path)),
+            ]
+        )
+
+
+def test_per_drawing_rows_are_written_after_out_and_a_failed_write_leaves_no_partial(monkeypatch, tmp_path):
+    _stub_world(monkeypatch, _test_split_frame(6), winner="The Eiffel Tower")
+    out, rows_path = tmp_path / "m.json", tmp_path / "rows.csv.gz"
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    def broken(self, path, *args, **kwargs):
+        Path(path).write_bytes(b"trunc")  # a write that dies half way
+        raise OSError("disk full")
+
+    monkeypatch.setattr(pd.DataFrame, "to_csv", broken)
+
+    with pytest.raises(OSError, match="disk full"):
+        evaluate.main(
+            ["--model", str(model_yaml), "--version", "v1.1", "--out", str(out), "--per-drawing", str(rows_path)]
+        )
+
+    assert json.loads(out.read_text(encoding="utf-8"))["overall"]["drawings"] == 6, "--out came first"
+    assert not rows_path.exists(), "no truncated file at the real path"
+
+
+def test_a_successful_per_drawing_write_leaves_only_the_file_and_names_a_missing_country_unknown(
+    monkeypatch, tmp_path
+):
+    frame = _test_split_frame(6)
+    frame.loc[0, "country_code"] = None
+    _stub_world(monkeypatch, frame, winner="The Eiffel Tower")
+    out, rows_path = tmp_path / "m.json", tmp_path / "rows.csv.gz"
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    evaluate.main(
+        ["--model", str(model_yaml), "--version", "v1.1", "--out", str(out), "--per-drawing", str(rows_path)]
+    )
+
+    rows = pd.read_csv(rows_path, dtype={"country_code": str, "record_id": str}, keep_default_na=False)
+    assert "unknown" in set(rows["country_code"])
+    assert not list(tmp_path.glob("*.partial"))
+
+
 # ------------------------------------------------------------------------------------ MLflow (S6c3)
 
 
