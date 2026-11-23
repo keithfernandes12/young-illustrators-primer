@@ -305,7 +305,7 @@ def test_a_param_two_builders_disagree_on_is_refused_before_any_run(fake_mlflow,
     assert fake_mlflow.calls == []
 
 
-def test_a_param_two_builders_agree_on_is_logged_once(fake_mlflow, monkeypatch, tmp_path):
+def test_a_param_two_builders_agree_on_is_accepted(fake_mlflow, monkeypatch, tmp_path):
     out = tmp_path / "m.json"
     out.write_text("{}", encoding="utf-8")
     card = tmp_path / "CARD.md"
@@ -377,7 +377,13 @@ def sensitivity_file(**overrides):
             "prompt:{label}": {"top5_delta": -0.085},
             "prompt:This is a photo of {label}.": {"top5_delta": -0.043},
         },
-        "occlusion": {"top3_share_median": None, "max_drop_median": 0.178, "maps": {}},
+        "occlusion": {
+            "top3_share_median": None,
+            "top3_share_undefined": None,
+            "inked_patches_median": None,
+            "max_drop_median": 0.178,
+            "maps": {},
+        },
         "data_version": "v1.1",
         "split": "val",
         "seed": 20261115,
@@ -421,6 +427,14 @@ def test_an_occlusion_figure_no_map_defined_is_left_out_not_logged_as_zero():
 
     assert "sensitivity/occlusion/top3_share_median" not in metrics
     assert metrics["sensitivity/occlusion/max_drop_median"] == 0.178
+
+
+def test_an_occlusion_figure_missing_from_the_file_fails_instead_of_being_skipped():
+    result = sensitivity_file()
+    del result["occlusion"]["max_drop_median"]
+
+    with pytest.raises(KeyError):
+        tracking.sensitivity_metrics(result)
 
 
 def test_two_perturbations_that_clean_to_one_name_are_refused():

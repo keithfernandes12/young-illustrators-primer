@@ -172,7 +172,8 @@ def sensitivity_metrics(result: Mapping[str, Any]) -> dict[str, float]:
     The names are the ones S6f's own logger used for runs ``d99d75b5`` and ``dfaee7e2``, so those
     runs stay comparable with every later one. A prompt is ``prompt_<n>``, because a template has
     ``{``, ``}`` and spaces in it; the template itself is the param of the same number. An
-    occlusion figure that is ``None`` (no map defined it) is left out, not logged as 0.
+    occlusion figure that is ``None`` (no map defined it) is left out, not logged as 0; one that is
+    absent from the file raises ``KeyError``, because the file is malformed.
     """
     prompts = _prompt_names(result)
     parts = [{"baseline_top5_acc": float(result["baseline_top5_acc"])}]
@@ -183,7 +184,7 @@ def sensitivity_metrics(result: Mapping[str, Any]) -> dict[str, float]:
     parts.append(
         _numbers(
             "sensitivity/occlusion/",
-            {key: occluded[key] for key in OCCLUSION_FIGURES if occluded.get(key) is not None},
+            {key: occluded[key] for key in OCCLUSION_FIGURES if occluded[key] is not None},
         )
     )
     return _merge(*parts)

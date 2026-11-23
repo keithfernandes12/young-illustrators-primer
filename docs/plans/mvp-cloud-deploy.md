@@ -1718,7 +1718,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
     patches. The median drawing loses 0.076 of the true label's confidence when its single most
     important patch is erased. Its three most important patches carry half the total drop
     (median `top3_share` 0.50), so the answer rests on a few regions but not on one. The
-    per-drawing maps are in the run's `sensitivity/` artifact.
+    per-drawing maps are in the run's `sensitivity/` artifact (runs before S6f2; later runs use `eval/`).
   - **What this does not cover.** Sensitivity to training hyperparameters, which is S6d's; and
     children's drawings, where S6c2 measured the preprocessing.
 
