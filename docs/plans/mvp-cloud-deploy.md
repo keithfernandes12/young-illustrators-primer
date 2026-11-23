@@ -1941,12 +1941,12 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   "a airplane" and "a The Great Wall of China" are in the prompts. The "a The ..." shared-prefix
   effect is the unmeasured mechanism behind the stability drop above. *Recommended:* before or
   inside S6d, try a label-aware article (or a template that avoids one), measure it on `val`, run
-  S6c2's stability table, and score `test` once. *Decides:* the KAN-38 owner.
+  S6c2's stability table, and score `test` once. *Decides:* the KAN-38 owner. *Tracked:* KAN-129.
 - **There is no accuracy measure for children's drawings.** The +4.8 is on rendered Quick, Draw!;
   the recorded effect on the product's input is less stability and confidence near 1, and nothing
   gated says which way accuracy moved. *Recommended:* S6d's acceptance names a proxy (for example
   hand-labelled Amateur Drawings) so a gain can be told from a stability loss. *Decides:* the
-  KAN-38 owner.
+  KAN-38 owner. *Tracked:* KAN-130.
 
 ## Out of scope
 
