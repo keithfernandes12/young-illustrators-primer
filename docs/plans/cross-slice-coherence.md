@@ -59,7 +59,9 @@ that one file and merged; this plan is about the class of problem, not that file
 
 ## Slices
 
-> One slice = one PR. S0 has merged (#46); S1 is the first to build.
+> One slice = one PR. S0 and S1 are merged and S3 is in review (#48). Build order after the
+> 2026-11-24 prep: S5 and S8 (no dependency), then S6 (uses S8), S4 once #48 merges, and S2 once
+> its home is decided. S7 is mostly covered already; narrow it or close it.
 
 ### S0 · Move `sensitivity.py` onto `tracking.py`
 
@@ -128,6 +130,30 @@ their area's ticket.
   `test_the_recorded_commit_is_the_packages_not_the_callers` still passes against the new location.
 - **Testing** — the S1 git-state check fails if `golden.py`'s private copy comes back.
 - **Depends on** — S1. **Jira** — KAN-38 (decide whether the helper needs its own key).
+- **Prep (2026-11-24)** — ready to build once the Open question on its home is answered.
+  - **The helper takes the caller's package folder.** `_git_state` runs git with `cwd` set to its
+    own folder and scopes the dirty check to it (`git status --porcelain -- .`). Moved unchanged
+    into a shared module, it would report whether *that module's* folder is dirty, not the
+    caller's package. The shared function is therefore
+    `git_state(package: Path) -> tuple[str, bool | None]`, and each caller passes
+    `Path(__file__).parent`.
+  - **`golden.py`'s copy is different.** It runs at the repository root and has no dirty flag.
+    Switching it means recording `git_dirty` in the golden metrics file, a contract change for
+    `check_gate.py`'s readers. *Recommended:* switch it in S2, add `git_dirty`, and confirm with the
+    golden-gate owner (KAN-89).
+  - **Patch points.** Tests patch `evaluate._git_state` and `sensitivity._git_state`. Keep a
+    module-level name in each caller (`from primer._git import git_state` plus a thin
+    `_git_state`), or move the patches to the new module in the same PR.
+  - **`data/versioning.py:_git_commit` stays out.** It records a dataset version's full commit,
+    not a run's provenance (Verified facts, 2026-11-23).
+  - **Proof table:**
+
+    | File | Covered by |
+    |---|---|
+    | the new helper module | `tests/drawing/test_top5.py::test_the_recorded_commit_is_the_packages_not_the_callers`, moved to point at it; plus a test that two packages get their own dirty flag |
+    | `drawing/evaluate.py`, `drawing/sensitivity.py` | their existing CLI tests, whose patches still apply |
+    | `evaluation/golden.py` | `tests/evaluation/` plus a check that the metrics file carries `git_dirty` |
+    | `tests/test_conventions.py` | `SHARED_GIT` points at the new home; the `golden.py` entry is deleted, so the stale check proves the copy is gone |
 
 ### S3 · The reconcile-with-main step, in the loop skills
 
@@ -169,6 +195,19 @@ migration later.
 - **Touches** — `docs/engineering/review-checklist.md`, `.claude/skills/review-pr/`.
 - **Acceptance** — the checklist and the skill both carry the question and the two inputs.
 - **Depends on** — S3 (same vocabulary). **Jira** — KAN-38.
+- **Prep (2026-11-24)** — ready once #48 (S3) merges; docs and skill only.
+  - **The checklist** (`docs/engineering/review-checklist.md`, *The change*) gets one line, worded
+    as S3 words it: "Does this PR re-implement something now in `main`, or add something an open
+    sibling PR also adds?" The *Finding categories* table already says what a **Fix** is; the line
+    names this case as one.
+  - **The skill** (`review-pr`, step 2) gets the two inputs as commands the reviewer runs:
+    `gh pr list --state open --json number,title,headRefName,files` and
+    `git log --stat $(git merge-base <head> origin/main)..origin/main`. Step 7 (follow-up mode)
+    reviews only the PR's own commits and skips merges of `main`, which is exactly where a new
+    helper arrives, so it asks the cross-slice question again after any merge of `main`.
+  - **Naming.** Findings name slices with their plan's slug (S3's rule).
+  - **Acceptance** — both files carry the question; the skill carries both commands and the
+    follow-up rule; `scripts/check_docs.py` passes.
 
 ### S5 · A duplicate-helper scan in `verify`
 
@@ -191,6 +230,29 @@ Findings that stay open over two runs become Open questions in the owning plan.
   `scripts/`, which S1 does not scan.
 - **Testing** — a fixture tree with two identical private helpers is reported; a single one is not.
 - **Depends on** — nothing. **Jira** — KAN-38.
+- **Prep (2026-11-24)** — ready to build; no dependency.
+  - **`verify` has no warn-only path today.** Every check either passes or goes into `failed`
+    (`.claude/skills/verify/scripts/verify.py`, `main`). S5 adds one: an advisory check whose
+    output is printed under `WARN  duplicates` and never appended to `failed`, so `VERIFY_RESULT`
+    cannot change. A test pins that: the scan reporting findings still leaves verify at PASS.
+  - **The scan reads `src/` and `scripts/` with `ast`,** like S1, and reports three kinds:
+    - private functions with the same name, or the same normalised body (the `ast.dump` of the
+      body with docstrings removed), in two or more modules;
+    - a string literal repeated in more than three modules (for example `"yip-drawing"` or a tag
+      key);
+    - the S1 blind spots listed above.
+    S1's allowlisted sites are reported as *known*, not *new*, by importing S1's allowlists, so the
+    output separates the two.
+  - **Proof table:**
+
+    | File | Covered by |
+    |---|---|
+    | `scripts/scan_duplicates.py` | `tests/test_scan_duplicates.py`: fixture trees for each kind (two identical private helpers reported, one not; a literal in four modules reported, in three not; each S1 blind spot) |
+    | `verify.py` | a test that an advisory finding prints `WARN` and leaves the result `PASS` |
+
+  - **Acceptance, measured on `main` at `c331364`:** the six git-state copies (S1's five plus
+    `data/versioning.py:_git_commit`) and the five `start_run` sites outside `tracking.py` (speech 2, story 2, illustration 1) appear,
+    marked known.
 
 ### S6 · A periodic integration review over `main`
 
@@ -206,6 +268,17 @@ Its output is a list of findings, each either a new slice in this plan or a Jira
 - **Acceptance** — run once on today's `main`, it reports at least the five git-state copies and the
   four logging styles; the report is saved under `docs/` as a dated note or a brief.
 - **Depends on** — S1 (so the first report separates known from new). **Jira** — KAN-38.
+- **Prep (2026-11-24)** — ready to build; best after S8, whose script it calls.
+  - **Inputs the skill gathers itself:** `tests/test_conventions.py` (known exceptions), S5's
+    scan when it exists, S8's audit when it exists, every plan's Status table, and the stage
+    contracts (`src/primer/<area>/interface.py`) with `serving/book.py`, which joins them.
+  - **Output** — a dated brief, `docs/briefs/seams-<date>.md` (`type: brief`, `status: draft`).
+    Each finding is either a new slice in this plan or a Jira key. Nothing is filed without the
+    person's go-ahead, because creating Jira issues is an `ask` action.
+  - **A first finding, found while preparing it.** `src/primer/evaluation/golden.py` says its
+    fakes' mismatch with the area Protocols "is recorded in docs/plans/autonomous-loops.md", but
+    that plan does not mention it. The only record is a Verified fact in `mvp-cloud-deploy`. The
+    first report should carry it.
 
 ### S7 · A seam smoke test
 
@@ -217,8 +290,19 @@ schema mismatches that per-slice tests cannot.
 
 - **Why separate** — it spans areas and belongs to the serving slice's owner as well.
 - **Acceptance** — passes on `main`; renaming a field in one stage's output type fails it.
-- **Depends on** — the stage contracts in `src/primer/interface.py`; confirm they are stable.
-  **Jira** — to create.
+- **Depends on** — the stage contracts, which are per area (`src/primer/<area>/interface.py`;
+  there is no `src/primer/interface.py`). **Jira** — to create.
+- **Prep (2026-11-24): mostly built already.** `tests/models/test_area_interfaces.py::test_serving_builds_a_complete_fake_book`
+  runs drawing → story → readability → safety → illustration → speech through
+  `serving.book.build_book` with each area's Fake. Renaming `StoryRequest.description` makes it
+  fail (checked, then reverted), so the acceptance above already holds on `main`.
+  - **The seam it misses** is the golden runner's own fakes (`evaluation/fakes.py`). Their
+    signatures differ from the area Protocols (`drawing.top5(label)` is handed the answer), so a
+    real area cannot be plugged into `golden.py`, and nothing tests the two against each other.
+  - *Recommended:* narrow S7 to that seam: one test that each `FakeComponents` member can be
+    replaced by the area's Fake through an adapter, or a recorded decision to retire
+    `evaluation/fakes.py`. Either way it is a KAN-89 (golden runner) question first.
+    *Decides:* the golden-gate owner.
 
 ### S8 · An open-questions audit
 
@@ -230,20 +314,38 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
 - **Acceptance** — on today's plans it lists the questions with no key; a question given a key
   disappears from the list.
 - **Depends on** — nothing. **Jira** — to create.
+- **Prep (2026-11-24)** — ready to build; no dependency.
+  - **What counts as tracked.** A bullet under `## Open questions` is tracked if it contains a
+    `KAN-<n>` key or a slice label. The probe below used that rule; a stricter rule (a
+    `*Tracked:*` marker, as `mvp-cloud-deploy` already uses) would list more.
+    *Recommended:* start with key-or-slice, so the first list is short and true.
+  - **Measured on `main` at `c331364`** with a scratch probe:
+    - 37 open questions across the plans;
+    - 13 without a Jira key;
+    - **5 with neither a key nor a slice**: 4 in `mvp-cloud-deploy` (the `drawing` extra pin, L4
+      quota region, course credit for Claude on Vertex, and when a SAM mask is too small to use) and 1 in `autonomous-loops`
+      (subscription vs Vertex billing).
+  - **Hand-offs.** `mvp-cloud-deploy`'s "What S6c hands to S6d" sit under Open questions, so the
+    same scan covers them.
+  - **Proof table:**
+
+    | File | Covered by |
+    |---|---|
+    | `scripts/audit_open_questions.py` | `tests/test_audit_open_questions.py`: a fixture plan with one keyed, one slice-linked and one bare question lists only the bare one; adding a key removes it |
 
 ## Status
 
 | Slice | State | PR | Notes |
 |---|---|---|---|
 | S0 | merged | [#46](https://github.com/keithfernandes12/young-illustrators-primer/pull/46) | confirmed against #46 at `2f418ed`, re-checked at `3db5f56`: tags built by `run_tags` (the CLI test asserts equality), owner from `--owner`, no literal owner, `git_dirty` `unknown`/`true`/`false`. Merged 2026-11-23 as `2d3f077` |
-| S1 | in review | [#47](https://github.com/keithfernandes12/young-illustrators-primer/pull/47) | `tests/test_conventions.py`: four scans, count-based allowlists with reasons and keys, stale entries fail |
-| S2 | not started | | needs S1 |
+| S1 | merged | [#47](https://github.com/keithfernandes12/young-illustrators-primer/pull/47) | `tests/test_conventions.py`: four scans, count-based allowlists with reasons and keys, stale entries fail. Merged 2026-11-23 as `c331364`, after #46 and with its three entries deleted |
+| S2 | not started | | prepped 2026-11-24; S1 merged; waits on the Open question on the helper's home |
 | S3 | in review | [#48](https://github.com/keithfernandes12/young-illustrators-primer/pull/48) | reconcile step in `engineering-loop`, `loop-worker`, `create-pr` and the process doc; merge-order rule in the template and `docs/plans/AGENTS.md`. Merges after #47 (it links this plan and `tests/test_conventions.py`). Also the slice-naming rule (plan slug in front, outside the plan). The PR-template line is split out: `.github/` changes go in their own PR |
-| S4 | not started | | needs S3 |
-| S5 | not started | | |
-| S6 | not started | | needs S1 |
-| S7 | not started | | needs stable stage contracts |
-| S8 | not started | | |
+| S4 | not started | | prepped 2026-11-24; waits on #48 (S3) |
+| S5 | not started | | prepped 2026-11-24; ready |
+| S6 | not started | | prepped 2026-11-24; ready, best after S8 |
+| S7 | not started | | prepped 2026-11-24: mostly built already (`test_serving_builds_a_complete_fake_book`); narrow to the golden-fakes seam, or close |
+| S8 | not started | | prepped 2026-11-24; ready; needs a Jira key |
 
 ## Decisions
 
@@ -315,6 +417,18 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
   - golden runner: KAN-89;
   - story grid: KAN-39;
   - speech git state: KAN-97, and speech logging: KAN-128.
+
+- **2026-11-24** — Prep for S2 and S4–S8, read on `main` at `c331364`:
+  - **Stage contracts are per area.** `src/primer/interface.py` does not exist; the contracts are
+    in `src/primer/<area>/interface.py`, and `serving/book.py` composes them.
+  - **The book test catches renames.** Renaming `StoryRequest.description` fails
+    `test_serving_builds_a_complete_fake_book` (checked, then reverted).
+  - **`verify.py` has no warn-only check type.**
+  - **`_git_state` is package-scoped,** in both its `cwd` and its dirty check.
+  - **`golden.py` points at a record that isn't there.** It says the fakes-versus-Protocols gap is
+    recorded in `autonomous-loops.md`, and it is not.
+  - **The open-questions probe:** 37 questions, 13 without a key, 5 with neither a key nor a
+    slice.
 
 ## Open questions
 
