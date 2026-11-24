@@ -33,7 +33,7 @@ for the loop to read.
    `python .claude/skills/verify/scripts/verify.py --quick` while iterating.
 5. **Reconcile** with `main` and update the record (`engineering-loop` step 6, all of it): fetch, read
    `git log --stat <merge-base>..origin/main` and the open PRs, reuse anything that landed in this
-   slice's area, and run `tests/test_conventions.py` when it exists. If a merge of `main` is needed,
+   slice's area, and run `tests/test_conventions.py`. If a merge of `main` is needed,
    do it now, before the proof below, so the proof describes the tree you push. Then append dated
    Decisions and Verified facts to the plan and fix any document the change made untrue.
 6. **Prove.** Full `python .claude/skills/verify/scripts/verify.py` must print `VERIFY_RESULT: PASS`.

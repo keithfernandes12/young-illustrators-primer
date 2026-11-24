@@ -78,7 +78,7 @@ landed while it was being built. Before opening the PR, and again before marking
 - `gh pr list --state open --json number,title,headRefName,files`: for any open PR that adds a helper
   this slice also adds, or touches the same convention (logging, git state, tags, a shared config),
   either depend on it (list it under *Depends on* and wait for it) or say why they stay separate.
-- `python -m pytest tests/test_conventions.py` when it exists: it fails on the known kinds of drift.
+- `python -m pytest tests/test_conventions.py`: it fails on the known kinds of drift.
 - Write one line in the PR body, under **How it was checked**:
   `Reconciled with main at <sha>: reused <x> / not applicable / differs because <reason>.`
   `<sha>` is the `origin/main` commit you read up to. On the second pass, read from the `<sha>` of

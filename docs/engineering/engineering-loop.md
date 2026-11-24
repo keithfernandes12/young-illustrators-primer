@@ -77,7 +77,7 @@ another just landed (`mvp-cloud-deploy S6f` wrote its own MLflow logging before
 `drawing/tracking.py` existed). Before opening the PR and again before marking it ready, fetch
 `main`, read what landed since the branch point (`git log --stat <merge-base>..origin/main`) and
 the open PRs, and for every new helper in the slice's area either use it or say in the PR body why
-not. Run `tests/test_conventions.py` when it exists: it fails on the known kinds of drift. The PR
+not. Run `tests/test_conventions.py`: it fails on the known kinds of drift. The PR
 body says `Reconciled with main at <sha>: …`, where `<sha>` is the `origin/main` commit you read up
 to. On the second pass, read from the `<sha>` of the earlier line, because the merge base moves
 when you merge `main`.
