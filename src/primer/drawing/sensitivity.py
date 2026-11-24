@@ -1,6 +1,6 @@
 """Sensitivity analysis for the drawing stage (KAN-38, slice S6f).
 
-    python -m primer.drawing.sensitivity --version v1.1 --split val --sample 2000 --out sens.json [--mlflow]
+    python -m primer.drawing.sensitivity --version v1.1 --split val --sample 2000 --out sens.json [--mlflow --owner NAME]
 
 How far the recogniser's answer moves when the **drawing** changes, and how far it moves when the
 **inference-time setting** changes. These are the inputs `docs/engineering/model-development.md`
@@ -44,7 +44,15 @@ from typing import Any
 
 import numpy as np
 
-from primer.drawing.evaluate import Scored, _git_state, pair_stats, scored
+from primer.drawing.evaluate import (
+    Scored,
+    _git_state,
+    add_mlflow_arguments,
+    check_mlflow_arguments,
+    log_to_mlflow,
+    pair_stats,
+    scored,
+)
 from primer.drawing.preprocess import AugmentConfig, augment_canvas, default_augment_config
 from primer.drawing.render import RenderConfig, default_config, render_strokes
 
@@ -298,44 +306,6 @@ def measure(
     }
 
 
-def mlflow_metrics(result: Mapping[str, Any]) -> dict[str, float]:
-    """The summary as flat MLflow metric names: ``sensitivity/<perturbation>/<figure>``.
-
-    MLflow refuses ``:`` and ``=`` in a metric name, so ``prompt:<template>`` is logged as
-    ``sensitivity/prompt_<n>/...`` with the template itself in a param.
-    """
-    metrics: dict[str, float] = {"baseline_top5_acc": float(result["baseline_top5_acc"])}
-    prompt_number = 0
-    for name, figures in result["perturbations"].items():
-        if name.startswith("prompt:"):
-            name = f"prompt_{prompt_number}"
-            prompt_number += 1
-        for key, value in figures.items():
-            if isinstance(value, (int, float)):
-                metrics[f"sensitivity/{name}/{key}"] = float(value)
-    occluded = result["occlusion"]
-    for key in ("top3_share_median", "top3_share_undefined", "inked_patches_median", "max_drop_median"):
-        if occluded[key] is not None:
-            metrics[f"sensitivity/occlusion/{key}"] = float(occluded[key])
-    return metrics
-
-
-def log_to_mlflow(result: Mapping[str, Any], out: Path, tags: Mapping[str, str]) -> str:
-    """One run in ``yip-drawing`` with the summary, the prompt templates and the full JSON."""
-    import mlflow
-
-    mlflow.set_experiment("yip-drawing")
-    with mlflow.start_run(run_name="s6f-sensitivity", tags=dict(tags)) as run:
-        templates = [
-            name.removeprefix("prompt:") for name in result["perturbations"] if name.startswith("prompt:")
-        ]
-        mlflow.log_params({f"prompt_{n}": template for n, template in enumerate(templates)})
-        mlflow.log_params({"sample": result["drawings"], "split": result["split"], "seed": result["seed"]})
-        mlflow.log_metrics(mlflow_metrics(result))
-        mlflow.log_artifact(str(out), artifact_path="sensitivity")
-        return str(run.info.run_id)
-
-
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="sensitivity", description="S6f: how far the drawing recogniser's answer moves"
@@ -349,7 +319,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--occlude", type=int, default=20, help="correctly ranked drawings to occlude")
     p.add_argument("--device", choices=("cpu", "cuda"), default=None)
     p.add_argument("--out", required=True, type=Path)
-    p.add_argument("--mlflow", action="store_true", help="also log one run to MLFLOW_TRACKING_URI")
+    # The shared --mlflow and --owner (S6f2): the same refusals and tags as S6c's and S6c2's runs.
+    add_mlflow_arguments(p)
     return p
 
 
@@ -360,11 +331,15 @@ def main(argv: list[str] | None = None) -> int:
     from primer.drawing.model import DrawingConfig, SiglipEncoder
     from primer.drawing.render import to_png
 
-    args = parser().parse_args(argv)
+    cli = parser()
+    args = cli.parse_args(argv)
     if not args.out.resolve().parent.is_dir():
-        parser().error(f"--out's folder does not exist: {args.out.parent}")
+        cli.error(f"--out's folder does not exist: {args.out.parent}")
     if args.sample < 1 or args.occlude < 0:
-        parser().error("--sample must be at least 1 and --occlude at least 0")
+        cli.error("--sample must be at least 1 and --occlude at least 0")
+    # Before the bucket or the GPU: a missing owner or tracking server used to fail only after
+    # minutes of scoring, when the run tried to log.
+    check_mlflow_arguments(cli, args)
 
     config = DrawingConfig.from_yaml()
     labels = config.labels()
@@ -434,20 +409,7 @@ def main(argv: list[str] | None = None) -> int:
     for line in iter_summary(result):
         print(line)
     if args.mlflow:
-        tags = {
-            "stage": "drawing",
-            "owner": "rishiparekh",
-            "data_version": args.version,
-            "git_sha": result["git_sha"],
-            # Spelled as tracking.run_tags spells it: "unknown" when git failed, else true/false.
-            "git_dirty": "unknown" if result["git_dirty"] is None else str(result["git_dirty"]).lower(),
-            "base_model": config.encoder,
-            "gate_group": "drawing",
-            "where": "local",
-            "slice": "S6f",
-            "jira": "KAN-38",
-        }
-        print(f"logged MLflow run {log_to_mlflow(result, args.out, tags)}")
+        log_to_mlflow("sensitivity", result, args.out, args.owner, "s6f-sensitivity")
     return 0
 
 
