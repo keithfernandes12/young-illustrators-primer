@@ -37,6 +37,8 @@ Read, and list in the plan or PR what you read:
 - `docs/project_scoping.md` for the area (scope, architecture §9, failure analysis §8).
 - The existing code and **its tests** for what you will change.
 - `docs/solutions/` for earlier problems in the same area.
+- Open pull requests (`gh pr list --state open`) and what landed on `main` since the plan was
+  written: a slice is independent only if no open PR adds a helper it would use.
 
 Also write down what you did **not** read and what you assumed. A guess written down can be
 checked; a guess left out cannot.

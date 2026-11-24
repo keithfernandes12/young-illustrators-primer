@@ -59,7 +59,7 @@ that one file and merged; this plan is about the class of problem, not that file
 
 ## Slices
 
-> One slice = one PR. S0 has merged (#46); S1 is the first to build.
+> One slice = one PR. S0 and S1 have merged (#46, #47); S2 is the next to build.
 
 ### S0 · Move `sensitivity.py` onto `tracking.py`
 
@@ -141,7 +141,9 @@ helper lands before any slice that should use it, and the consumer lists it unde
 
 - **Why separate** — a docs and skills change with no code.
 - **Touches** — `.claude/skills/engineering-loop/`, `.claude/skills/loop-worker/`,
-  `docs/plans/_template.md`, `docs/plans/AGENTS.md`.
+  `.claude/skills/create-pr/`, `docs/plans/_template.md`, `docs/plans/AGENTS.md`,
+  `docs/engineering/engineering-loop.md`, `docs/engineering/onboarding.md` (step count), the root
+  `AGENTS.md` summary, and `.claude/loops/goal-drawing-stage.md` and `ralph-overnight.md`.
 - **Acceptance** — the step is in both skills; the PR template has a line "Reconciled with `main` at
   `<sha>`: reused / not applicable / differs because …".
 - **Testing** — `scripts/check_docs.py` passes; none otherwise.
@@ -151,6 +153,10 @@ helper lands before any slice that should use it, and the consumer lists it unde
   plan, a slice is written with the plan's slug in front (`mvp-cloud-deploy S6f`,
   `cross-slice-coherence S1`), in `docs/plans/AGENTS.md`, the plan template and `create-pr`.
   `loop-worker`'s `LOOP_*` end line keeps a bare label, because loop prompts read that format.
+- **Added (2026-11-24, from the independent review)** — the unattended worker only waits: a
+  slice whose helper is still in an open PR is not ready, and when that is the only reason nothing
+  is ready the worker prints `LOOP_WAIT <slice> waiting-on-#<pr>`, not `LOOP_EMPTY`, which the
+  Ralph prompt reads as "plan finished". Both loop prompts say so. See the 2026-11-24 Decision.
 - **Split (2026-11-23)** — the PR-template line goes in its own one-line PR, because `AGENTS.md`
   puts `.github/` changes in their own PR. Until it lands, `create-pr` asks for the line at the
   end of "How it was checked".
@@ -236,7 +242,7 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
 | Slice | State | PR | Notes |
 |---|---|---|---|
 | S0 | merged | [#46](https://github.com/keithfernandes12/young-illustrators-primer/pull/46) | confirmed against #46 at `2f418ed`, re-checked at `3db5f56`: tags built by `run_tags` (the CLI test asserts equality), owner from `--owner`, no literal owner, `git_dirty` `unknown`/`true`/`false`. Merged 2026-11-23 as `2d3f077` |
-| S1 | in review | [#47](https://github.com/keithfernandes12/young-illustrators-primer/pull/47) | `tests/test_conventions.py`: four scans, count-based allowlists with reasons and keys, stale entries fail |
+| S1 | merged | [#47](https://github.com/keithfernandes12/young-illustrators-primer/pull/47) | merged 2026-11-23 as `c331364`. `tests/test_conventions.py`: four scans, count-based allowlists with reasons and keys, stale entries fail |
 | S2 | not started | | needs S1 |
 | S3 | in review | [#48](https://github.com/keithfernandes12/young-illustrators-primer/pull/48) | reconcile step in `engineering-loop`, `loop-worker`, `create-pr` and the process doc; merge-order rule in the template and `docs/plans/AGENTS.md`. Needed #47 first (it links this plan and `tests/test_conventions.py`); #47 merged as `c331364`. Also the slice-naming rule (plan slug in front, outside the plan). The PR-template line is split out: `.github/` changes go in their own PR |
 | S4 | not started | | needs S3 |
@@ -274,6 +280,11 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
   `mlflow` and `self._mlflow` and a literal there is held to all seven tags; a dict changed by
   `update`, `setdefault` or `|=` is unreadable. Today the unchecked list covers only
   `story/grid.py` (tags arrive as a parameter); `drawing/sensitivity.py` was listed until #46 merged.
+- **2026-11-24** — The `loop-worker` implements only the "wait" outcome of the 2026-11-22 merge-order
+  Decision, not "ship with the gap recorded", because nobody is there to approve an allowlist entry.
+  `LOOP_EMPTY` therefore means no slice is ready and none is waiting on an open PR; a wait ends in
+  `LOOP_WAIT`. A `LOOP_WAIT` iteration uses one of the Ralph prompt's `--max-iterations`; that is
+  accepted while a slice waits, and is an Open question for the owner if it proves wasteful.
 
 ## Verified facts
 
