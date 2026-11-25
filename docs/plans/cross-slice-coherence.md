@@ -63,9 +63,9 @@ that one file and merged; this plan is about the class of problem, not that file
 
 ## Slices
 
-> One slice = one PR. S0, S1 and S3 have merged (#46, #47, #48, #49). Build order after the
-> 2026-11-24 prep: S5 and S8 (no dependency), then S6 (uses S8), S4, and S2 once its home is
-> decided. S7 is dropped (KAN-132).
+> One slice = one PR. S0, S1, S3, S4, S5, S6 and S8 have merged (#46 to #54); S7 is dropped
+> (KAN-132). Next, in order (2026-11-25): S9, S10, then a second `seams` run, then S2 with S12
+> once the helper's home is decided. S11 can go in alongside any of them.
 
 ### S0 · Move `sensitivity.py` onto `tracking.py`
 
@@ -388,6 +388,97 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
     |---|---|
     | `scripts/audit_open_questions.py` | `tests/test_audit_open_questions.py`: a fixture plan with one keyed, one slice-linked and one bare question lists only the bare one; adding a key removes it |
 
+### S9 · The duplicate scan warns only on what a branch adds
+
+*size: small*
+
+`scripts/scan_duplicates.py` is stateless. So the findings already on `main` print
+`WARN  duplicates` on every `verify` run, on every branch, and a new finding is one more line in a
+list everyone has learned to skip. S9 makes the warning mean "this branch added something".
+
+- **Why separate** — a behaviour change to an advisory check, with its own tests. S5 shipped the
+  scan; this is about what counts as news.
+- **Target behaviour.** A committed baseline, `scripts/scan_duplicates.baseline.json`, holds the
+  accepted findings as fingerprints: kind, file and detail, without line numbers, so moving code
+  does not churn it.
+  - `verify` prints `WARN  duplicates` only for findings missing from the baseline, and `OK`
+    otherwise, with the count of baseline findings beside it.
+  - A baseline entry the code no longer produces is reported as stale, so the baseline shrinks as
+    S2 and KAN-131 land, the same rule S1's allowlists follow.
+  - `--update-baseline` rewrites it. A person runs that on purpose, and the diff shows in review.
+- **Why a file, not a diff against `origin/main`.** A diff would need a second scan of the branch
+  point's tree on every run: a worktree or `git archive`, slower, and fragile on a branch that has
+  merged `main`, which is the very case S10 fixes. A committed file is reviewable, works offline and
+  costs one read.
+- **Acceptance** — on `main`, with the baseline written from `main`, the scan prints `OK` and lists
+  nothing new. A fixture branch that adds one duplicate prints `WARN` and only that one.
+  Deleting a duplicate reports its entry as stale. `VERIFY_RESULT` still never depends on it.
+- **Testing** — fixture trees in `tests/test_scan_duplicates.py`: new against baseline, stale entry,
+  and a fingerprint stable across a line move. Making the fingerprint include the line number fails
+  the line-move test.
+- **Depends on** — S5 (merged). **Jira** — KAN-38.
+
+### S10 · The author's reconcile command, when the branch has merged `main`
+
+*size: small*
+
+The reconcile step S3 added tells the author to read
+`git log --stat $(git merge-base HEAD origin/main)..origin/main`. Once a branch has merged `main`,
+which the team does instead of rebasing, the merge base *is* `origin/main` and the log is empty. So
+the step reports "nothing landed" exactly when something did. S4 fixed the same thing for
+reviewers, finding the branch point with `git rev-list --no-merges origin/main..HEAD | tail -1`.
+
+- **Why separate** — it is S3's follow-up, and it touches the loop skills every agent runs.
+- **Touches** — `.claude/skills/engineering-loop/SKILL.md`, `.claude/skills/loop-worker/SKILL.md`,
+  `.claude/skills/create-pr/SKILL.md`, `docs/engineering/engineering-loop.md`, and S3's text in this
+  plan. The same command is in `.github/pull_request_template.md`, which goes in its own one-line PR
+  (S10b), because `AGENTS.md` puts `.github/` changes there.
+- **Acceptance** — every author-side reconcile command finds the branch point the way S4 does, and
+  says what to read when the branch has no commits of its own yet. `scripts/check_docs.py` passes.
+- **Testing** — none beyond the docs check: it is text. Shown by running the new command on a
+  branch that has merged `main` (any of #51 to #54 before they landed were) and seeing the commits that landed since its branch
+  point, where the old command printed nothing.
+- **Depends on** — S3, S4 (merged). **Jira** — KAN-38.
+
+### S11 · One way for tests to load a script
+
+*size: small*
+
+#51 added a shared `load_script` fixture to `tests/conftest.py`. It loads a script by path and
+registers it in `sys.modules` first, which a dataclass needs, a trap hit twice in this plan. Other
+tests still copy the `importlib` boilerplate: `tests/test_docs.py`, `tests/data/conftest.py` and
+three files in `tests/agent_hooks/`. That is the copy-a-helper drift this plan is about, inside
+the tests.
+
+- **Why separate** — a mechanical cleanup in tests, with no behaviour change, so it reviews in
+  minutes.
+- **Touches** — those test files. `scripts/check_pr.py` also loads a script its own way, but it is
+  not a test and cannot use a pytest fixture, so it stays as it is and the PR says so.
+- **Acceptance** — no file under `tests/` calls `importlib.util.spec_from_file_location` except
+  `load_script` itself, and the full test suite passes unchanged in count.
+- **Testing** — the suite itself, since every converted loader runs in it. A grep in the PR body
+  shows the call is gone.
+- **Depends on** — S8 (#51, merged). **Jira** — KAN-38.
+
+### S12 · The convention allowlists in a shared module
+
+*size: small*
+
+S5's scan finds out what S1 allowlists by executing `tests/test_conventions.py`: a script that
+depends on a test file, and on that file importing cleanly. S12 moves the allowlists
+(`START_RUN_ALLOWED`, `TAGS_UNCHECKED`, `GIT_ALLOWED`, `OWNER_ALLOWED`) and the shared-name
+constants (`SHARED_LOGGER`, `SHARED_GIT`) into one plain module that both import.
+
+- **Why separate** — it is a move with no behaviour change, and its location is S2's question.
+- **Touches** — the new module; `tests/test_conventions.py` and `scripts/scan_duplicates.py`, which
+  import it.
+- **Acceptance** — `scan_duplicates.py` no longer executes a test file. Both read the same
+  constants, and S1's tests and S5's known/new split are unchanged on `main`.
+- **Testing** — the existing suites. An entry added to the shared allowlist is seen by both the
+  test and the scan.
+- **Depends on** — S2, because the module lives wherever the git helper does (the Open question on
+  its home). **Jira** — KAN-38.
+
 ## Status
 
 | Slice | State | PR | Notes |
@@ -396,11 +487,15 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
 | S1 | merged | [#47](https://github.com/keithfernandes12/young-illustrators-primer/pull/47) | merged 2026-11-23 as `c331364`. `tests/test_conventions.py`: four scans, count-based allowlists with reasons and keys, stale entries fail |
 | S2 | not started | | prepped 2026-11-24; S1 merged; waits on the Open question on the helper's home |
 | S3 | merged | [#48](https://github.com/keithfernandes12/young-illustrators-primer/pull/48), [#49](https://github.com/keithfernandes12/young-illustrators-primer/pull/49) | reconcile step in `engineering-loop`, `loop-worker`, `create-pr` and the process doc; merge-order rule in the plan template and `docs/plans/AGENTS.md`. Needed #47 first (it links this plan and `tests/test_conventions.py`); #47 merged as `c331364`; #48 merged as `93d441e`. Also the slice-naming rule (plan slug in front, outside the plan). #48 merged as the skills and docs half; #49 adds the PR-template line (`.github/`), which goes in its own PR |
-| S4 | in review | [#54](https://github.com/keithfernandes12/young-illustrators-primer/pull/54) | the cross-slice question in the review checklist and `review-pr` (step 2 gathers open PRs and `main` since the branch point (`git rev-list --no-merges`, so it works for a stacked PR); step 3 asks it; follow-up mode re-asks it after a merge of `main`); a yes is a Fix |
-| S5 | in review | [#53](https://github.com/keithfernandes12/young-illustrators-primer/pull/53) | `scripts/scan_duplicates.py`, advisory in `verify` (`WARN  duplicates`, never fails): 18 findings on `main`, 6 new, 12 known (five `git rev-parse` sites, six `start_run` sites and the shared logger's tag set, known; four hand-written tag sets and two slice-name styles, new) |
-| S6 | in review | [#52](https://github.com/keithfernandes12/young-illustrators-primer/pull/52) | `.claude/skills/seams` plus its first report, `docs/briefs/seams-2026-11-24.md`: 7 findings, 3 new (three slice-metric styles and two copies of the function, the tag set written five times, a record golden.py points to that is not there); the golden fakes' mismatch is known per stage, not coordinated; 13 questions with no owner. Stacked on S8 |
+| S4 | merged | [#54](https://github.com/keithfernandes12/young-illustrators-primer/pull/54) | merged 2026-11-25 as `027a89d`. the cross-slice question in the review checklist and `review-pr` (step 2 gathers open PRs and `main` since the branch point (`git rev-list --no-merges`, so it works for a stacked PR); step 3 asks it; follow-up mode re-asks it after a merge of `main`); a yes is a Fix |
+| S5 | merged | [#53](https://github.com/keithfernandes12/young-illustrators-primer/pull/53) | merged 2026-11-25 as `b18927b`. `scripts/scan_duplicates.py`, advisory in `verify` (`WARN  duplicates`, never fails): 18 findings on `main`, 6 new, 12 known (five `git rev-parse` sites, six `start_run` sites and the shared logger's tag set, known; four hand-written tag sets and two slice-name styles, new) |
+| S6 | merged | [#52](https://github.com/keithfernandes12/young-illustrators-primer/pull/52) | merged 2026-11-25 as `1ef3bfb`. `.claude/skills/seams` plus its first report, `docs/briefs/seams-2026-11-24.md`: 7 findings, 3 new (three slice-metric styles and two copies of the function, the tag set written five times, a record golden.py points to that is not there); the golden fakes' mismatch is known per stage, not coordinated; 13 questions with no owner. Stacked on S8 |
 | S7 | dropped | | closed 2026-11-24 by the KAN-38 owner: its acceptance already held on `main` (`test_serving_builds_a_complete_fake_book`), and the remaining seam, the golden runner's fakes, is KAN-132 |
-| S8 | in review | [#51](https://github.com/keithfernandes12/young-illustrators-primer/pull/51) | `scripts/audit_open_questions.py`: lists open questions with neither a Jira key nor a slice; 13 of 47 on `main` (numbered lists counted, struck-through questions skipped). Built under KAN-38, the plan's key; a separate key was not created |
+| S8 | merged | [#51](https://github.com/keithfernandes12/young-illustrators-primer/pull/51) | merged 2026-11-25 as `b1d7421`. `scripts/audit_open_questions.py`: lists open questions with neither a Jira key nor a slice; 13 of 47 on `main` (numbered lists counted, struck-through questions skipped). Built under KAN-38, the plan's key; a separate key was not created |
+| S9 | not started | | `scan_duplicates.py` warns only on findings missing from a committed baseline; stale baseline entries reported. Next to build |
+| S10 | not started | | author-side reconcile command finds the branch point (S4's form); the PR-template line is a separate `.github/` PR (S10b) |
+| S11 | not started | | remaining script loaders in `tests/` use `load_script` |
+| S12 | not started | | convention allowlists in a shared module, beside S2's helper; waits on S2 |
 
 ## Decisions
 
@@ -467,6 +562,11 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
     chooses between adapters and rewriting the fakes.
   - **S8 keeps KAN-38** rather than a key of its own: it is a small process script, and a ticket
     would add overhead without adding an owner.
+
+- **2026-11-25** — The KAN-38 owner added S9–S12 from the third review round's untracked
+  follow-ups, and put the status table right (S4, S5, S6 and S8 merged on 2026-11-25). S9 uses a
+  committed baseline rather than a diff against `origin/main` (reasons in S9). S12 waits on S2,
+  because both live in the module whose home the repository owner has not yet chosen.
 
 ## Verified facts
 
@@ -546,18 +646,18 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
   and a person turns a finding that stays open into an Open question by hand. *Recommended:* a
   committed baseline file, or a diff against `origin/main`, as a follow-up to S5; reading
   `tests/test_conventions.py`'s constants without executing it belongs with the shared module
-  (S2). *Decides:* the KAN-38 owner. **Not tracked yet:** no slice or Jira key; the owner decides whether to file one.
+  (S2). *Decides:* the KAN-38 owner. **Tracked 2026-11-25 by the KAN-38 owner:** S9 (the baseline), and S12 for the constants.
 - **Should S3's author-side commands use the branch point too?** `engineering-loop`,
   `loop-worker`, `docs/engineering/engineering-loop.md`, the PR template and S3's text above say
   `git log --stat <merge-base>..origin/main`, which is empty once the branch has merged `main`.
   S4 gives the form that works (`git rev-list --no-merges origin/main..<head> | tail -1`).
   *Recommended:* change them in a small follow-up to S3. *Decides:* the KAN-38 owner.
-  **Not tracked yet:** no slice or Jira key; the owner decides whether to file one.
+  **Tracked 2026-11-25 by the KAN-38 owner:** S10, with the PR-template line as S10b.
 - **Should the other inline script loaders in `tests/` use `load_script`?** #51 adds the shared
   fixture in `tests/conftest.py`; `scripts/check_pr.py`, `tests/test_docs.py`,
   `tests/data/conftest.py` and three `tests/agent_hooks/` files still load scripts their own way.
   *Recommended:* one small PR, so the fixture removes duplication instead of being a sixth way.
-  *Decides:* the KAN-38 owner. **Not tracked yet:** no slice or Jira key; the owner decides whether to file one.
+  *Decides:* the KAN-38 owner. **Tracked 2026-11-25 by the KAN-38 owner:** S11.
 
 ## Out of scope
 
