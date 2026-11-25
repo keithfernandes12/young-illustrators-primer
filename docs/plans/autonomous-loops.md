@@ -86,6 +86,10 @@ Each teammate installs the user-level plugins and skills from the tutorial, sets
 Workload Identity Federation; actions pinned to commits, read-only default token, `timeout-minutes`.
 
 - **Depends on** — `mvp-cloud-deploy` S1 (WIF pool). **Jira** — to create.
+- **2026-11-24:** the Vertex route does not apply. The course credit does not cover Claude on
+  Vertex AI (see the billing answer under Open questions), so this slice as written stays not
+  started. Claude in CI needs another route, such as the API key the Parked table lists,
+  decided by the KAN-38 owner.
 
 ### S4 · Nightly golden gate (own PR)
 
