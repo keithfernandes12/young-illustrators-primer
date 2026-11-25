@@ -34,3 +34,21 @@ def test_requirements_pin_every_declared_dependency_within_its_range():
         for version in pins[name]:
             assert req.specifier.contains(version, prereleases=True), \
                 f"requirements.txt pins {req.name}=={version}, outside pyproject.toml's {req.specifier}"
+
+
+def test_the_drawing_extras_pin_transformers_to_the_version_the_numbers_were_measured_on():
+    """Every recorded drawing number was measured on one transformers release (mvp-cloud-deploy).
+
+    The drawing extras are not in requirements.txt (CI never installs torch), so the pin lives in
+    pyproject.toml itself. A range would let a minor release move top-5 0.5436 without anyone
+    changing a line here.
+    """
+    extras = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["optional-dependencies"]
+    pinned = {}
+    for extra in ("drawing", "sheet"):
+        [req] = [Requirement(d) for d in extras[extra] if canonicalize_name(Requirement(d).name) == "transformers"]
+        [spec] = req.specifier
+        assert spec.operator == "==", f"the {extra} extra must pin transformers exactly, not {req.specifier}"
+        pinned[extra] = spec.version
+    assert pinned["drawing"] == pinned["sheet"], "the recogniser and the sheet must load the same transformers"
+

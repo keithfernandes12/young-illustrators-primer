@@ -1907,6 +1907,10 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   checkpoint sha is pinned precisely so a rerun reproduces a measured number, and `model.pooled`
   exists because the return shape changed between majors — a minor is the same class of risk
   against the same numbers. *Recommended:* add the extra to the pinned set when CI installs it.
+  **Answered 2026-11-24 by the KAN-38 owner: pin it now, not when CI installs it.** The `drawing`
+  and `sheet` extras pin `transformers==5.23.0`, the release every recorded drawing number was
+  measured on (S6c's 0.5436, S6c2's table, S6f), and `tests/test_requirements.py` enforces the
+  pin. torch stays a floor, because its CUDA build is installed separately.
 - **Where does a zero-shot number get logged?** **Tracked as KAN-107.** `AGENTS.md` requires every model comparison to go
   to MLflow, and nothing from S6a is in one: the baseline's figures live in these Verified facts
   only. **Update, 2026-11-15:** a shared MLflow server now exists on the shared project (KAN-107,
@@ -2028,6 +2032,10 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 
 - Which region has L4 GPU quota for the team's projects? Recommended: request quota in `us-central1`
   now; the team lead decides.
+  **Answered 2026-11-24 by the KAN-38 owner, for the drawing stage: local GPU only for now.** S6d's
+  capped runs go on the RTX 4060 (8 GB), which the local-GPU rule in `AGENTS.md` already
+  favours. No quota is requested yet. The question reopens at the first Vertex AI run, which is the
+  run S6d registers.
 - Does the course's GCP credit cover Claude models on Vertex AI? Recommended: check the billing account's
   credit scope before routing Claude Code through Vertex. Rishi checks.
 - **S6e needs `torchvision`: decided 2026-11-15 by the KAN-38 owner.** SAM 2's image processor
