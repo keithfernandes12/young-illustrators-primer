@@ -32,9 +32,9 @@ the person's go-ahead.
   composes them; `src/primer/evaluation/fakes.py` and `golden.py`, which run the gate on their own
   fakes.
 - **What each plan says is in flight:** every `docs/plans/*.md` Status table, plus
-  `gh pr list --state open --limit 100 --json number,title,headRefName,baseRefName,files` (the
-  same command as `review-pr` step 2: a PR whose `baseRefName` is another open PR's branch is
-  stacked on it, `Depends on`, not a sibling).
+  `gh pr list --state open --limit 100 --json number,title,headRefName,baseRefName,files` (a PR
+  whose `baseRefName` is another open PR's branch is stacked on it, `Depends on`, not a sibling;
+  `review-pr` step 2 gives the same command once `cross-slice-coherence S4` has landed).
 
 ## 3. Ask three questions
 
