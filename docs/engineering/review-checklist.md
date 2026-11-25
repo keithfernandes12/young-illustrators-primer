@@ -27,8 +27,9 @@ same PR.**
   adds (a logger, a git-state helper, a tag set, a metric-name format). The author checks what
   `main` gained since the branch point and the open PRs, and says "Reconciled with main at
   `<sha>`" in the body. The reviewer takes the commands from `review-pr` step 2 and checks
-  that sha is `origin/main`'s tip or the one the earlier review used. *Slices built in parallel copy each other's helpers without noticing;
-  this is a **Fix**, because it is cheap now and a migration later.*
+  that sha is `origin/main`'s tip or the one the earlier review used. *Slices built in parallel
+  copy each other's helpers without noticing; this is a **Fix**, because it is cheap now and a
+  migration later.*
 
 ## Data
 

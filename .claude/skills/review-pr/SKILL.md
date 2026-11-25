@@ -26,6 +26,7 @@ claims to check, not as proof.
 question in step 3:
 
 ```bash
+git fetch origin    # <head> and origin/main must both be current
 gh pr list --state open --limit 100 --json number,title,headRefName,baseRefName,files
 O=$(git rev-list --no-merges origin/main..<head> | tail -1)   # the oldest commit not on main
 git log --stat $(git merge-base origin/main ${O}^)..origin/main
@@ -35,6 +36,8 @@ git log --stat $(git merge-base origin/main ${O}^)..origin/main
   point, not `git merge-base <head> origin/main`: once the branch has merged `main`, that is
   `main`'s tip and the range is empty, which hides exactly what the merge brought in. It also
   works for a stacked PR, whose first commit sits on a lower PR's branch.
+- If `O` is empty (the head is on `main`, or the PR is already merged) there is no range: say so
+  instead of running the last command.
 - A stacked PR's own change is `git diff origin/<baseRefName>...<head>`; `origin/main...<head>`
   is the whole stack.
 - The list includes the PR itself and the PRs in its `baseRefName` chain. Those are `Depends on`,
@@ -62,13 +65,18 @@ a fresh subagent that did not write the code. Check:
 - **Cross-slice** — does this PR re-implement something now in `main`, or add something an open
   sibling PR also adds? Use the two inputs from step 2, and, if they exist, run
   `tests/test_conventions.py` and `scripts/scan_duplicates.py` on the PR head and again on its
-  base, not on whatever branch is checked out. Export each with `git archive <sha> | tar -x -C
-  <scratch>` and run the scan with `--root <scratch>` and pytest on `<scratch>/tests/test_conventions.py`
-  (it finds its own root). The scan reads the whole tree, and "new" means not in any S1
-  allowlist, not new in this PR: report only what differs between the two runs. Exit 1 is a
-  signal to read, not a failed check; 2 means it crashed or the root has nothing to scan. A
-  yes is a **Fix**: name the existing helper or the sibling PR, by `path:line` or number, and
-  name slices with their plan's slug.
+  base (`git merge-base origin/main <head>` is wrong for a stacked PR; use `origin/<baseRefName>`),
+  not on whatever branch is checked out. Export each with `git archive <sha> | tar -x -C
+  <scratch>`, and run both with the repo venv interpreter (`.venv/Scripts/python.exe`; a bare
+  `python -m pytest` lacks the dependencies): the scan with `--root <scratch>`, pytest on
+  `<scratch>/tests/test_conventions.py` (it finds its own root). The scan reads the whole tree,
+  and "new" means not in any S1 allowlist, not new in this PR: report only what differs
+  between the two runs, comparing without the `:<line>` suffixes, which shift when a PR edits
+  a file. Exit 1 is a signal to read, not a failed check; 2 means it crashed or the root has
+  nothing to scan. In local mode `git archive HEAD` leaves out uncommitted work, so scan a copy
+  of the working tree instead, against the base at `git merge-base origin/main HEAD`. A yes is
+  a **Fix**: name the existing helper or the sibling PR, by `path:line` or number, and name
+  slices with their plan's slug.
 - **Every checklist line**, especially data rules (raw/, licence, GCS in tests, split by book),
   privacy, and secrets.
 - **Docs** — is any document now untrue? Is the plan's status table updated?
@@ -121,8 +129,10 @@ Take the last manifest's head as the baseline; review `git diff <baseline>..<new
 ask the cross-slice question again**: a merge of `main` is where a new shared helper arrives, and
 reviewing only the PR's own commits would miss it. Use step 2's range from the original branch
 point, because the merge base moves when `main` is merged in and the new one gives an empty range.
-The baseline-to-head diff then includes what the merge brought in; separate the PR's own change
-with `git diff origin/<baseRefName>...<new head>`. For each earlier finding, read the author's reply —
+The baseline-to-head diff then includes what the merge brought in. The PR's own change since the
+baseline is that diff limited to the PR's own files:
+`git diff <baseline>..<new head> -- $(git diff --name-only origin/<baseRefName>...<new head>)`.
+For each earlier finding, read the author's reply —
 `Fixed F1 (<commit>)`, `Tracked F1: KAN-…`, `Rebutted F1: <reason>` — and mark it **resolved**
 (fixed and verified in the code, tracked with a real Jira key, or rebuttal accepted) or **still open**
 (say why). Rebuttals must show the finding is factually wrong, not inconvenient; "already like that"

@@ -206,8 +206,8 @@ helper lands before any slice that should use it, and the consumer lists it unde
 Add to `docs/engineering/review-checklist.md` and the `review-pr` skill: "Does this PR re-implement
 something now in `main`, or add something an open sibling PR also adds?" The review prompt gets
 `gh pr list --state open` output and `git log --stat` of `main` since the branch point (the
-prep below gives the command), so the reviewer can answer it. A finding in that category is a Fix, not a Tidy, because it is cheap now and costs a
-migration later.
+prep below gives the command), so the reviewer can answer it. A finding in that category is a Fix,
+not a Tidy, because it is cheap now and costs a migration later.
 
 - **Why separate** — it changes how every review session is briefed.
 - **Touches** — `docs/engineering/review-checklist.md`, `.claude/skills/review-pr/`.
