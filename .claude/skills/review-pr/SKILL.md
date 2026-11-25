@@ -22,6 +22,17 @@ The linked Jira issue's acceptance criteria; the plan slice in `docs/plans/`; ev
 the touched folders; existing tests for the touched code. Treat the plan and PR description as
 claims to check, not as proof.
 
+**And what is around the PR** (`cross-slice-coherence S4`), so you can answer the cross-slice
+question in step 3:
+
+```bash
+gh pr list --state open --json number,title,headRefName,files
+git log --stat $(git merge-base <head> origin/main)..origin/main
+```
+
+These are facts about the repository, not the author's reasoning, so reading them keeps the review
+independent.
+
 ## 3. Review independently
 
 Review from the diff and the sources, not from the author's summary. Where possible, give the diff to
@@ -37,6 +48,10 @@ a fresh subagent that did not write the code. Check:
   "Changing CI".
 - **Rules in only one place** — a check enforced in the CLI or UI while the function below accepts
   anything is at least a Fix.
+- **Cross-slice** — does this PR re-implement something now in `main`, or add something an open
+  sibling PR also adds? Use the two inputs from step 2, and run `tests/test_conventions.py` and
+  `scripts/scan_duplicates.py` if they exist. A yes is a **Fix**: name the existing helper or the
+  sibling PR, by `path:line` or number, and name slices with their plan's slug.
 - **Every checklist line**, especially data rules (raw/, licence, GCS in tests, split by book),
   privacy, and secrets.
 - **Docs** — is any document now untrue? Is the plan's status table updated?
@@ -85,7 +100,9 @@ finding has a valid disposition.
 ## 7. Follow-up mode
 
 Take the last manifest's head as the baseline; review `git diff <baseline>..<new head>` as new code
-(the PR's own commits, not merges from `main`). For each earlier finding, read the author's reply —
+(the PR's own commits, not merges from `main`). **If a merge of `main` came in since the baseline,
+ask the cross-slice question again** against the new merge base: a merge of `main` is where a new
+shared helper arrives, and reviewing only the PR's own commits would miss it. For each earlier finding, read the author's reply —
 `Fixed F1 (<commit>)`, `Tracked F1: KAN-…`, `Rebutted F1: <reason>` — and mark it **resolved**
 (fixed and verified in the code, tracked with a real Jira key, or rebuttal accepted) or **still open**
 (say why). Rebuttals must show the finding is factually wrong, not inconvenient; "already like that"
