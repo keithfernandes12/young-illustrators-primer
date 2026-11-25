@@ -60,7 +60,7 @@ to run `git tag --list` in Manual permission mode should make it ask you first.
 | Read | What it gives you |
 |---|---|
 | `AGENTS.md` | The rules. Read it all — everything below expands on part of it |
-| `docs/engineering/engineering-loop.md` | How a change goes from request to merged PR, in seven steps |
+| `docs/engineering/engineering-loop.md` | How a change goes from request to merged PR, in eight steps |
 | `docs/engineering/review-checklist.md` | What a reviewer will check, and what Blocking / Fix / Tidy / Follow-up mean |
 | `docs/engineering/ci.md` | What CI runs, what blocks a merge, and how a new rule gets added |
 | `docs/engineering/documentation.md` | Which folder a document belongs in, and the frontmatter rules |
