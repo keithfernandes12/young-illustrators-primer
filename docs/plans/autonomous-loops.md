@@ -89,7 +89,7 @@ Workload Identity Federation; actions pinned to commits, read-only default token
 - **2026-11-24:** the Vertex route does not apply. The course credit does not cover Claude on
   Vertex AI (see the billing answer under Open questions), so this slice as written stays not
   started. Claude in CI needs another route, such as the API key the Parked table lists,
-  decided by the KAN-38 owner.
+  not decided.
 
 ### S4 · Nightly golden gate (own PR)
 
