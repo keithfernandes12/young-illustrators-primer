@@ -1939,8 +1939,8 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   exists because the return shape changed between majors — a minor is the same class of risk
   against the same numbers. *Recommended:* add the extra to the pinned set when CI installs it.
   **Answered 2026-11-24 by the KAN-38 owner: pin it now, not when CI installs it.** The `drawing`
-  and `sheet` extras pin `transformers==5.23.0`, the release every recorded drawing number was
-  measured on (S6c's 0.5436, S6c2's table, S6f), and `tests/test_requirements.py` enforces the
+  and `sheet` extras pin `transformers==5.23.0`, the release installed when the recorded drawing
+  numbers were measured (S6c's 0.5436, S6c2's table, S6f; S6c's own Verified fact names 5.23), and `tests/test_requirements.py` enforces the
   pin. torch stays a floor, because its CUDA build is installed separately.
 - **Where does a zero-shot number get logged?** **Tracked as KAN-107.** `AGENTS.md` requires every model comparison to go
   to MLflow, and nothing from S6a is in one: the baseline's figures live in these Verified facts
@@ -2065,8 +2065,10 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   now; the team lead decides.
   **Answered 2026-11-24 by the KAN-38 owner, for the drawing stage: local GPU only for now.** S6d's
   capped runs go on the RTX 4060 (8 GB), which the local-GPU rule in `AGENTS.md` already
-  favours. No quota is requested yet. The question reopens at the first Vertex AI run, which is the
-  run S6d registers.
+  favours. No quota is requested yet. The question reopens at the first Vertex AI run of any
+  stage: S6d's registered run, story generation's S5b (KAN-39) or S7b, whichever comes first. This
+  answer covers the drawing stage only. S7b and S5b still need quota, which stays a person-only
+  step (S7a's Why-separate).
 - Does the course's GCP credit cover Claude models on Vertex AI? Recommended: check the billing account's
   credit scope before routing Claude Code through Vertex. Rishi checks.
 - **S6e needs `torchvision`: decided 2026-11-15 by the KAN-38 owner.** SAM 2's image processor
