@@ -116,6 +116,18 @@ def test_every_real_plan_with_an_open_questions_heading_yields_questions(audit):
 
 
 
+def test_a_question_marked_answered_is_not_untracked_but_prose_about_answers_is(audit, tmp_path):
+    plan = (
+        "# P\n\n## Open questions\n\n"
+        "- Which region? **Answered 2026-11-24: us-central1.**\n"
+        "- Which tool? Nobody has answered yet.\n"
+    )
+
+    found = audit.audit(_plans(tmp_path, {"a-plan.md": plan}))
+
+    assert [q.tracked for q in found] == [True, False]
+
+
 def test_a_tab_indented_continuation_belongs_to_its_bullet(audit, tmp_path):
     plan = "# P\n\n## Open questions\n\n- **Who decides?**\n\tSee KAN-7 for the owner.\n"
 
