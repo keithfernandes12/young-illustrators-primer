@@ -115,17 +115,25 @@ def test_every_real_plan_with_an_open_questions_heading_yields_questions(audit):
     assert missed == [], f"these plans have an Open questions section the audit reads as empty: {missed}"
 
 
-
 def test_a_question_marked_answered_is_not_untracked_but_prose_about_answers_is(audit, tmp_path):
     plan = (
         "# P\n\n## Open questions\n\n"
         "- Which region? **Answered 2026-11-24: us-central1.**\n"
         "- Which tool? Nobody has answered yet.\n"
+        "- Which cache? Answered by nobody so far.\n"
     )
 
     found = audit.audit(_plans(tmp_path, {"a-plan.md": plan}))
 
-    assert [q.tracked for q in found] == [True, False]
+    assert [q.tracked for q in found] == [True, False, False]
+
+
+def test_a_blank_line_inside_a_bullet_does_not_end_it(audit, tmp_path):
+    plan = "# P\n\n## Open questions\n\n- **Who decides?**\n\n  See KAN-7 for the owner.\n"
+
+    found = audit.audit(_plans(tmp_path, {"a-plan.md": plan}))
+
+    assert len(found) == 1 and found[0].tracked
 
 
 def test_a_tab_indented_continuation_belongs_to_its_bullet(audit, tmp_path):

@@ -354,7 +354,10 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
 - **Depends on** — nothing. **Jira** — KAN-38, no key of its own (see the 2026-11-24 Decision).
 - **Prep (2026-11-24)** — ready to build; no dependency.
   - **What counts as tracked.** A bullet under `## Open questions` is tracked if it contains a
-    `KAN-<n>` key or a slice label. The probe below used that rule; a stricter rule (a
+    `KAN-<n>` key or a slice label, or a bold `**Answered` marker, the plans' convention for a
+    question kept in place once decided (added in #51 at the implementation session's request,
+    not yet reviewed by the KAN-38 owner). The probe below used the first two; the output line
+    still says "neither a Jira key nor a slice". a stricter rule (a
     `*Tracked:*` marker, as `mvp-cloud-deploy` already uses) would list more.
     *Recommended:* start with key-or-slice, so the first list is short and true.
   - **Measured on `main` at `c331364`** with a scratch probe:
@@ -367,7 +370,8 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
       bullets. Three plans (`ai-coding-framework`, `ci-hardening`, `story-generation-llm`) write
       their questions as numbered lists. With those counted and struck-through (`~~`) questions
       skipped, the script reports **13 of 47** on `main` at `de4a121`. The 5 above are all still
-      in the 13.
+      in the 13. Two of them were answered on #50 on 2026-11-24 (the Vertex credit and the
+      billing question), so 11 remain.
   - **Hand-offs.** `mvp-cloud-deploy`'s "What S6c hands to S6d" sit under Open questions, so the
     same scan covers them.
   - **Proof table:**
