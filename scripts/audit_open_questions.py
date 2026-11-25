@@ -67,7 +67,7 @@ def questions(path: Path) -> list[Question]:
         if line.startswith("- "):
             close()
             current, first = [line], number
-        elif current and (line.startswith(" ") or not line.strip()):
+        elif current and (line[:1].isspace() or not line.strip()):
             if line.strip():
                 current.append(line)
         else:
@@ -92,7 +92,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="print every question as JSON")
     parser.add_argument("--plans", type=Path, default=PLANS, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    # Plans use "—" and "→"; a Windows console (cp1252) cannot encode them, and the audit promises
+    # to exit 0, so unencodable characters print as "?" instead of raising.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
     found = audit(args.plans)
+    if not found:
+        # Exit 0 is kept, but an empty audit of a wrong folder must not read as a clean one.
+        print(f"warning: no open questions found under {args.plans}", file=sys.stderr)
     untracked = [q for q in found if not q.tracked]
     if args.json:
         print(json.dumps({"total": len(found), "untracked": [asdict(q) for q in untracked]}, indent=2))

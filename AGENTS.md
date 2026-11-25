@@ -24,7 +24,8 @@ deployment, §8 failure analysis).
 - `dags/` — Airflow DAGs (`dags/README.md`); `docker-compose.yaml` and `infra/airflow/` run them.
 - `dashboards/tracker/` — Streamlit pipeline tracker. `app/`, `notebooks/` — empty.
 - `docs/` — decisions, plans, procedures. See **Documents** below.
-- `scripts/` — repo checks (`check_docs.py`, `check_pr.py`).
+- `scripts/` — repo checks (`check_docs.py`, `check_pr.py`) and `audit_open_questions.py`, which lists
+  plan open questions that no slice or Jira issue owns.
 - `.claude/` — agent settings, guard hooks and skills. `.githooks/` — the commit-message check.
 - New code goes under `src/primer/<area>/`. The old `src/<area>/` layout is closed.
 
@@ -201,6 +202,7 @@ review, apply `docs/engineering/review-checklist.md`.
 | `shape-feature` | turn a vague idea or Jira epic into a brief with options and slices |
 | `create-pr` | commit, push and open a correct draft PR |
 | `review-pr` | review a PR or your own branch against the checklist, with finding categories |
+| `seams` | review `main` at its joins: duplicated conventions, stage mismatches, unowned questions |
 | `fix-feedback` | work through review findings and record a disposition for each |
 | `fix-ci` | diagnose and fix a red CI run without weakening CI |
 | `pr-status` | find out what is going on with a PR and what to do next |

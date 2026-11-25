@@ -26,9 +26,16 @@ claims to check, not as proof.
 question in step 3:
 
 ```bash
-gh pr list --state open --json number,title,headRefName,files
-git log --stat $(git merge-base <head> origin/main)..origin/main
+gh pr list --state open --limit 100 --json number,title,headRefName,baseRefName,files
+git log --stat $(git merge-base origin/main <first PR commit>^)..origin/main
 ```
+
+- The first PR commit is `gh pr view <n> --json commits --jq '.commits[0].oid'`. Use the branch
+  point, not `git merge-base <head> origin/main`: once the branch has merged `main`, that is
+  `main`'s tip and the range is empty, which hides exactly what the merge brought in.
+- The list includes the PR itself and the PRs in its `baseRefName` chain. Those are `Depends on`,
+  not siblings; skip them. `files` shows only overlap in the same file, so for a helper copied into
+  another module read the sibling's `gh pr diff <n>` or grep it for new `def`s.
 
 These are facts about the repository, not the author's reasoning, so reading them keeps the review
 independent.
@@ -49,9 +56,12 @@ a fresh subagent that did not write the code. Check:
 - **Rules in only one place** — a check enforced in the CLI or UI while the function below accepts
   anything is at least a Fix.
 - **Cross-slice** — does this PR re-implement something now in `main`, or add something an open
-  sibling PR also adds? Use the two inputs from step 2, and run `tests/test_conventions.py` and
-  `scripts/scan_duplicates.py` if they exist. A yes is a **Fix**: name the existing helper or the
-  sibling PR, by `path:line` or number, and name slices with their plan's slug.
+  sibling PR also adds? Use the two inputs from step 2, and, if they exist, run
+  `tests/test_conventions.py` and `scripts/scan_duplicates.py --root <PR checkout>` on the PR's
+  files, not on whatever branch is checked out. The scan exits 1 when it has new findings, which
+  is a signal to read, not a failed check; 2 means it crashed. A yes is a **Fix**: name the
+  existing helper or the sibling PR, by `path:line` or number, and name slices with their plan's
+  slug.
 - **Every checklist line**, especially data rules (raw/, licence, GCS in tests, split by book),
   privacy, and secrets.
 - **Docs** — is any document now untrue? Is the plan's status table updated?
@@ -101,8 +111,11 @@ finding has a valid disposition.
 
 Take the last manifest's head as the baseline; review `git diff <baseline>..<new head>` as new code
 (the PR's own commits, not merges from `main`). **If a merge of `main` came in since the baseline,
-ask the cross-slice question again** against the new merge base: a merge of `main` is where a new
-shared helper arrives, and reviewing only the PR's own commits would miss it. For each earlier finding, read the author's reply —
+ask the cross-slice question again**: a merge of `main` is where a new shared helper arrives, and
+reviewing only the PR's own commits would miss it. Use step 2's range from the original branch
+point, because the merge base moves when `main` is merged in and the new one gives an empty range.
+The baseline-to-head diff then includes what the merge brought in; separate the PR's own change
+with `git diff origin/main...<new head>`. For each earlier finding, read the author's reply —
 `Fixed F1 (<commit>)`, `Tracked F1: KAN-…`, `Rebutted F1: <reason>` — and mark it **resolved**
 (fixed and verified in the code, tracked with a real Jira key, or rebuttal accepted) or **still open**
 (say why). Rebuttals must show the finding is factually wrong, not inconvenient; "already like that"

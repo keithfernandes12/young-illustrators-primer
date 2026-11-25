@@ -26,7 +26,8 @@ same PR.**
 - The PR does not re-implement something now in `main`, or add something an open sibling PR also
   adds (a logger, a git-state helper, a tag set, a metric-name format). Check
   `git log --stat <merge-base>..origin/main` and the open PRs, and say "Reconciled with main at
-  `<sha>`" in the body. *Slices built in parallel copy each other's helpers without noticing;
+  `<sha>`" in the body, and check that sha is `origin/main`'s tip or the one the earlier review
+  used. *Slices built in parallel copy each other's helpers without noticing;
   this is a **Fix**, because it is cheap now and a migration later.*
 
 ## Data
@@ -78,7 +79,7 @@ severity label (P0–P3) is only for ordering.
 | Category | Meaning | Author must |
 |---|---|---|
 | **Blocking** | Without this fix the PR is wrong, incomplete, or says something untrue | fix it in this PR |
-| **Fix** | High-confidence, valuable, and small enough to fix safely here. Includes re-implementing something in `main` or in an open sibling PR | fix it in this PR, or argue it is wrong |
+| **Fix** | High-confidence, valuable, and small enough to fix safely here. Includes re-implementing something in `main` or in an open sibling PR | fix it in this PR, or argue it is wrong; for a sibling that has not merged, list it under *Depends on*, or ship with an allowlist entry and a ticket |
 | **Tidy** | Small low-risk cleanup in a file the PR already touches | fix it, or say why not |
 | **Follow-up** | Clearly worth doing, but would widen this PR too much | open a Jira issue and link it |
 
