@@ -202,6 +202,7 @@ review, apply `docs/engineering/review-checklist.md`.
 | `shape-feature` | turn a vague idea or Jira epic into a brief with options and slices |
 | `create-pr` | commit, push and open a correct draft PR |
 | `review-pr` | review a PR or your own branch against the checklist, with finding categories |
+| `seams` | review `main` at its joins: duplicated conventions, stage mismatches, unowned questions |
 | `fix-feedback` | work through review findings and record a disposition for each |
 | `fix-ci` | diagnose and fix a red CI run without weakening CI |
 | `pr-status` | find out what is going on with a PR and what to do next |
