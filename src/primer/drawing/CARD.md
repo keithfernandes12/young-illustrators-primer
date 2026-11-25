@@ -63,13 +63,14 @@ produce the floor S6d must beat and to prove the path end to end, not to clear t
 
 ## Slices
 
-Per-slice results for the keys in `slices.py`, and what was done about any gap.
+Per-slice results for the keys in `slices.py` (`country_code`) and for category, and what was done about any gap.
 
 The two keys `model-development.md` names for this stage are `country_code` and category (the
 label). Both are reported by `python -m primer.drawing.bias_report` (S6g), from the per-drawing rows
 of the S6c run. The rows must reproduce that run's metrics file exactly before anything is computed.
 The run is v1.1 `test`, all 63,310 drawings, on GPU in bf16, under `a child's drawing of a {label}.`,
-with top-5 0.5436.
+with top-5 0.5436. The figures below come from commit `8e7bdb0`, before this PR's review fixes, and
+have not been re-run on those fixes (they need the 16-minute GPU run; see the plan's Open questions).
 
 **Country: nine disparities named, so the earlier "within noise" is withdrawn.** 54 of 165 countries
 have at least `SMALL_SLICE` (100) drawings and are judged. Each is compared with what its own label

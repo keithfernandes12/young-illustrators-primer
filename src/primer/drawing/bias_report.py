@@ -6,8 +6,9 @@
         --out bias.json --markdown bias.md
 
 Step 3 of `docs/engineering/model-development.md` for the drawing stage, less its logging (S6g2):
-per-slice metrics over its two slice keys, ``country_code`` and category (the label), with every disparity either named or
-ruled out by the numbers, and a mitigation proposed or ruled out for `CARD.md`.
+per-slice metrics over its two slice keys, ``country_code`` and category (the label), with every
+disparity either named or ruled out by the numbers, and a mitigation proposed or ruled out for
+`CARD.md`.
 
 **What makes a disparity "named" here, and not noise.** With 54 judged countries, many near the
 100-drawing floor, best minus worst mostly measures sample size. So only countries with at least
@@ -120,6 +121,18 @@ def check_rows(rows: pd.DataFrame, metrics: Mapping[str, Any]) -> None:
         raise ValueError(f"the metrics file is a {metrics.get('stage')!r} file, not a drawing one")
     if metrics.get("limit") is not None:
         raise ValueError("the metrics file is a --limit probe: a timing check, never a result")
+    try:
+        n = int(metrics["overall"]["drawings"])
+        file_accuracy = metrics["overall"]["drawing_top5_acc"]
+        entries = [
+            (str(entry["value"]), int(entry["n"]), entry["metrics"]["drawing_top5_acc"])
+            for entry in metrics["slices"]
+            if entry["key"] == "country_code"
+        ]
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(f"the metrics file is not shaped like evaluate's output: {error!r}") from error
+    if not pd.api.types.is_numeric_dtype(rows["rank"]):
+        raise ValueError("a rank in the rows file is not a number")
     if rows["record_id"].duplicated().any():
         raise ValueError("a drawing appears twice in the rows file")
     if (rows["hit"] != (rows["rank"] < TOP_K)).any():
@@ -131,27 +144,23 @@ def check_rows(rows: pd.DataFrame, metrics: Mapping[str, Any]) -> None:
         or rows.groupby("label")["label_index"].nunique().gt(1).any()
     ):
         raise ValueError("label and label_index are not one-to-one in the rows")
-    n = int(metrics["overall"]["drawings"])
     if len(rows) != n:
         raise ValueError(f"the rows file has {len(rows)} drawings; the metrics file scored {n}")
     accuracy = int(rows["hit"].sum()) / len(rows)
-    if accuracy != metrics["overall"]["drawing_top5_acc"]:
+    if accuracy != file_accuracy:
         raise ValueError(
             f"the rows give drawing_top5_acc {accuracy!r}; the metrics file says "
-            f"{metrics['overall']['drawing_top5_acc']!r}: they are not the same run"
+            f"{file_accuracy!r}: they are not the same run"
         )
     by_country = rows.groupby("country_code")["hit"].agg(["sum", "count"])
-    entries = [entry for entry in metrics["slices"] if entry["key"] == "country_code"]
     # Both directions: every slice the file lists must be in the rows (below), and every country the
     # rows carry must be a slice the file lists, or a country could hide behind the totals.
-    if {str(entry["value"]) for entry in entries} != set(by_country.index.astype(str)):
+    if {value for value, _, _ in entries} != set(by_country.index.astype(str)):
         raise ValueError("the rows' countries are not the metrics file's country slices")
-    for entry in entries:
-        got = by_country.loc[entry["value"]]  # present: the sets were just checked equal
-        if int(got["count"]) != entry["n"] or (
-            int(got["sum"]) / int(got["count"]) != entry["metrics"]["drawing_top5_acc"]
-        ):
-            raise ValueError(f"country {entry['value']!r} does not match the metrics file's slice")
+    for value, slice_n, slice_accuracy in entries:
+        got = by_country.loc[value]  # present: the sets were just checked equal
+        if int(got["count"]) != slice_n or int(got["sum"]) / int(got["count"]) != slice_accuracy:
+            raise ValueError(f"country {value!r} does not match the metrics file's slice")
 
 
 # ----------------------------------------------------------------------------------------- slices
@@ -279,7 +288,7 @@ def build_report(rows: pd.DataFrame, metrics: Mapping[str, Any]) -> dict[str, An
             key: metrics.get(key)
             for key in ("data_version", "split", "encoder", "encoder_revision", "device", "dtype", "git_sha")
         }
-        | {"prompt_template": metrics.get("scoring", {}).get("prompt_template")},
+        | {"prompt_template": (metrics.get("scoring") or {}).get("prompt_template")},
         "overall": {
             "drawings": len(rows),
             "top5": float(rows["hit"].mean()),
@@ -357,6 +366,11 @@ def findings(report: Mapping[str, Any]) -> list[str]:
             f"{int((tests['no_outside_label'] > 0).sum())} countries: they carry a label no other country "
             "drew, so there is no outside accuracy to compare with. Each country's top-5 above counts them; "
             "its difference does not."
+        )
+    if "unknown" in tests.index:
+        out.append(
+            "**`unknown` is judged, but it is not a country**: it is every drawing with no country code, "
+            "so it mixes countries and its difference says nothing about any one of them."
         )
     low, high = report["category"]["spread"]
     hardest = report["category"]["hardest"]
@@ -485,6 +499,10 @@ def main(argv: list[str] | None = None) -> int:
     for flag, target in (("--out", args.out), ("--markdown", args.markdown)):
         if target is not None and not target.resolve().parent.is_dir():
             cli.error(f"{flag}'s folder does not exist: {target.parent}")
+        if target is not None and target.is_dir():
+            cli.error(f"{flag} is a directory: {target}")
+    if args.markdown is not None and args.markdown.resolve() == args.out.resolve():
+        cli.error("--markdown and --out are the same file; the report would overwrite itself")
     try:
         metrics = json.loads(args.metrics.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
@@ -509,7 +527,11 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(
             f"{args.rows} is not the gzipped CSV that evaluate --per-drawing writes: {error}"
         ) from error
-    report = build_report(rows, metrics)
+    try:
+        report = build_report(rows, metrics)
+    except ValueError as error:
+        # What `check_rows` and the tests refuse with: rows or metrics that are not the run they claim.
+        raise SystemExit(f"cannot report on {args.rows} with {args.metrics}: {error}") from error
     _write_text(args.out, json.dumps(report_to_json(report), indent=2) + "\n")
     text = render_markdown(report)
     if args.markdown is not None:

@@ -223,6 +223,8 @@ def test_findings_say_which_way_the_verdict_went(world):
     rows, metrics = world
     named = bias_report.findings(build_report(rows, metrics))
     assert "Country disparity named" in named[0] and "B (" in named[0]
+    below, above = named[0].split("Below what their label mix predicts:")[1].split("Above it:")
+    assert "B (" in below and "B (" not in above, "B's deficit is reported as below its label mix"
 
     even = make_rows([("X", 0, "easy", 1000, 900), ("Y", 0, "easy", 1000, 900)])
     verdict = bias_report.findings(build_report(even, metrics_for(even)))
@@ -267,6 +269,81 @@ def test_category_extremes_skip_sub_floor_categories_and_keep_their_order():
     assert category["hardest"]["top5"].is_monotonic_increasing
     assert category["easiest"]["top5"].is_monotonic_decreasing
     assert country["judged"] == 2 and country["judged_drawings"] == 12 * 100 + 3
+
+
+def test_the_markdown_table_is_sorted_and_its_columns_are_the_right_ones(world):
+    rows, metrics = world
+    report = build_report(rows, metrics)
+    tests = report["country"]["tests"]
+
+    table = [
+        [cell.strip() for cell in line.strip("|").split("|")]
+        for line in bias_report.render_markdown(report).splitlines()
+        if line.startswith("| ") and line.split("|")[1].strip() in tests.index
+    ]
+
+    assert tests["difference"].is_monotonic_increasing, "most below its label mix first"
+    assert [row[0] for row in table] == list(tests.index)
+    b = next(row for row in table if row[0] == "B")
+    assert b[-2] == f"{tests.loc['B', 'p_label_mix_holm']:.3g}"
+    assert b[-1] == f"{tests.loc['B', 'p_raw_holm']:.3g}"
+    assert b[4].startswith(f"{tests.loc['B', 'difference']:+.3f}")
+
+
+def test_an_unknown_country_bucket_is_flagged_not_read_as_a_country():
+    rows = make_rows([("X", 0, "easy", 120, 60), ("unknown", 0, "easy", 150, 75), ("Y", 0, "easy", 150, 75)])
+    report = build_report(rows, metrics_for(rows))
+    assert any(
+        "`unknown` is judged, but it is not a country" in line for line in bias_report.findings(report)
+    )
+
+
+@pytest.mark.parametrize(
+    "spoil, message",
+    [
+        (lambda m: m["slices"][0].pop("n"), "not shaped like"),
+        (lambda m: m.update(slices=None), "not shaped like"),
+        (lambda m: m.update(overall=[1]), "not shaped like"),
+        (lambda m: m["overall"].pop("drawings"), "not shaped like"),
+    ],
+    ids=["slice-without-n", "slices-null", "overall-a-list", "overall-without-drawings"],
+)
+def test_a_metrics_file_of_the_wrong_shape_is_refused_clearly_in_each_way(world, spoil, message):
+    rows, metrics = world
+    spoil(metrics)
+    with pytest.raises(ValueError, match=message):
+        check_rows(rows, metrics)
+
+
+def test_a_null_scoring_block_does_not_crash_the_report(world):
+    rows, metrics = world
+    metrics["scoring"] = None
+    assert build_report(rows, metrics)["provenance"]["prompt_template"] is None
+
+
+def test_a_rows_file_with_an_empty_rank_cell_is_refused(world):
+    rows, metrics = world
+    rows["rank"] = rows["rank"].astype(object)
+    rows.loc[0, "rank"] = ""
+    with pytest.raises(ValueError, match="rank"):
+        check_rows(rows, metrics)
+
+
+def test_a_failed_report_is_a_clean_exit_naming_both_files(tmp_path):
+    args = _cli_inputs(tmp_path)
+    metrics = json.loads((tmp_path / "m.json").read_text(encoding="utf-8"))
+    metrics["overall"]["drawings"] = 1  # not the rows' run
+    (tmp_path / "m.json").write_text(json.dumps(metrics), encoding="utf-8")
+    with pytest.raises(SystemExit, match="cannot report"):
+        bias_report.main(args)
+
+
+def test_the_cli_refuses_a_directory_or_a_shared_path_for_its_outputs(tmp_path):
+    args = _cli_inputs(tmp_path)
+    with pytest.raises(SystemExit):
+        bias_report.main([*args[:-1], str(tmp_path)])  # --out is a directory
+    with pytest.raises(SystemExit):
+        bias_report.main([*args, "--markdown", args[-1]])  # --markdown is --out
 
 
 def test_categories_are_ranked_hardest_first(world):
@@ -478,6 +555,8 @@ def test_drawings_of_a_label_no_other_country_drew_are_left_out_and_said_so():
     x = report["country"]["tests"].loc["X"]
 
     assert x["compared"] == 120 and x["no_outside_label"] == 30
+    # Observed counts the compared drawings only: 60 of 120, not 60 of 150 (which would be 0.4).
+    assert x["observed"] == pytest.approx(0.5) and x["difference"] == pytest.approx(0.0)
     assert x["expected_from_label_mix"] == pytest.approx(0.5), "the solo drawings do not drag it down"
     assert any("30 drawings are left out" in line for line in bias_report.findings(report))
 

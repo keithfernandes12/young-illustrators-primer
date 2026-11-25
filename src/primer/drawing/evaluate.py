@@ -368,6 +368,8 @@ def top5_hits(
     Compared by vocabulary **index**, never by string: the data spells three labels in lower case
     where the vocabulary capitalises them, and a string comparison would score those as misses.
     Ties keep vocabulary order (``scored``), so the same scores give the same hits on every run.
+    The CLI scores through `true_label_ranks` and `hits_from_ranks` instead, so that it can keep the
+    ranks; this wrapper is for callers that want only the hits.
     """
     return hits_from_ranks(true_label_ranks(drawings, encoder, prompts, progress))
 
@@ -604,7 +606,8 @@ def _check_per_drawing(parser: argparse.ArgumentParser, path: Path, out: Path) -
         # cost 16 minutes of GPU to recreate, and a --limit probe reusing the path would destroy them.
         parser.error(
             f"--per-drawing already exists: {path}; move it or choose another path. "
-            f"(An earlier --out, if there was one, was already set aside as {out.name}.previous.)"
+            f"(An earlier --out, if there was one, was already set aside as {out.name}.previous or "
+            f"{out.name}.previous.N.)"
         )
     if path.resolve() == out.resolve():
         parser.error("--per-drawing and --out are the same file")

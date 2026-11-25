@@ -698,9 +698,8 @@ def test_per_drawing_into_a_missing_folder_is_refused_before_anything_is_read(mo
     [
         lambda tmp: tmp / "rows.csv",  # gzip bytes under a text name
         lambda tmp: tmp,  # a directory
-        lambda tmp: tmp / "m.json",  # the metrics file itself
     ],
-    ids=["not-gz", "directory", "same-as-out"],
+    ids=["not-gz", "directory"],
 )
 def test_per_drawing_paths_that_would_fail_or_mislead_are_refused_before_the_bucket(
     monkeypatch, tmp_path, path_for
@@ -726,6 +725,14 @@ def test_per_drawing_paths_that_would_fail_or_mislead_are_refused_before_the_buc
                 str(path_for(tmp_path)),
             ]
         )
+
+
+def test_per_drawing_and_out_cannot_be_the_same_file(tmp_path):
+    import argparse
+
+    shared = tmp_path / "x.gz"
+    with pytest.raises(SystemExit):
+        evaluate._check_per_drawing(argparse.ArgumentParser(), shared, shared)
 
 
 def test_the_gz_suffix_is_checked_without_regard_to_case(tmp_path):
@@ -784,7 +791,16 @@ def test_per_drawing_rows_are_written_after_out_and_a_failed_write_never_reaches
 
     with pytest.raises(OSError, match="disk full"):
         evaluate.main(
-            ["--model", str(model_yaml), "--version", "v1.1", "--out", str(out), "--per-drawing", str(rows_path)]
+            [
+                "--model",
+                str(model_yaml),
+                "--version",
+                "v1.1",
+                "--out",
+                str(out),
+                "--per-drawing",
+                str(rows_path),
+            ]
         )
 
     assert json.loads(out.read_text(encoding="utf-8"))["overall"]["drawings"] == 6, "--out came first"
