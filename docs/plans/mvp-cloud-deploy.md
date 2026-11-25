@@ -1939,9 +1939,11 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   exists because the return shape changed between majors — a minor is the same class of risk
   against the same numbers. *Recommended:* add the extra to the pinned set when CI installs it.
   **Answered 2026-11-24 by the KAN-38 owner: pin it now, not when CI installs it.** The `drawing`
-  and `sheet` extras pin `transformers==5.23.0`, the release installed when the recorded drawing
-  numbers were measured (S6c's 0.5436, S6c2's table, S6f; S6c's own Verified fact names 5.23), and `tests/test_requirements.py` enforces the
-  pin. torch stays a floor, because its CUDA build is installed separately.
+  and `sheet` extras pin `transformers==5.23.0`, the release installed in `.venv` when the recorded
+  drawing numbers were measured (S6c's 0.5436, S6c2's table, S6f). No drawing fact records the
+  version itself; S6e's Verified fact (2026-11-15) names transformers 5.23 in the same
+  environment. `tests/test_requirements.py` enforces the pin. torch stays a floor, because its CUDA
+  build is installed separately.
 - **Where does a zero-shot number get logged?** **Tracked as KAN-107.** `AGENTS.md` requires every model comparison to go
   to MLflow, and nothing from S6a is in one: the baseline's figures live in these Verified facts
   only. **Update, 2026-11-15:** a shared MLflow server now exists on the shared project (KAN-107,
@@ -2068,7 +2070,8 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   favours. No quota is requested yet. The question reopens at the first Vertex AI run of any
   stage: S6d's registered run, story generation's S5b (KAN-39) or S7b, whichever comes first. This
   answer covers the drawing stage only. S7b and S5b still need quota, which stays a person-only
-  step (S7a's Why-separate).
+  step (S7a's Why-separate); `story-generation-llm`'s open question 5, "Where the GPU runs come
+  from", is the story side of it and is not answered here.
 - Does the course's GCP credit cover Claude models on Vertex AI? Recommended: check the billing account's
   credit scope before routing Claude Code through Vertex. Rishi checks. **Answered 2026-11-24: no.**
   The course credit does not cover Claude on Vertex AI, and each member uses a university-provided

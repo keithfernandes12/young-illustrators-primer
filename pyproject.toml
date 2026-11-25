@@ -45,8 +45,9 @@ illustration = [
 # bare tensor. `model.pooled` handles both, but only the 5.x path has been exercised.
 # `transformers` is pinned exactly (2026-11-24, the KAN-38 owner): the recorded drawing numbers --
 # top-5 0.5436, S6c2's stability table, S6f's sensitivity -- were measured on the 5.23.0 installed
-# at the time, and a minor release can change outputs the way 4.x -> 5.x did. torch stays a floor: the CUDA build is
-# installed separately (AGENTS.md -> Commands) and an extra cannot choose it.
+# at the time, and a minor release can change outputs the way 4.x -> 5.x did. torch stays a
+# floor: the CUDA build is installed separately (AGENTS.md -> Commands) and an extra cannot
+# choose it.
 drawing = ["torch>=2.4", "transformers==5.23.0", "mlflow>=2.14"]
 # The character sheet (src/primer/drawing/sheet.py, S6e): `drawing`'s torch and transformers plus
 # torchvision, which SAM 2's image processor imports. Separate from `drawing` so the recogniser
