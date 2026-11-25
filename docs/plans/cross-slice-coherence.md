@@ -354,7 +354,10 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
 - **Depends on** — nothing. **Jira** — KAN-38, no key of its own (see the 2026-11-24 Decision).
 - **Prep (2026-11-24)** — ready to build; no dependency.
   - **What counts as tracked.** A bullet under `## Open questions` is tracked if it contains a
-    `KAN-<n>` key or a slice label. The probe below used that rule; a stricter rule (a
+    `KAN-<n>` key or a slice label, or a bold `**Answered` marker, the plans' convention for a
+    question kept in place once decided (added in #51 at the implementation session's request,
+    not yet reviewed by the KAN-38 owner). The probe below used the first two; the output line
+    still says "neither a Jira key nor a slice". a stricter rule (a
     `*Tracked:*` marker, as `mvp-cloud-deploy` already uses) would list more.
     *Recommended:* start with key-or-slice, so the first list is short and true.
   - **Measured on `main` at `c331364`** with a scratch probe:
@@ -363,6 +366,12 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
     - **5 with neither a key nor a slice**: 4 in `mvp-cloud-deploy` (the `drawing` extra pin, L4
       quota region, course credit for Claude on Vertex, and when a SAM mask is too small to use) and 1 in `autonomous-loops`
       (subscription vs Vertex billing).
+    - **Correction (2026-11-24, from the independent review of #51):** the probe read only `- `
+      bullets. Three plans (`ai-coding-framework`, `ci-hardening`, `story-generation-llm`) write
+      their questions as numbered lists. With those counted and struck-through (`~~`) questions
+      skipped, the script reports **13 of 47** on `main` at `de4a121`. The 5 above are all still
+      in the 13. Two of them were answered on #50 on 2026-11-24 (the Vertex credit and the
+      billing question), so 11 remain.
   - **Hand-offs.** `mvp-cloud-deploy`'s "What S6c hands to S6d" sit under Open questions, so the
     same scan covers them.
   - **Proof table:**
@@ -383,7 +392,7 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
 | S5 | not started | | prepped 2026-11-24; ready |
 | S6 | not started | | prepped 2026-11-24; ready, best after S8 |
 | S7 | dropped | | closed 2026-11-24 by the KAN-38 owner: its acceptance already held on `main` (`test_serving_builds_a_complete_fake_book`), and the remaining seam, the golden runner's fakes, is KAN-132 |
-| S8 | not started | | prepped 2026-11-24; ready; needs a Jira key |
+| S8 | in review | [#51](https://github.com/keithfernandes12/young-illustrators-primer/pull/51) | `scripts/audit_open_questions.py`: lists open questions with neither a Jira key nor a slice; 13 of 47 on `main` (numbered lists counted, struck-through questions skipped). Built under KAN-38, the plan's key; a separate key was not created |
 
 ## Decisions
 
@@ -490,7 +499,7 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
   - **`golden.py` points at a record that isn't there.** It says the fakes-versus-Protocols gap is
     recorded in `autonomous-loops.md`, and it is not.
   - **The open-questions probe:** 37 questions, 13 without a key, 5 with neither a key nor a
-    slice.
+    slice, counting `- ` bullets only. The script, which also reads numbered lists, finds 13 of 47.
 
 ## Open questions
 
