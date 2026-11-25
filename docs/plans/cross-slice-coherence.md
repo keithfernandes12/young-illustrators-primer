@@ -355,6 +355,11 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
     - **5 with neither a key nor a slice**: 4 in `mvp-cloud-deploy` (the `drawing` extra pin, L4
       quota region, course credit for Claude on Vertex, and when a SAM mask is too small to use) and 1 in `autonomous-loops`
       (subscription vs Vertex billing).
+    - **Correction (2026-11-24, from the independent review of #51):** the probe read only `- `
+      bullets. Three plans (`ai-coding-framework`, `ci-hardening`, `story-generation-llm`) write
+      their questions as numbered lists. With those counted and struck-through (`~~`) questions
+      skipped, the script reports **13 of 47** on `main` at `de4a121`. The 5 above are all still
+      in the 13.
   - **Hand-offs.** `mvp-cloud-deploy`'s "What S6c hands to S6d" sit under Open questions, so the
     same scan covers them.
   - **Proof table:**
@@ -375,7 +380,7 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
 | S5 | not started | | prepped 2026-11-24; ready |
 | S6 | not started | | prepped 2026-11-24; ready, best after S8 |
 | S7 | not started | | prepped 2026-11-24: mostly built already (`test_serving_builds_a_complete_fake_book`); narrow to the golden-fakes seam, or close |
-| S8 | in review | [#51](https://github.com/keithfernandes12/young-illustrators-primer/pull/51) | `scripts/audit_open_questions.py`: lists open questions with neither a Jira key nor a slice; 5 of 37 on `main`. Built under KAN-38, the plan's key; a separate key was not created |
+| S8 | in review | [#51](https://github.com/keithfernandes12/young-illustrators-primer/pull/51) | `scripts/audit_open_questions.py`: lists open questions with neither a Jira key nor a slice; 13 of 47 on `main` (numbered lists counted, struck-through questions skipped). Built under KAN-38, the plan's key; a separate key was not created |
 
 ## Decisions
 
@@ -463,7 +468,7 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
   - **`golden.py` points at a record that isn't there.** It says the fakes-versus-Protocols gap is
     recorded in `autonomous-loops.md`, and it is not.
   - **The open-questions probe:** 37 questions, 13 without a key, 5 with neither a key nor a
-    slice.
+    slice, counting `- ` bullets only. The script, which also reads numbered lists, finds 13 of 47.
 
 ## Open questions
 
