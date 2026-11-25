@@ -24,10 +24,10 @@ same PR.**
 - Documents the change makes untrue are updated in the same PR: README commands, `AGENTS.md`, the
   plan's status table. *Stale guidance misleads the next agent.*
 - The PR does not re-implement something now in `main`, or add something an open sibling PR also
-  adds (a logger, a git-state helper, a tag set, a metric-name format). Check
-  `git log --stat <merge-base>..origin/main` and the open PRs, and say "Reconciled with main at
-  `<sha>`" in the body, and check that sha is `origin/main`'s tip or the one the earlier review
-  used. *Slices built in parallel copy each other's helpers without noticing;
+  adds (a logger, a git-state helper, a tag set, a metric-name format). The author checks what
+  `main` gained since the branch point and the open PRs, and says "Reconciled with main at
+  `<sha>`" in the body. The reviewer takes the commands from `review-pr` step 2 and checks
+  that sha is `origin/main`'s tip or the one the earlier review used. *Slices built in parallel copy each other's helpers without noticing;
   this is a **Fix**, because it is cheap now and a migration later.*
 
 ## Data

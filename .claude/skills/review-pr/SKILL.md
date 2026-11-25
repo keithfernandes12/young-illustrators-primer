@@ -27,12 +27,16 @@ question in step 3:
 
 ```bash
 gh pr list --state open --limit 100 --json number,title,headRefName,baseRefName,files
-git log --stat $(git merge-base origin/main <first PR commit>^)..origin/main
+O=$(git rev-list --no-merges origin/main..<head> | tail -1)   # the oldest commit not on main
+git log --stat $(git merge-base origin/main ${O}^)..origin/main
 ```
 
-- The first PR commit is `gh pr view <n> --json commits --jq '.commits[0].oid'`. Use the branch
+- `<head>` is the head from step 1 (`HEAD` in local mode). This is the range from the branch
   point, not `git merge-base <head> origin/main`: once the branch has merged `main`, that is
-  `main`'s tip and the range is empty, which hides exactly what the merge brought in.
+  `main`'s tip and the range is empty, which hides exactly what the merge brought in. It also
+  works for a stacked PR, whose first commit sits on a lower PR's branch.
+- A stacked PR's own change is `git diff origin/<baseRefName>...<head>`; `origin/main...<head>`
+  is the whole stack.
 - The list includes the PR itself and the PRs in its `baseRefName` chain. Those are `Depends on`,
   not siblings; skip them. `files` shows only overlap in the same file, so for a helper copied into
   another module read the sibling's `gh pr diff <n>` or grep it for new `def`s.
@@ -57,11 +61,14 @@ a fresh subagent that did not write the code. Check:
   anything is at least a Fix.
 - **Cross-slice** — does this PR re-implement something now in `main`, or add something an open
   sibling PR also adds? Use the two inputs from step 2, and, if they exist, run
-  `tests/test_conventions.py` and `scripts/scan_duplicates.py --root <PR checkout>` on the PR's
-  files, not on whatever branch is checked out. The scan exits 1 when it has new findings, which
-  is a signal to read, not a failed check; 2 means it crashed. A yes is a **Fix**: name the
-  existing helper or the sibling PR, by `path:line` or number, and name slices with their plan's
-  slug.
+  `tests/test_conventions.py` and `scripts/scan_duplicates.py` on the PR head and again on its
+  base, not on whatever branch is checked out. Export each with `git archive <sha> | tar -x -C
+  <scratch>` and run the scan with `--root <scratch>` and pytest on `<scratch>/tests/test_conventions.py`
+  (it finds its own root). The scan reads the whole tree, and "new" means not in any S1
+  allowlist, not new in this PR: report only what differs between the two runs. Exit 1 is a
+  signal to read, not a failed check; 2 means it crashed or the root has nothing to scan. A
+  yes is a **Fix**: name the existing helper or the sibling PR, by `path:line` or number, and
+  name slices with their plan's slug.
 - **Every checklist line**, especially data rules (raw/, licence, GCS in tests, split by book),
   privacy, and secrets.
 - **Docs** — is any document now untrue? Is the plan's status table updated?
@@ -115,7 +122,7 @@ ask the cross-slice question again**: a merge of `main` is where a new shared he
 reviewing only the PR's own commits would miss it. Use step 2's range from the original branch
 point, because the merge base moves when `main` is merged in and the new one gives an empty range.
 The baseline-to-head diff then includes what the merge brought in; separate the PR's own change
-with `git diff origin/main...<new head>`. For each earlier finding, read the author's reply —
+with `git diff origin/<baseRefName>...<new head>`. For each earlier finding, read the author's reply —
 `Fixed F1 (<commit>)`, `Tracked F1: KAN-…`, `Rebutted F1: <reason>` — and mark it **resolved**
 (fixed and verified in the code, tracked with a real Jira key, or rebuttal accepted) or **still open**
 (say why). Rebuttals must show the finding is factually wrong, not inconvenient; "already like that"

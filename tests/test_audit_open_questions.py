@@ -84,10 +84,36 @@ def test_the_cli_always_exits_zero_and_json_lists_only_the_untracked(audit, tmp_
     assert report["total"] == 3 and [q["line"] for q in report["untracked"]] == [16]
 
 
-def test_it_runs_on_the_real_plans(audit):
-    # Not a count assertion: plans change every week. It must parse every plan and find questions.
-    found = audit.audit()
-    assert found and all(q.plan.endswith(".md") for q in found)
+def test_numbered_questions_count_and_struck_through_ones_do_not(audit, tmp_path):
+    plan = (
+        "# P\n\n## Open questions\n\n"
+        "1. uv or pip-tools? Team decides.\n"
+        "   Second line of the first.\n"
+        "2. Already tracked in KAN-5.\n"
+        "- ~~An answered question.~~ Answered 2026-11-01.\n"
+        "10. A two-digit number is a bullet too.\n"
+    )
+
+    found = audit.audit(_plans(tmp_path, {"a-plan.md": plan}))
+
+    assert [(q.tracked, q.text.split()[0]) for q in found] == [(False, "uv"), (True, "Already"), (False, "A")]
+    assert "Second line" in found[0].text and found[0].text.startswith("uv or pip-tools?")
+
+
+def test_every_real_plan_with_an_open_questions_heading_yields_questions(audit):
+    # Not a count: plans change every week. A plan whose list the parser cannot read (a new bullet
+    # style) must fail here, not read as a clean audit.
+    plans = [
+        path
+        for path in sorted(audit.PLANS.glob("*.md"))
+        if path.name != "AGENTS.md" and not path.name.startswith("_")
+    ]
+    with_heading = [p for p in plans if f"\n{audit.SECTION}\n" in p.read_text(encoding="utf-8")]
+
+    assert with_heading, "no plan has an Open questions section"
+    missed = [p.name for p in with_heading if not audit.questions(p)]
+    assert missed == [], f"these plans have an Open questions section the audit reads as empty: {missed}"
+
 
 
 def test_a_tab_indented_continuation_belongs_to_its_bullet(audit, tmp_path):
