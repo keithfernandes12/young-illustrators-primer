@@ -28,7 +28,8 @@ It reads `src/` and `scripts/` with `ast` and reports:
 A finding whose file S1 already allowlists for the same kind is marked ``known``. That match is per
 file and kind, so a second copy added to an allowlisted file also reads ``known``; S1's own counts
 still fail on it. Exit status is 1 when there is at least one new finding, so `verify` can print
-WARN, 0 otherwise, and 2 when the scan itself crashed (the line starts with ``ERROR``).
+WARN, 0 otherwise, and 2 when the scan itself crashed or the root has nothing to scan (the line starts with
+``ERROR``).
 """
 
 from __future__ import annotations
@@ -73,6 +74,8 @@ class Finding:
 
 
 def _modules(root: Path) -> Iterator[tuple[str, ast.Module]]:
+    """Every module under src/ and scripts/. Not S1's walker: that one is a test helper with
+    its own skips, and this one must also skip this file, whose patterns would match themselves."""
     for folder in FOLDERS:
         base = root / folder
         if not base.is_dir():
@@ -300,6 +303,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--root", type=Path, default=ROOT)
     args = parser.parse_args(argv)
+    if not any((args.root / folder).is_dir() for folder in FOLDERS):
+        print(f"ERROR  {args.root} has no {' or '.join(FOLDERS)} folder, so there is nothing to scan")
+        return 2
     conventions = args.root / "tests" / "test_conventions.py"
     try:
         findings = mark_known(scan(args.root), _allowlisted(args.root))

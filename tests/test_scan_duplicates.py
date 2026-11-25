@@ -171,6 +171,18 @@ def test_a_scan_that_crashes_says_so_and_exits_2(scan_duplicates, tmp_path, caps
     assert capsys.readouterr().out.startswith("ERROR")
 
 
+def test_a_root_with_nothing_to_scan_is_an_error_not_a_clean_scan(scan_duplicates, tmp_path, capsys):
+    assert scan_duplicates.main(["--root", str(tmp_path / "no-such-folder")]) == 2
+
+    assert capsys.readouterr().out.startswith("ERROR")
+
+
+def test_the_fallback_tag_set_matches_the_one_in_the_conventions_file(scan_duplicates, load_script):
+    conventions = load_script("tests/test_conventions.py", "_conventions_for_scan_test")
+
+    assert scan_duplicates.REQUIRED_TAGS == conventions.REQUIRED_TAGS
+
+
 def test_it_runs_on_the_real_tree(scan_duplicates):
     # Not a count or a name: main changes weekly and S1's allowlists are meant to shrink.
     assert isinstance(scan_duplicates.scan(), list)
