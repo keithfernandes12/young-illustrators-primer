@@ -631,6 +631,200 @@ def test_stability_still_routes_to_its_own_subcommand(monkeypatch):
     assert seen == [["--version", "v1.1", "--out", "s.json"]]
 
 
+# ------------------------------------------------------------------------------- per-drawing (S6g)
+
+
+def test_a_hit_is_a_rank_under_top_k_in_one_place():
+    assert evaluate.hits_from_ranks([0, 4, 5, 344]) == [True, True, False, False]
+
+
+def test_ranks_are_the_true_labels_position_and_hits_follow_from_them():
+    # Label 6 sits fifth and label 7 sixth, so the top-5 cut falls between them.
+    encoder = TableEncoder({b"d": [0.9, 0.8, 0.7, 0.6, 0.1, 0.0, 0.5, 0.4]})
+    drawings = [(b"d", 0), (b"d", 6), (b"d", 7), (b"d", 5)]
+
+    ranks = evaluate.true_label_ranks(drawings, encoder, PROMPTS)
+
+    assert ranks == [0, 4, 5, 7]
+    assert top5_hits(drawings, encoder, PROMPTS) == [rank < 5 for rank in ranks]
+
+
+def test_per_drawing_rows_reconcile_with_the_metrics_file(monkeypatch, tmp_path):
+    from primer.drawing.bias_report import check_rows
+
+    _stub_world(monkeypatch, _test_split_frame(6), winner="The Eiffel Tower")
+    out, rows_path = tmp_path / "m.json", tmp_path / "rows.csv.gz"
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    code = evaluate.main(
+        ["--model", str(model_yaml), "--version", "v1.1", "--out", str(out), "--per-drawing", str(rows_path)]
+    )
+
+    rows = pd.read_csv(rows_path, dtype={"country_code": str, "record_id": str}, keep_default_na=False)
+    metrics = json.loads(out.read_text(encoding="utf-8"))
+    assert code == 0 and len(rows) == 6
+    assert set(rows["label"]) == {"The Eiffel Tower", "zigzag"}, "labels in the vocabulary's spelling"
+    assert rows.loc[rows["label"] == "The Eiffel Tower", "rank"].eq(0).all()
+    check_rows(rows, metrics)  # the bias report accepts them as the same run
+
+
+def test_per_drawing_into_a_missing_folder_is_refused_before_anything_is_read(monkeypatch, tmp_path):
+    from primer.data import catalog
+
+    def boom(*args, **kwargs):
+        raise AssertionError("the bucket must not be touched")
+
+    monkeypatch.setattr(catalog, "read_dataset", boom)
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+    missing = tmp_path / "missing" / "rows.csv.gz"
+
+    with pytest.raises(SystemExit):
+        evaluate.main(
+            [
+                "--model",
+                str(model_yaml),
+                "--version",
+                "v1.1",
+                "--out",
+                str(tmp_path / "m.json"),
+                "--per-drawing",
+                str(missing),
+            ]
+        )
+
+
+@pytest.mark.parametrize(
+    "path_for",
+    [
+        lambda tmp: tmp / "rows.csv",  # gzip bytes under a text name
+        lambda tmp: tmp,  # a directory
+    ],
+    ids=["not-gz", "directory"],
+)
+def test_per_drawing_paths_that_would_fail_or_mislead_are_refused_before_the_bucket(
+    monkeypatch, tmp_path, path_for
+):
+    from primer.data import catalog
+
+    def boom(*args, **kwargs):
+        raise AssertionError("the bucket must not be touched")
+
+    monkeypatch.setattr(catalog, "read_dataset", boom)
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    with pytest.raises(SystemExit):
+        evaluate.main(
+            [
+                "--model",
+                str(model_yaml),
+                "--version",
+                "v1.1",
+                "--out",
+                str(tmp_path / "m.json"),
+                "--per-drawing",
+                str(path_for(tmp_path)),
+            ]
+        )
+
+
+def test_per_drawing_and_out_cannot_be_the_same_file(tmp_path):
+    import argparse
+
+    shared = tmp_path / "x.gz"
+    with pytest.raises(SystemExit):
+        evaluate._check_per_drawing(argparse.ArgumentParser(), shared, shared)
+
+
+def test_the_gz_suffix_is_checked_without_regard_to_case(tmp_path):
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    out = tmp_path / "m.json"
+
+    evaluate._check_per_drawing(parser, tmp_path / "rows.CSV.GZ", out)  # accepted: no SystemExit
+    with pytest.raises(SystemExit):
+        evaluate._check_per_drawing(parser, tmp_path / "rows.csv", out)
+
+
+def test_an_existing_per_drawing_file_is_refused_and_left_alone(monkeypatch, tmp_path):
+    from primer.data import catalog
+
+    def boom(*args, **kwargs):
+        raise AssertionError("the bucket must not be touched")
+
+    monkeypatch.setattr(catalog, "read_dataset", boom)
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+    precious = tmp_path / "rows.csv.gz"
+    precious.write_bytes(b"A FULL RUN'S ROWS")
+
+    with pytest.raises(SystemExit):
+        evaluate.main(
+            [
+                "--model",
+                str(model_yaml),
+                "--version",
+                "v1.1",
+                "--limit",
+                "2",
+                "--out",
+                str(tmp_path / "m.json"),
+                "--per-drawing",
+                str(precious),
+            ]
+        )
+
+    assert precious.read_bytes() == b"A FULL RUN'S ROWS"
+
+
+def test_per_drawing_rows_are_written_after_out_and_a_failed_write_never_reaches_the_real_path(
+    monkeypatch, tmp_path
+):
+    _stub_world(monkeypatch, _test_split_frame(6), winner="The Eiffel Tower")
+    out, rows_path = tmp_path / "m.json", tmp_path / "rows.csv.gz"
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    def broken(self, path, *args, **kwargs):
+        Path(path).write_bytes(b"trunc")  # a write that dies half way
+        raise OSError("disk full")
+
+    monkeypatch.setattr(pd.DataFrame, "to_csv", broken)
+
+    with pytest.raises(OSError, match="disk full"):
+        evaluate.main(
+            [
+                "--model",
+                str(model_yaml),
+                "--version",
+                "v1.1",
+                "--out",
+                str(out),
+                "--per-drawing",
+                str(rows_path),
+            ]
+        )
+
+    assert json.loads(out.read_text(encoding="utf-8"))["overall"]["drawings"] == 6, "--out came first"
+    assert not rows_path.exists(), "no truncated file at the real path"
+
+
+def test_a_successful_per_drawing_write_leaves_only_the_file_and_names_a_missing_country_unknown(
+    monkeypatch, tmp_path
+):
+    frame = _test_split_frame(6)
+    frame.loc[0, "country_code"] = None
+    _stub_world(monkeypatch, frame, winner="The Eiffel Tower")
+    out, rows_path = tmp_path / "m.json", tmp_path / "rows.csv.gz"
+    model_yaml = ROOT / "src" / "primer" / "drawing" / "configs" / "drawing_baseline.yaml"
+
+    evaluate.main(
+        ["--model", str(model_yaml), "--version", "v1.1", "--out", str(out), "--per-drawing", str(rows_path)]
+    )
+
+    rows = pd.read_csv(rows_path, dtype={"country_code": str, "record_id": str}, keep_default_na=False)
+    assert "unknown" in set(rows["country_code"])
+    assert not list(tmp_path.glob("*.partial"))
+
+
 # ------------------------------------------------------------------------------------ MLflow (S6c3)
 
 

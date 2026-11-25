@@ -63,13 +63,48 @@ produce the floor S6d must beat and to prove the path end to end, not to clear t
 
 ## Slices
 
-Per-slice results for the keys in `slices.py`, and what was done about any gap.
+Per-slice results for the keys in `slices.py` (`country_code`) and for category, and what was done about any gap.
 
-`country_code` is the one key. 165 countries appear in the test split and 54 have at least
-`SMALL_SLICE` (100) drawings, so only those are judged. Under the current prompt they run from
-0.47 (RO, n=452) to 0.68 (CL, n=102), and the largest, US (n=28,557), reads 0.5282. Differences of that size are within noise over a few
-hundred drawings and label mix is not controlled per country, so **nothing has been done about any
-gap**: none is established. Small slices are reported but not judged.
+The two keys `model-development.md` names for this stage are `country_code` and category (the
+label). Both are reported by `python -m primer.drawing.bias_report` (S6g), from the per-drawing rows
+of the S6c run. The rows must reproduce that run's metrics file exactly before anything is computed.
+The run is v1.1 `test`, all 63,310 drawings, on GPU in bf16, under `a child's drawing of a {label}.`,
+with top-5 0.5436. The figures below come from commit `8e7bdb0`, before this PR's review fixes, and
+have not been re-run on those fixes (they need the 16-minute GPU run; see the plan's Open questions).
+
+**Country: nine disparities named, so the earlier "within noise" is withdrawn.** 54 of 165 countries
+have at least `SMALL_SLICE` (100) drawings and are judged. Each is compared with what its own label
+mix predicts, from each label's accuracy in the *other* countries, and tested with Holm's correction
+at a family-wise 5%.
+- **Below their label mix:** RO −6.9, SA −6.4, GB −3.2 and **US −2.5** (n=28,557).
+- **Above it:** RU +4.6, TH +5.0, KR +5.9, IN +7.0 and **JP +11.7**.
+- **Controlling for label mix reveals gaps rather than explaining them away.** The raw comparison
+  against the other countries' rate names only six of the nine, and misses RO, SA and RU.
+- **Why, is not measured here.** The likeliest cause is drawing style, since how people draw an
+  object varies by country. The US and GB being *below* their label mix matters most: they are 52%
+  of the split and the bulk of S6d's training data.
+- **Mitigation, proposed for S6d and not applied:** a zero-shot model has nothing to reweight.
+  - Cap any one country's share of the training sample with `capped_weights`, so a fine-tune on a
+    US-heavy split cannot buy US accuracy with the other countries'.
+  - Re-run this report on every candidate. The cap is a guard; this bar is the control. For a
+    country named below its label mix (in the baseline or the candidate), reject a candidate whose
+    difference falls by more than the baseline's 95% half-width (from
+    `difference_low` to `difference_high` in the report, not adjusted for the number of
+    countries); for one above its label mix, report the move and do not reject on it. A
+    yardstick, not a test: the candidate's and baseline's differences are two noisy estimates on
+    the same drawings, so S6d may tighten it.
+- **Read with two limits.** Drawings are treated as independent, and Quick, Draw! rows carry no
+  drawer id, so a player who drew many items would make the p-values too small and this cannot be
+  adjusted for. "Named" is statistical, not practical: at the US's size a gap of two or three
+  points is named, so read the difference and its interval, not only the verdict.
+
+**Category: per-class difficulty, not a fairness gap.** All 345 categories are judged (146–227
+drawings each). Top-5 runs from 0.00 to 0.996.
+- **Hardest:** `garden` (0.00), `pool`, `postcard`, `beach`, `firetruck`, `pond` and `ocean`
+  (0.02–0.04). These are scenes and near-synonyms the vocabulary also names.
+- **Easiest:** `line`, `triangle` and `zigzag` (0.99 and above).
+- **Mitigation, proposed for S6d:** report per-category accuracy for every candidate, and do not
+  accept a gain that comes only from categories already above the median.
 
 ## Mitigations and trade-offs
 

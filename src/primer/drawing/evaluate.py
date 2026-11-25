@@ -368,16 +368,39 @@ def top5_hits(
     Compared by vocabulary **index**, never by string: the data spells three labels in lower case
     where the vocabulary capitalises them, and a string comparison would score those as misses.
     Ties keep vocabulary order (``scored``), so the same scores give the same hits on every run.
+    The CLI scores through `true_label_ranks` and `hits_from_ranks` instead, so that it can keep the
+    ranks; this wrapper is for callers that want only the hits.
     """
-    hits: list[bool] = []
+    return hits_from_ranks(true_label_ranks(drawings, encoder, prompts, progress))
+
+
+def hits_from_ranks(ranks: Sequence[int]) -> list[bool]:
+    """The one definition of a top-five hit, shared by `top5_hits` and the CLI's scoring pass."""
+    return [rank < TOP_K for rank in ranks]
+
+
+def true_label_ranks(
+    drawings: Iterable[tuple[bytes, int]],
+    encoder: ScoringEncoder,
+    prompts: Sequence[str],
+    progress: Any = None,
+) -> list[int]:
+    """For each ``(png, label index)``, the 0-based position of the true label in the ranking.
+
+    The CLI scores once through this and derives the gated hits with `hits_from_ranks`, so the
+    per-drawing rows S6g's bias report reads come from the very scoring pass that produced the
+    gated number, not from a second loop that could drift from it. Ties keep vocabulary order, as
+    in `scored`.
+    """
+    ranks: list[int] = []
     for image, label in drawings:
         ranking = scored(encoder.encode(image, prompts).confidences).ranking
-        hits.append(label in ranking[:TOP_K])
+        ranks.append(ranking.index(label))
         if progress is not None:
-            progress(len(hits))
-    if not hits:
+            progress(len(ranks))
+    if not ranks:
         raise ValueError("no drawings to evaluate")
-    return hits
+    return ranks
 
 
 def chance_baseline(vocabulary_size: int) -> dict[str, Any]:
@@ -556,8 +579,46 @@ def accuracy_parser() -> argparse.ArgumentParser:
         default=None,
         help="score only the first N drawings (a timing probe, never a result)",
     )
+    parser.add_argument(
+        "--per-drawing",
+        type=Path,
+        default=None,
+        help="also write one row per scored drawing (record id, label, country, rank, hit) as "
+        "gzipped CSV, for `python -m primer.drawing.bias_report` (S6g). Must end in .gz. Written after --out",
+    )
     add_mlflow_arguments(parser)
     return parser
+
+
+def _check_per_drawing(parser: argparse.ArgumentParser, path: Path, out: Path) -> None:
+    """Refuse a ``--per-drawing`` path that would fail after the run, when its ranks are all there is.
+
+    The rows are written last, after a run of minutes, so every way the write can fail is checked
+    now. The file is gzip whatever its name, so it must say so: `bias_report` reads it as gzip, and a
+    ``.csv`` holding gzip bytes would pass for text until something tried to read it.
+    """
+    if path.suffix.lower() != ".gz":
+        parser.error(f"--per-drawing must end in .gz (it is written as gzipped CSV): {path}")
+    if path.is_dir():
+        parser.error(f"--per-drawing is a directory: {path}")
+    if path.exists():
+        # Not set aside like --out: nothing reads a stale rows file for a gate, but a full run's rows
+        # cost 16 minutes of GPU to recreate, and a --limit probe reusing the path would destroy them.
+        parser.error(
+            f"--per-drawing already exists: {path}; move it or choose another path. "
+            f"(An earlier --out, if there was one, was already set aside as {out.name}.previous or "
+            f"{out.name}.previous.N.)"
+        )
+    if path.resolve() == out.resolve():
+        parser.error("--per-drawing and --out are the same file")
+    if not path.resolve().parent.is_dir():
+        parser.error(f"--per-drawing's folder does not exist: {path.parent}")
+    probe = path.with_name(path.name + ".partial")
+    try:
+        probe.write_bytes(b"")
+    except OSError as error:
+        parser.error(f"--per-drawing cannot be written: {error}")
+    probe.unlink()
 
 
 def _evaluate_accuracy(argv: list[str]) -> int:
@@ -581,6 +642,8 @@ def _evaluate_accuracy(argv: list[str]) -> int:
     _set_previous_output_aside(parser, args.out)
     if args.limit is not None and args.limit < 1:
         parser.error("--limit must be at least 1")
+    if args.per_drawing is not None:
+        _check_per_drawing(parser, args.per_drawing, args.out)
     check_mlflow_arguments(parser, args)
 
     if not args.version.strip():
@@ -611,18 +674,20 @@ def _evaluate_accuracy(argv: list[str]) -> int:
     if args.limit is not None:
         part = part.head(args.limit)
 
+    label_ids = [index[label.casefold()] for label in part["label"]]  # once: the rows reuse them
+
     def drawings() -> Iterable[tuple[bytes, int]]:
         # Rendered to PNG and handed to the encoder as bytes: the encoder decodes, composites and
         # runs `prepare_drawing` exactly as it does for an upload, so this is the product's path
         # from the bytes onwards. At the shipped settings `prepare_drawing` returns a rendered
         # canvas unchanged, so this is also the image `read_dataset` would hand to training.
-        for row in part.itertuples():
+        for row, label_id in zip(part.itertuples(), label_ids, strict=True):
             try:
                 png = render_strokes_png(json.loads(row.strokes))
             except Exception as error:
                 # Abort rather than skip: a dropped drawing would quietly change the denominator.
                 raise ValueError(f"record {row.record_id} could not be rendered: {error}") from error
-            yield png, index[row.label.casefold()]
+            yield png, label_id
 
     def progress(done: int) -> None:
         if done % 5000 == 0 or done == len(part):
@@ -634,7 +699,8 @@ def _evaluate_accuracy(argv: list[str]) -> int:
     git_sha, git_dirty = _git_state()
     start = time.perf_counter()
     encoder = SiglipEncoder(config, device=args.device)
-    hits = top5_hits(drawings(), encoder, prompts, progress)
+    ranks = true_label_ranks(drawings(), encoder, prompts, progress)
+    hits = hits_from_ranks(ranks)
     groups = {key: list(slice_values(part, key)) for key in SLICE_KEYS}
     result = metrics_file(
         hits,
@@ -662,6 +728,24 @@ def _evaluate_accuracy(argv: list[str]) -> int:
     partial = args.out.with_name(args.out.name + ".partial")
     partial.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     partial.replace(args.out)
+    if args.per_drawing is not None:
+        import pandas as pd
+
+        rows = pd.DataFrame(
+            {
+                "record_id": part["record_id"],
+                "label_index": label_ids,
+                "label": [labels[i] for i in label_ids],
+                "country_code": list(slice_values(part, "country_code")),
+                "rank": ranks,
+                "hit": hits,
+            }
+        )
+        # Beside and renamed into place, like --out: a crash mid-write leaves no truncated gzip.
+        partial = args.per_drawing.with_name(args.per_drawing.name + ".partial")
+        rows.to_csv(partial, index=False, compression="gzip")
+        partial.replace(args.per_drawing)
+        print(f"wrote {args.per_drawing}: {len(rows)} rows")
     judged = sum(1 for s in result["slices"] if s["judged"])
     print(
         f"wrote {args.out}: drawing_top5_acc={result['overall']['drawing_top5_acc']:.4f} over {len(hits)} drawings "
