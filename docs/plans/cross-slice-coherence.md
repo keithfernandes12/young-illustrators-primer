@@ -158,7 +158,7 @@ helper lands before any slice that should use it, and the consumer lists it unde
   is ready the worker prints `LOOP_WAIT <slice> waiting-on-#<pr>`, not `LOOP_EMPTY`, which the
   Ralph prompt reads as "plan finished". Both loop prompts say so. See the 2026-11-24 Decision.
 - **Split (2026-11-23)** — the PR-template line goes in its own one-line PR, because `AGENTS.md`
-  puts `.github/` changes in their own PR. That PR is #49 (opened 2026-11-24); until it merges,
+  puts `.github/` changes in their own PR. That PR is #49 (opened 2026-11-24). Until it merges,
   `create-pr` asks for the line at the end of "How it was checked".
 
 ### S4 · A cross-slice question for the reviewer sessions
@@ -244,7 +244,7 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
 | S0 | merged | [#46](https://github.com/keithfernandes12/young-illustrators-primer/pull/46) | confirmed against #46 at `2f418ed`, re-checked at `3db5f56`: tags built by `run_tags` (the CLI test asserts equality), owner from `--owner`, no literal owner, `git_dirty` `unknown`/`true`/`false`. Merged 2026-11-23 as `2d3f077` |
 | S1 | merged | [#47](https://github.com/keithfernandes12/young-illustrators-primer/pull/47) | merged 2026-11-23 as `c331364`. `tests/test_conventions.py`: four scans, count-based allowlists with reasons and keys, stale entries fail |
 | S2 | not started | | needs S1 |
-| S3 | in review | [#48](https://github.com/keithfernandes12/young-illustrators-primer/pull/48) | reconcile step in `engineering-loop`, `loop-worker`, `create-pr` and the process doc; merge-order rule in the template and `docs/plans/AGENTS.md`. Needed #47 first (it links this plan and `tests/test_conventions.py`); #47 merged as `c331364`. Also the slice-naming rule (plan slug in front, outside the plan). The PR-template line is split out to [#49](https://github.com/keithfernandes12/young-illustrators-primer/pull/49): `.github/` changes go in their own PR |
+| S3 | merged | [#48](https://github.com/keithfernandes12/young-illustrators-primer/pull/48), [#49](https://github.com/keithfernandes12/young-illustrators-primer/pull/49) | reconcile step in `engineering-loop`, `loop-worker`, `create-pr` and the process doc; merge-order rule in the plan template and `docs/plans/AGENTS.md`. Needed #47 first (it links this plan and `tests/test_conventions.py`); #47 merged as `c331364`; #48 merged as `93d441e`. Also the slice-naming rule (plan slug in front, outside the plan). #48 merged as the skills and docs half; #49 adds the PR-template line (`.github/`), which goes in its own PR |
 | S4 | not started | | needs S3 |
 | S5 | not started | | |
 | S6 | not started | | needs S1 |
