@@ -229,6 +229,46 @@ def test_findings_say_which_way_the_verdict_went(world):
     assert "No country disparity survives" in verdict[0] and "ruled out" in verdict[0]
 
 
+def test_the_raw_test_is_hand_checkable_and_holm_adjusted():
+    # X: 60 of 100 against the others' 200 of 400. raw var = .25 (1/100 + 1/400) = .003125, so
+    # z = .1 / .05590 = 1.789 and p = .0736. Dropping the 1/len(rest) term would give z = 2, p = .0455.
+    rows = make_rows([("X", 0, "easy", 100, 60), ("Y", 0, "easy", 400, 200)])
+    tests = build_report(rows, metrics_for(rows))["country"]["tests"]
+    assert tests.loc["X", "p_raw"] == pytest.approx(0.0736, abs=5e-4)
+    assert tests.loc["X", "raw_difference"] == pytest.approx(0.1)
+
+
+def test_raw_named_follows_the_holm_adjusted_raw_p(world, monkeypatch):
+    rows, metrics = world
+    tests = build_report(rows, metrics)["country"]["tests"]
+    first = tests["p_raw"].idxmin()
+    raw, adjusted = tests.loc[first, "p_raw"], tests.loc[first, "p_raw_holm"]
+    assert raw < adjusted
+
+    monkeypatch.setattr(bias_report, "ALPHA", (raw + adjusted) / 2)  # named on raw p, not after Holm
+
+    assert first not in build_report(rows, metrics)["country"]["raw_named"]
+
+
+def test_category_extremes_skip_sub_floor_categories_and_keep_their_order():
+    groups = []
+    for i in range(1, 13):  # 100 drawings each, split over two countries; rates .08 .. .96
+        groups += [("X", i, f"L{i}", 50, 4 * i), ("Y", i, f"L{i}", 50, 4 * i)]
+    groups += [("X", 99, "tiny", 3, 0)]  # 0.00 on three drawings: must not head "hardest"
+    groups += [("S", 1, "L1", 20, 0)]  # a country under the floor
+    rows = make_rows(groups)
+
+    report = build_report(rows, metrics_for(rows))
+    category, country = report["category"], report["country"]
+
+    assert category["slices"] == 13 and category["judged"] == 12
+    assert len(category["hardest"]) == 10 and len(category["easiest"]) == 10
+    assert category["hardest"].index[0] == "L1" and category["easiest"].index[0] == "L12"
+    assert category["hardest"]["top5"].is_monotonic_increasing
+    assert category["easiest"]["top5"].is_monotonic_decreasing
+    assert country["judged"] == 2 and country["judged_drawings"] == 12 * 100 + 3
+
+
 def test_categories_are_ranked_hardest_first(world):
     rows, metrics = world
 
@@ -327,6 +367,33 @@ def test_the_cli_names_a_metrics_file_it_cannot_read(tmp_path):
         bias_report.main(args)
     (tmp_path / "m.json").unlink()
     with pytest.raises(SystemExit, match="not a readable metrics file"):
+        bias_report.main(args)
+
+
+def test_a_missing_output_folder_is_refused_before_anything_is_written(tmp_path):
+    args = _cli_inputs(tmp_path)
+    with pytest.raises(SystemExit):
+        bias_report.main([*args, "--markdown", str(tmp_path / "missing" / "bias.md")])
+    assert not (tmp_path / "bias.json").exists(), "--out must not be written for a run that is refused"
+
+    with pytest.raises(SystemExit):
+        bias_report.main([*args[:-1], str(tmp_path / "missing" / "bias.json")])
+
+
+def test_the_outputs_are_written_whole_and_leave_no_partial(tmp_path):
+    assert bias_report.main([*_cli_inputs(tmp_path), "--markdown", str(tmp_path / "bias.md")]) == 0
+    assert not list(tmp_path.glob("*.partial"))
+    assert json.loads((tmp_path / "bias.json").read_text(encoding="utf-8"))["country"]["judged"] == 2
+
+
+def test_a_metrics_file_of_the_wrong_shape_is_refused_clearly(tmp_path, world):
+    rows, _ = world
+    with pytest.raises(ValueError, match="no \\['overall', 'slices'\\]"):
+        check_rows(rows, {"stage": "drawing", "limit": None})
+
+    args = _cli_inputs(tmp_path)
+    (tmp_path / "m.json").write_text("null", encoding="utf-8")
+    with pytest.raises(SystemExit, match="expected a JSON object"):
         bias_report.main(args)
 
 

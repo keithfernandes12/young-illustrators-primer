@@ -634,6 +634,10 @@ def test_stability_still_routes_to_its_own_subcommand(monkeypatch):
 # ------------------------------------------------------------------------------- per-drawing (S6g)
 
 
+def test_a_hit_is_a_rank_under_top_k_in_one_place():
+    assert evaluate.hits_from_ranks([0, 4, 5, 344]) == [True, True, False, False]
+
+
 def test_ranks_are_the_true_labels_position_and_hits_follow_from_them():
     # Label 6 sits fifth and label 7 sixth, so the top-5 cut falls between them.
     encoder = TableEncoder({b"d": [0.9, 0.8, 0.7, 0.6, 0.1, 0.0, 0.5, 0.4]})

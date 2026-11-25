@@ -5,8 +5,8 @@
     python -m primer.drawing.bias_report --metrics m.json --rows rows.csv.gz \\
         --out bias.json --markdown bias.md
 
-Step 3 of `docs/engineering/model-development.md` for the drawing stage: per-slice metrics over its
-two slice keys, ``country_code`` and category (the label), with every disparity either named or
+Step 3 of `docs/engineering/model-development.md` for the drawing stage, less its logging (S6g2):
+per-slice metrics over its two slice keys, ``country_code`` and category (the label), with every disparity either named or
 ruled out by the numbers, and a mitigation proposed or ruled out for `CARD.md`.
 
 **What makes a disparity "named" here, and not noise.** With 54 judged countries, many near the
@@ -26,10 +26,11 @@ Reported beside the verdict, and not part of it:
 - A Wilson 95% interval on each slice's own top-5 accuracy.
 - A 95% interval on the difference itself (``difference_low`` / ``difference_high``), from the
   same variance as the test and **not** adjusted for the number of countries. It is the yardstick
-  for comparing a candidate with this baseline: for a country named below its label mix (in the baseline or the candidate), reject a
-  candidate whose difference falls by more than the baseline's half-width; for one above, report
-  the move and do not reject on it. A yardstick, not a test (two noisy estimates on the same
-  drawings), so S6d may tighten it.
+  for comparing a candidate with this baseline: for a country named below its label mix (in the
+  baseline or the candidate), reject a candidate whose difference falls by more than the baseline's
+  half-width; for one above, report the move and do not reject on it. A yardstick, not a test (two
+  noisy estimates on the same drawings), so S6d may tighten it. `CARD.md` *Slices* is the single
+  statement of the bar; this and the generated findings repeat it.
 - The unadjusted test (against the other countries' overall rate), so a reader can see how much of
   a raw gap the label mix accounts for.
 
@@ -112,6 +113,9 @@ def check_rows(rows: pd.DataFrame, metrics: Mapping[str, Any]) -> None:
     missing = [c for c in ROW_COLUMNS if c not in rows.columns]
     if missing:
         raise ValueError(f"the rows file lacks {missing}; write it with evaluate --per-drawing")
+    absent = [key for key in ("overall", "slices") if key not in metrics]
+    if absent:
+        raise ValueError(f"the metrics file has no {absent}: it is not a drawing metrics file")
     if metrics.get("stage") != "drawing":
         raise ValueError(f"the metrics file is a {metrics.get('stage')!r} file, not a drawing one")
     if metrics.get("limit") is not None:
@@ -330,7 +334,8 @@ def findings(report: Mapping[str, Any]) -> list[str]:
             "cap any one country's share of the training sample (`capped_weights` in `primer.data.bias`), so a "
             f"fine-tune on a split as {largest}-heavy as this one ({largest} is {share:.0%} of the drawings "
             f"scored here) cannot buy {largest}'s accuracy with the other countries'; then re-run this report "
-            "on the candidate. For a country named below its label mix (in the baseline or the candidate), reject a candidate whose difference "
+            "on the candidate. For a country named below its label mix (in the baseline or the candidate), "
+            "reject a candidate whose difference "
             "falls by more than the baseline's 95% half-width (`difference_low` to `difference_high`, not "
             "adjusted for the number of countries); for one above its label mix, report the move and do not "
             "reject on it. A yardstick, not a test: S6d may tighten it."
@@ -465,17 +470,35 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
+def _write_text(path: Path, text: str) -> None:
+    """Beside and renamed into place, like `evaluate`'s outputs: no truncated file at ``path``."""
+    partial = path.with_name(path.name + ".partial")
+    partial.write_text(text, encoding="utf-8")
+    partial.replace(path)
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = parser().parse_args(argv)
+    cli = parser()
+    args = cli.parse_args(argv)
+    # After the computation is too late to learn that an output folder is missing, and a bad
+    # --markdown would leave --out written and the run reported as a failure.
+    for flag, target in (("--out", args.out), ("--markdown", args.markdown)):
+        if target is not None and not target.resolve().parent.is_dir():
+            cli.error(f"{flag}'s folder does not exist: {target.parent}")
     try:
         metrics = json.loads(args.metrics.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
         raise SystemExit(f"{args.metrics} is not a readable metrics file: {error}") from error
+    if not isinstance(metrics, dict):
+        raise SystemExit(f"{args.metrics} is not a metrics file: expected a JSON object")
     try:
         # Explicitly gzip, whatever the name: `evaluate --per-drawing` always writes gzip, and
         # pandas would otherwise go by the extension and fail on gzip bytes in a `.csv`.
         rows = pd.read_csv(
-            args.rows, compression="gzip", dtype={"country_code": str, "record_id": str}, keep_default_na=False
+            args.rows,
+            compression="gzip",
+            dtype={"country_code": str, "record_id": str},
+            keep_default_na=False,
         )
     except (
         OSError,  # missing, unreadable, or gzip.BadGzipFile (a subclass, which is also what a corrupt body raises)
@@ -483,12 +506,14 @@ def main(argv: list[str] | None = None) -> int:
         UnicodeDecodeError,
         pd.errors.EmptyDataError,
     ) as error:
-        raise SystemExit(f"{args.rows} is not the gzipped CSV that evaluate --per-drawing writes: {error}") from error
+        raise SystemExit(
+            f"{args.rows} is not the gzipped CSV that evaluate --per-drawing writes: {error}"
+        ) from error
     report = build_report(rows, metrics)
-    args.out.write_text(json.dumps(report_to_json(report), indent=2) + "\n", encoding="utf-8")
+    _write_text(args.out, json.dumps(report_to_json(report), indent=2) + "\n")
     text = render_markdown(report)
     if args.markdown is not None:
-        args.markdown.write_text(text, encoding="utf-8")
+        _write_text(args.markdown, text)
     # The report holds characters (≥) that a Windows console's cp1252 cannot print; both files are
     # already written, so a console that cannot show it must not turn a good run into exit 1.
     if hasattr(sys.stdout, "reconfigure"):

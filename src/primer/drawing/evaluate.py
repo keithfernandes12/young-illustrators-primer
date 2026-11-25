@@ -369,7 +369,12 @@ def top5_hits(
     where the vocabulary capitalises them, and a string comparison would score those as misses.
     Ties keep vocabulary order (``scored``), so the same scores give the same hits on every run.
     """
-    return [rank < TOP_K for rank in true_label_ranks(drawings, encoder, prompts, progress)]
+    return hits_from_ranks(true_label_ranks(drawings, encoder, prompts, progress))
+
+
+def hits_from_ranks(ranks: Sequence[int]) -> list[bool]:
+    """The one definition of a top-five hit, shared by `top5_hits` and the CLI's scoring pass."""
+    return [rank < TOP_K for rank in ranks]
 
 
 def true_label_ranks(
@@ -380,9 +385,10 @@ def true_label_ranks(
 ) -> list[int]:
     """For each ``(png, label index)``, the 0-based position of the true label in the ranking.
 
-    `top5_hits` is ``rank < TOP_K`` over this, so the per-drawing rows S6g's bias report reads
-    come from the very scoring pass that produced the gated number, not from a second loop that
-    could drift from it. Ties keep vocabulary order, as in `scored`.
+    The CLI scores once through this and derives the gated hits with `hits_from_ranks`, so the
+    per-drawing rows S6g's bias report reads come from the very scoring pass that produced the
+    gated number, not from a second loop that could drift from it. Ties keep vocabulary order, as
+    in `scored`.
     """
     ranks: list[int] = []
     for image, label in drawings:
@@ -665,18 +671,20 @@ def _evaluate_accuracy(argv: list[str]) -> int:
     if args.limit is not None:
         part = part.head(args.limit)
 
+    label_ids = [index[label.casefold()] for label in part["label"]]  # once: the rows reuse them
+
     def drawings() -> Iterable[tuple[bytes, int]]:
         # Rendered to PNG and handed to the encoder as bytes: the encoder decodes, composites and
         # runs `prepare_drawing` exactly as it does for an upload, so this is the product's path
         # from the bytes onwards. At the shipped settings `prepare_drawing` returns a rendered
         # canvas unchanged, so this is also the image `read_dataset` would hand to training.
-        for row in part.itertuples():
+        for row, label_id in zip(part.itertuples(), label_ids, strict=True):
             try:
                 png = render_strokes_png(json.loads(row.strokes))
             except Exception as error:
                 # Abort rather than skip: a dropped drawing would quietly change the denominator.
                 raise ValueError(f"record {row.record_id} could not be rendered: {error}") from error
-            yield png, index[row.label.casefold()]
+            yield png, label_id
 
     def progress(done: int) -> None:
         if done % 5000 == 0 or done == len(part):
@@ -689,7 +697,7 @@ def _evaluate_accuracy(argv: list[str]) -> int:
     start = time.perf_counter()
     encoder = SiglipEncoder(config, device=args.device)
     ranks = true_label_ranks(drawings(), encoder, prompts, progress)
-    hits = [rank < TOP_K for rank in ranks]
+    hits = hits_from_ranks(ranks)
     groups = {key: list(slice_values(part, key)) for key in SLICE_KEYS}
     result = metrics_file(
         hits,
@@ -723,8 +731,8 @@ def _evaluate_accuracy(argv: list[str]) -> int:
         rows = pd.DataFrame(
             {
                 "record_id": part["record_id"],
-                "label_index": [index[label.casefold()] for label in part["label"]],
-                "label": [labels[index[label.casefold()]] for label in part["label"]],
+                "label_index": label_ids,
+                "label": [labels[i] for i in label_ids],
                 "country_code": list(slice_values(part, "country_code")),
                 "rank": ranks,
                 "hit": hits,

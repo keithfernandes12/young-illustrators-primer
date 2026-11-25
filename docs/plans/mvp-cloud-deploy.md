@@ -2,7 +2,7 @@
 title: MVP on Google Cloud — models v0, serving, deploy, gates and monitoring
 type: plan
 created: 2026-11-07
-updated: 2026-11-16
+updated: 2026-11-24
 status: active
 author: rishiparekh
 tags: [mvp, gcp, serving, models, deploy, loops]
@@ -583,7 +583,7 @@ and category, with every disparity named or ruled out and a mitigation proposed 
 - **Rows must reconcile first** — they must reproduce the metrics file's count, its
   `drawing_top5_acc` and every country slice exactly. A `--limit` probe is refused.
 - **Not doing** — mitigation itself (nothing to reweight in a zero-shot model; proposed for S6d),
-  logging the report to MLflow (it needs #44's `tracking.py`; a follow-up), and new slice keys.
+  logging the report to MLflow (S6g2), and new slice keys.
 - **Depends on** — S6c. **Jira** — KAN-38.
 
 ### S6d · Fine-tune the recogniser
@@ -618,10 +618,14 @@ before an agent may run training at all, and no area has them yet.
   Stability is not accuracy either way: it can show the model became more brittle, or more rigid,
   never that it became wrong.
   **The bias report is re-run on the candidate** (S6g, `python -m primer.drawing.bias_report`), and
-  the candidate is held to the same bar as `CARD.md`'s *Slices*: for a country named below its label
-  mix, reject it if its difference falls by more than the baseline's 95% half-width; for one above,
-  report the move and do not reject on it. A yardstick, not a test: S6d may tighten it.
-- **Depends on** — S6b2, S6c; S6c2 for the second half of its acceptance. **Jira** — KAN-38.
+  the candidate is held to the bar in `CARD.md`'s *Slices*, which is the single statement of it
+  (the bias_report docstring and its generated findings repeat it): for a country named below its
+  label mix, in the baseline or the candidate, reject the candidate if its difference falls by more
+  than the baseline's 95% half-width; for one above, report the move and do not reject on it. A
+  yardstick, not a test: S6d may tighten it. Capping a country's training share is a guard; this
+  bar is the control.
+- **Depends on** — S6b2, S6c; S6c2 for the second half of its acceptance; S6g for the bias report
+  and `--per-drawing`. **Jira** — KAN-38.
 
 ### S6e · The rest of the character sheet
 
@@ -865,7 +869,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6c2 | merged | [#33](https://github.com/keithfernandes12/young-illustrators-primer/pull/33) | 1,000 frozen drawings (unstratified), four variants: under the model card's prompt, top-1 moves 25% / 50% / 41% between adjacent variants and over half the drawings come out `squiggle`; under the shipped prompt (re-measured 2026-11-16) 34% / 66% / 50% and the most common answer is `The Great Wall of China`. Reproduces exactly. KAN-109 |
 | S6c3 | merged | [#44](https://github.com/keithfernandes12/young-illustrators-primer/pull/44) | `evaluate.py --mlflow --owner` for accuracy and stability through `tracking.py`; refuses probes, owner-less runs, a missing `MLFLOW_TRACKING_URI` and colliding names. Round-tripped on the real server. KAN-38 |
 | S6g | in review | [#45](https://github.com/keithfernandes12/young-illustrators-primer/pull/45) | bias report: 9 of 54 judged countries differ from their label mix (Holm, 5%): US −2.5, GB −3.2, JP +11.7 …; categories 0.00–0.996. Mitigation proposed for S6d. KAN-38 |
-| S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); S6c merged (#37); must beat 0.5436 under the switched prompt. Reads S6c2's stability figures |
+| S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); S6c merged (#37); must beat 0.5436 under the switched prompt. Reads S6c2's stability figures; re-runs S6g's bias report (#45) on the candidate |
 | S6e | merged | [#35](https://github.com/keithfernandes12/young-illustrators-primer/pull/35) | `sheet.py`: Florence-2 + SAM 2.1 + ViTPose beside SigLIP 2; every field filled on 82/82 real sheets; two figures found as two on 12/20. Unblocks KAN-42 |
 | S6f | merged | [#39](https://github.com/keithfernandes12/young-illustrators-primer/pull/39) | sensitivity: stroke drop, line width, erasure, prompt template, occlusion; paired bootstrap intervals; runs on `val`. Also carries the prompt switch to `a child's drawing of a {label}.` (S6c 0.5436 on `test`, S6c2 re-measured). Re-run under it: strokes -14.7 / -21.8, 7 px -2.5. KAN-38 |
 | S6f2 | in review | [#46](https://github.com/keithfernandes12/young-illustrators-primer/pull/46) | `sensitivity --mlflow` through `tracking.py` as kind `sensitivity`, with the shared `--owner` and early refusals; metric names unchanged (98 = 98 on a real run, values identical). Round-tripped on the real server (run `8abefd45`; all 96 of `dfaee7e2`'s metrics reproduced exactly). KAN-38 |
@@ -1055,7 +1059,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   largest countries, with a fixed 2-point threshold. That suits the data's own recogniser over
   countries of thousands of drawings. It would mostly measure sample size over 54 countries near
   100 drawings, and it cannot separate a country's style from what it drew. So S6g:
-  - reuses `MetricFrame` and `SMALL_SLICE` from there, but not that function;
+  - uses Fairlearn's `MetricFrame` as that function does, and `SMALL_SLICE` (through `slices.py`), but not that function;
   - names a country only after a label-mix-controlled, Holm-corrected test.
   No ticket was filed: the data function is not wrong for its own purpose. And the report reads
   rows written by S6c's scoring pass, never a second loop, so it cannot drift from the gated
@@ -1697,7 +1701,8 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
     judged; they hold 61,350 of the 63,310. Judged slices run from 0.4333 (BE, n=210) to 0.6471
     (CL, n=102). The largest are US 0.4774 (n=28,557), GB 0.4689, CA 0.4753, DE 0.5143 and AU
     0.5246. Differences of that size over a few hundred drawings are within noise, and nothing here
-    is adjusted for label mix per country.
+    is adjusted for label mix per country. *(Superseded 2026-11-16 by S6g: with label mix
+    controlled, nine countries are named, so "within noise" was withdrawn in `CARD.md`.)*
   - **Device and dtype matter for S6d.** bf16 on GPU ranks near-ties differently from fp32 on CPU:
     S6a's `house` scored 0.2451 against 0.3026. S6d's comparison has to be taken with `--device
     cuda` (bf16) to be like for like. S6c2's stability figures were taken on CPU in fp32.
@@ -1927,13 +1932,12 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 
 ## Open questions
 
-- **Where does the bias report get logged, and where do its inputs live?** *Not yet ticketed.*
-  `model-development.md` step 3 says per-slice metrics are logged. #45 writes JSON and Markdown
-  but logs nothing, because it was written before #44's `tracking.py` merged, and the rows and report from
-  the real run are in no durable store, so every figure in `CARD.md` needs another GPU run to
-  re-derive. *Recommended:* a follow-up slice that logs the report's JSON and the rows file as
-  artifacts of the S6c run (`eval/`), through `tracking.py`. *Decides:* the KAN-38 owner, who also
-  opens the ticket.
+- **What S6g2 does not settle: where the real run's inputs live.** S6g2 logs the report through
+  `tracking.py`, but the rows, metrics and report from the real run behind `CARD.md`'s figures are
+  in no durable store (scratchpad only), and the stricter reconciliation has never read them. *Not
+  yet ticketed.* *Recommended:* S6g2 starts with one re-run that logs the rows and report as
+  artifacts, and `CARD.md` then states the commit its figures came from. *Decides:* the KAN-38
+  owner, who also opens the ticket.
 - **Is "named" the right bar, or should it need a minimum effect size?** At the US's size a gap of
   2.5 points is named at p=1.3e-11, while the data stage's rule was a fixed 2-point gap, so this
   rule now follows power at the large end instead of sample size at the small end. TH (+5.0) is
