@@ -117,7 +117,7 @@ Write this to a file, for example `protect-main-with-checks.json`:
     {
       "type": "required_status_checks",
       "parameters": {
-        "strict_required_status_checks_policy": false,
+        "strict_required_status_checks_policy": true,
         "required_status_checks": [
           { "context": "test" },
           { "context": "pr-rules" }
@@ -135,9 +135,17 @@ gh api -X PUT repos/keithfernandes12/young-illustrators-primer/rulesets/<ID> \
   --input protect-main-with-checks.json
 ```
 
-Set `strict_required_status_checks_policy` to `true` if a branch must also be up to date with
-`main` before it can merge. That is stricter and means more rebasing on a busy repository; `false`
-is the gentler default for a team of this size.
+`strict_required_status_checks_policy` is `true`: a branch must be up to date with `main`, and green
+on that, before it can merge. This was `false` until 2026-11-24. It changed because two PRs can each
+pass CI on their own branch and still break `main` together. #46 and #47 nearly did: #47's
+allowlist entries became stale the moment #46 merged, and only merging them in the right order by
+hand kept `main` green. With `true`, the second PR must take `main` first and pass again. Bring a
+branch up to date by merging `main` into it (the PR page's **Update branch** button does this);
+the team does not rebase.
+
+`.github/rulesets/protect-main.json` carries this rule too, so the file and the live ruleset agree.
+Step 2 on a fresh repository creates all four rules at once; this step is for an existing ruleset
+created before the rule was added.
 
 Verify:
 
