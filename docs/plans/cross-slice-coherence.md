@@ -351,7 +351,7 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
 | S5 | not started | | prepped 2026-11-24; ready |
 | S6 | not started | | prepped 2026-11-24; ready, best after S8 |
 | S7 | not started | | prepped 2026-11-24: mostly built already (`test_serving_builds_a_complete_fake_book`); narrow to the golden-fakes seam, or close |
-| S8 | in review | | `scripts/audit_open_questions.py`: lists open questions with neither a Jira key nor a slice; 5 of 37 on `main`. Built under KAN-38, the plan's key; a separate key was not created |
+| S8 | in review | [#51](https://github.com/keithfernandes12/young-illustrators-primer/pull/51) | `scripts/audit_open_questions.py`: lists open questions with neither a Jira key nor a slice; 5 of 37 on `main`. Built under KAN-38, the plan's key; a separate key was not created |
 
 ## Decisions
 
