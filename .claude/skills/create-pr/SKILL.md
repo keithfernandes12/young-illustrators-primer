@@ -40,12 +40,16 @@ cp .github/pull_request_template.md "$BODY"
 Fill every section:
 - **What changed / Why** — behaviour, not a file list.
 - **Jira** — `KAN-<n>`.
-- **How it was checked** — commands and results (`pytest` → N passed). Name anything not run.
+- **How it was checked** — commands and results (`pytest` → N passed). Name anything not run. End
+  with `Reconciled with main at <sha>: reused … / not applicable / differs because …`, where
+  `<sha>` is the `origin/main` commit you read up to; on the second pass read from the earlier line's
+  `<sha>` (`engineering-loop` step 6).
 - **Where the reviewer's judgement is needed** — at most 3 lines, each `file:line — the question`
   (a behaviour choice, data contract, privacy boundary, error handling, a name that will spread).
   If the author already made the call visibly, it is not a question. Write "None — mechanical
   change" only when true.
-- **Plan** — `docs/plans/<slug>.md` and slice, or "single-PR change".
+- **Plan** — `docs/plans/<slug>.md` and slice, or "single-PR change". Wherever the body names a
+  slice, write the plan's slug in front (`mvp-cloud-deploy S6f`): other plans reuse the labels.
 - **Agent provenance** — replace `N/A` with the session line from the session-start hook.
 
 ## 4. Open it

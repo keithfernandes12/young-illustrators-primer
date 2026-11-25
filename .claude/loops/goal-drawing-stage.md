@@ -1,7 +1,8 @@
 /loop Run one loop-worker iteration on docs/plans/mvp-cloud-deploy.md, restricted to slices S6a-S6e
 (the drawing recognition stage, Jira KAN-38 and KAN-87). Only slices with a Jira key, not marked
-person-only, whose dependencies are merged. If no slice is ready, output LOOP_EMPTY and stop the
-loop.
+person-only, whose dependencies are merged. If no slice is ready and none is only waiting on an
+open PR, output LOOP_EMPTY and stop the loop; if one is waiting, output the loop-worker's LOOP_WAIT
+line instead (the plan is not finished).
 
 **This prompt deliberately overrides `loop-worker`'s review-queue rule, which stops at 3 open
 agent-authored PRs of any kind.** Count only the ones for this stage: stop with
