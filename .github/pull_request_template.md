@@ -16,7 +16,7 @@
 
 Reconciled with main at `<sha>`: reused … / not applicable / differs because …
 
-<!-- <sha> is the origin/main commit you read up to (git log --stat <merge-base>..origin/main, and the open PRs). Keep one line; say what you reused. See docs/engineering/engineering-loop.md step 6. -->
+<!-- <sha> is the origin/main commit you read up to (git log --stat <merge-base>..origin/main, and the open PRs). Keep one line; say what you reused. On the second pass, read from this line's sha, because the merge base moves. See docs/engineering/engineering-loop.md step 6. -->
 
 ## Where the reviewer's judgement is needed
 
