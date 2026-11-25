@@ -546,18 +546,18 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
   and a person turns a finding that stays open into an Open question by hand. *Recommended:* a
   committed baseline file, or a diff against `origin/main`, as a follow-up to S5; reading
   `tests/test_conventions.py`'s constants without executing it belongs with the shared module
-  (S2). *Decides:* the KAN-38 owner. **Tracked:** cross-slice-coherence S5.
+  (S2). *Decides:* the KAN-38 owner. **Not tracked yet:** no slice or Jira key; the owner decides whether to file one.
 - **Should S3's author-side commands use the branch point too?** `engineering-loop`,
   `loop-worker`, `docs/engineering/engineering-loop.md`, the PR template and S3's text above say
   `git log --stat <merge-base>..origin/main`, which is empty once the branch has merged `main`.
   S4 gives the form that works (`git rev-list --no-merges origin/main..<head> | tail -1`).
   *Recommended:* change them in a small follow-up to S3. *Decides:* the KAN-38 owner.
-  **Tracked:** cross-slice-coherence S3.
+  **Not tracked yet:** no slice or Jira key; the owner decides whether to file one.
 - **Should the other inline script loaders in `tests/` use `load_script`?** #51 adds the shared
   fixture in `tests/conftest.py`; `scripts/check_pr.py`, `tests/test_docs.py`,
   `tests/data/conftest.py` and three `tests/agent_hooks/` files still load scripts their own way.
   *Recommended:* one small PR, so the fixture removes duplication instead of being a sixth way.
-  *Decides:* the KAN-38 owner. **Tracked:** cross-slice-coherence S8.
+  *Decides:* the KAN-38 owner. **Not tracked yet:** no slice or Jira key; the owner decides whether to file one.
 
 ## Out of scope
 
