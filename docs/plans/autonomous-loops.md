@@ -86,6 +86,10 @@ Each teammate installs the user-level plugins and skills from the tutorial, sets
 Workload Identity Federation; actions pinned to commits, read-only default token, `timeout-minutes`.
 
 - **Depends on** — `mvp-cloud-deploy` S1 (WIF pool). **Jira** — to create.
+- **2026-11-24:** the Vertex route does not apply. The course credit does not cover Claude on
+  Vertex AI (see the billing answer under Open questions), so this slice as written stays not
+  started. Claude in CI needs another route, such as the API key the Parked table lists,
+  not decided.
 
 ### S4 · Nightly golden gate (own PR)
 
@@ -121,6 +125,9 @@ Workload Identity Federation; actions pinned to commits, read-only default token
 
 - Claude subscription or Vertex AI billing per person? Recommended: subscription for interactive work and
   routines; Vertex AI for GitHub Actions if the GCP credit covers it. Each person decides.
+  **Answered 2026-11-24: subscription.** Each member uses a university-provided Claude Code
+  subscription. The course's GCP credit does not cover Claude on Vertex AI, so the Vertex option
+  for GitHub Actions does not apply (KAN-38 owner, recorded in `mvp-cloud-deploy`).
 
 ## Out of scope
 

@@ -24,7 +24,8 @@ deployment, §8 failure analysis).
 - `dags/` — Airflow DAGs (`dags/README.md`); `docker-compose.yaml` and `infra/airflow/` run them.
 - `dashboards/tracker/` — Streamlit pipeline tracker. `app/`, `notebooks/` — empty.
 - `docs/` — decisions, plans, procedures. See **Documents** below.
-- `scripts/` — repo checks (`check_docs.py`, `check_pr.py`).
+- `scripts/` — repo checks (`check_docs.py`, `check_pr.py`), `audit_open_questions.py` (plan open
+  questions that no slice or Jira issue owns) and `scan_duplicates.py` (advisory duplicate scan).
 - `.claude/` — agent settings, guard hooks and skills. `.githooks/` — the commit-message check.
 - New code goes under `src/primer/<area>/`. The old `src/<area>/` layout is closed.
 
@@ -39,7 +40,7 @@ ruff check .                                 # lint (line length 110)
 ruff format .                                # format
 mypy src                                     # type-check
 python scripts/check_docs.py                 # docs frontmatter (also runs inside pytest)
-python .claude/skills/verify/scripts/verify.py   # everything CI runs, plus privacy lint; one PASS/FAIL line
+python .claude/skills/verify/scripts/verify.py   # everything CI runs, plus privacy lint and an advisory duplicate scan; one PASS/FAIL line
 primer-data --data-uri .local-data run <source> --batch-size 2   # pipeline, locally
 pip install -e ".[dashboard]" && streamlit run dashboards/tracker/app.py
 pip install -e ".[sheet]"                    # the character sheet: drawing's torch + transformers, plus torchvision
@@ -201,6 +202,7 @@ review, apply `docs/engineering/review-checklist.md`.
 | `shape-feature` | turn a vague idea or Jira epic into a brief with options and slices |
 | `create-pr` | commit, push and open a correct draft PR |
 | `review-pr` | review a PR or your own branch against the checklist, with finding categories |
+| `seams` | review `main` at its joins: duplicated conventions, stage mismatches, unowned questions |
 | `fix-feedback` | work through review findings and record a disposition for each |
 | `fix-ci` | diagnose and fix a red CI run without weakening CI |
 | `pr-status` | find out what is going on with a PR and what to do next |

@@ -2070,7 +2070,9 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   answer covers the drawing stage only. S7b and S5b still need quota, which stays a person-only
   step (S7a's Why-separate).
 - Does the course's GCP credit cover Claude models on Vertex AI? Recommended: check the billing account's
-  credit scope before routing Claude Code through Vertex. Rishi checks.
+  credit scope before routing Claude Code through Vertex. Rishi checks. **Answered 2026-11-24: no.**
+  The course credit does not cover Claude on Vertex AI, and each member uses a university-provided
+  Claude Code subscription, so Claude Code is not routed through Vertex (KAN-38 owner).
 - **S6e needs `torchvision`: decided 2026-11-15 by the KAN-38 owner.** SAM 2's image processor
   imports it, and like the CUDA torch it must match the torch build (`0.29.1+cu130` for
   `2.14.1+cu130`). Decision: a separate **`sheet` extra** (`torch>=2.4`, `transformers`,

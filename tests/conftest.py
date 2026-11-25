@@ -5,8 +5,36 @@ makes that rule enforced instead of only written down: the pipeline's default da
 a temporary folder, and opening any gs:// filesystem raises.
 """
 
+import importlib.machinery
+import importlib.util
+import sys
+from pathlib import Path
+
 import gcsfs
 import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(scope="session")
+def load_script():
+    """Import a file that is not part of the package: a script, or a hook with no .py extension.
+
+    An explicit loader is needed because git hooks have no .py extension. The module is registered
+    in ``sys.modules`` before it runs, because a dataclass looks its module up there while it is
+    being defined.
+    """
+
+    def load(relative_path: str, name: str):
+        path = str(REPO_ROOT / relative_path)
+        loader = importlib.machinery.SourceFileLoader(name, path)
+        spec = importlib.util.spec_from_file_location(name, path, loader=loader)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        loader.exec_module(module)
+        return module
+
+    return load
 
 
 @pytest.fixture(autouse=True)
