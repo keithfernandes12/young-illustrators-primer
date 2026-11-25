@@ -18,4 +18,6 @@ Run exactly one loop-worker iteration on docs/plans/mvp-cloud-deploy.md. Only sl
 not marked person-only, whose dependencies are merged. Stop early with LOOP_WAIT if 3 agent-authored
 PRs are open.
 
-If no slice is ready, output <promise>LOOP_EMPTY</promise>. Otherwise end with the loop-worker line.
+If no slice is ready and none is only waiting on an open PR, output <promise>LOOP_EMPTY</promise>.
+If one is waiting, end with the loop-worker's LOOP_WAIT line: the plan is not finished. Otherwise
+end with the loop-worker line.
