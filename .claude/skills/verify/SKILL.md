@@ -19,5 +19,8 @@ Loops should state their goal in terms of that line, for example
 - This adds to `AGENTS.md` -> Tests and CI; it never replaces it. CI is still the authority.
 - A FAIL is fixed at the cause with `fix-ci` habits: read the failing output, reproduce the single
   test, fix, re-run. Never skip, xfail, `# noqa`, or `# type: ignore` your way to PASS.
+- `WARN  duplicates` is advisory and never changes `VERIFY_RESULT`. It means
+  `scripts/scan_duplicates.py` found duplicated helpers or hand-written conventions that no
+  allowlist lists. Say which are yours in the PR body; do not edit an allowlist to silence one.
 - `--quick` is for iteration only. The PR is not ready until the full run passes.
 - The script never touches GCS or the network beyond `git diff origin/main` (local refs).

@@ -26,7 +26,8 @@ the person's go-ahead.
   `TAGS_UNCHECKED`, `GIT_ALLOWED`, `OWNER_ALLOWED`). An item listed there is *known*, with a reason
   and a key; report it only if its reason or key no longer holds.
 - **Unowned questions:** `python scripts/audit_open_questions.py --json`.
-- **Duplicates:** `python scripts/scan_duplicates.py`, once cross-slice-coherence S5 has landed.
+- **Duplicates:** `python scripts/scan_duplicates.py` (cross-slice-coherence S5; exit 1 means
+  findings that no S1 allowlist lists, which are most of what this review is for).
 - **The joins:** each `src/primer/<area>/interface.py` and `src/primer/serving/book.py`, which
   composes them; `src/primer/evaluation/fakes.py` and `golden.py`, which run the gate on their own
   fakes.

@@ -239,15 +239,19 @@ migration later.
 
 *size: small*
 
-`scripts/scan_duplicates.py`, run by `verify`, reports private functions with the same name or the
-same normalised body in more than one module, and the same string literal (for example `"yip-drawing"`,
-a tag key) in more than three. It warns and prints; it does not fail, so it cannot block a slice.
-Findings that stay open over two runs become Open questions in the owning plan.
+`scripts/scan_duplicates.py`, run by `verify`, reports private module-level functions with the same
+name, and functions with the same normalised body, in more than one module, and three conventions
+written out by hand (a tag set, a slice-metric separator, an experiment name; see the 2026-11-24
+Decision for why not any repeated literal). It warns and prints; it does not fail, so it cannot
+block a slice.
+A person turns a finding that stays open into an Open question in the owning plan; the scan keeps
+no state (a baseline is an Open question below).
 
 - **Why separate** — heuristic, so it must not share a PR with the hard tests.
 - **Touches** — `scripts/scan_duplicates.py`, the `verify` skill's script list.
-- **Acceptance** — on today's `main` it lists the five git-state copies and the `start_run` sites;
-  on a branch with a new duplicate it lists that one. It also covers what the S1 scans cannot see:
+- **Acceptance** — on today's `main` it lists the `git rev-parse` sites and the `start_run` sites,
+  marked known where S1 allowlists them (the measured figures are in the Prep below); on a branch
+  with a new duplicate it lists that one. It also covers what the S1 scans cannot see:
   inline `subprocess` calls to `git rev-parse` outside a function named for git state (today
   `src/primer/data/versioning.py:_git_commit`), `mlflow.set_tag("owner", …)` (singular),
   `dict(owner="x", …)` and `{**base, "owner": "x"}`, `MlflowClient().create_run`, a `start_run`
@@ -262,13 +266,14 @@ Findings that stay open over two runs become Open questions in the owning plan.
     output is printed under `WARN  duplicates` and never appended to `failed`, so `VERIFY_RESULT`
     cannot change. A test pins that: the scan reporting findings still leaves verify at PASS.
   - **The scan reads `src/` and `scripts/` with `ast`,** like S1, and reports three kinds:
-    - private functions with the same name, or the same normalised body (the `ast.dump` of the
-      body with docstrings removed), in two or more modules;
-    - a string literal repeated in more than three modules (for example `"yip-drawing"` or a tag
-      key);
-    - the S1 blind spots listed above, and the two call shapes the acceptance names: a function
-      named `git_(sha|state|commit)` (private or public) or a `subprocess` call whose arguments
-      include `rev-parse`, and every `.start_run` call site.
+    - private module-level functions with the same name, or functions with the same normalised body
+      (the `ast.dump` of the body with docstrings removed), in two or more modules;
+    - three conventions written out by hand: a dict holding four or more of the seven required
+      tags, `slice/…` metric names with a separator other than the documented `/`, and one
+      `yip-…` experiment name in two modules;
+    - the S1 blind spots listed above, and the two call shapes the acceptance names: a
+      `subprocess` call whose arguments start `git rev-parse`, whatever the function is called (so the
+      public `git_sha` copies are found too), and every `.start_run` call site.
     A site is *known* when S1 already accounts for it, so the output separates known from new:
     `GIT_ALLOWED` and `SHARED_GIT` for git state, `START_RUN_ALLOWED` and `SHARED_LOGGER` for
     `start_run`. `data/versioning.py:_git_commit` is on none of S1's lists, because S1 skips it on
@@ -278,12 +283,15 @@ Findings that stay open over two runs become Open questions in the owning plan.
 
     | File | Covered by |
     |---|---|
-    | `scripts/scan_duplicates.py` | `tests/test_scan_duplicates.py`: fixture trees for each kind (two identical private helpers reported, one not; a literal in four modules reported, in three not; each S1 blind spot; a git-named function and a `start_run` site, each marked known when S1 lists it and new when not) |
+    | `scripts/scan_duplicates.py` | `tests/test_scan_duplicates.py`: fixture trees for each kind (two identical private helpers reported, one not; methods of the same name in different classes not; a tag set, a slice separator and an experiment name each reported; each S1 blind spot; a `git rev-parse` site and a `start_run` site, each marked known when S1 lists it and new when not; the required tags read from `tests/test_conventions.py`; a crash exits 2) |
     | `verify.py` | a test that an advisory finding prints `WARN` and leaves the result `PASS` |
 
-  - **Acceptance, measured on `main` at `c331364`:** the six git-state copies (S1's five plus
-    `data/versioning.py:_git_commit`) and the five `start_run` sites outside `tracking.py` (speech 2, story 2, illustration 1) appear,
-    marked known.
+  - **Acceptance, measured on `main` at `c331364`:** the five `git rev-parse` sites that call it
+    with a literal argument list (golden, speech, story, illustration, and
+    `data/versioning.py:_git_commit`) and the five `start_run` sites outside `tracking.py` (speech 2,
+    story 2, illustration 1), plus the one inside it, appear, marked known. The shared
+    `drawing/evaluate._git_state` is the reference and calls git through a helper, so the scan does
+    not list it.
 
 ### S6 · A periodic integration review over `main`
 
@@ -389,7 +397,7 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
 | S2 | not started | | prepped 2026-11-24; S1 merged; waits on the Open question on the helper's home |
 | S3 | merged | [#48](https://github.com/keithfernandes12/young-illustrators-primer/pull/48), [#49](https://github.com/keithfernandes12/young-illustrators-primer/pull/49) | reconcile step in `engineering-loop`, `loop-worker`, `create-pr` and the process doc; merge-order rule in the plan template and `docs/plans/AGENTS.md`. Needed #47 first (it links this plan and `tests/test_conventions.py`); #47 merged as `c331364`; #48 merged as `93d441e`. Also the slice-naming rule (plan slug in front, outside the plan). #48 merged as the skills and docs half; #49 adds the PR-template line (`.github/`), which goes in its own PR |
 | S4 | not started | | prepped 2026-11-24; S3 merged (#48, #49), so ready |
-| S5 | not started | | prepped 2026-11-24; ready |
+| S5 | in review | [#53](https://github.com/keithfernandes12/young-illustrators-primer/pull/53) | `scripts/scan_duplicates.py`, advisory in `verify` (`WARN  duplicates`, never fails): 18 findings on `main`, 6 new, 12 known (five `git rev-parse` sites, six `start_run` sites and the shared logger's tag set, known; four hand-written tag sets and two slice-name styles, new) |
 | S6 | in review | [#52](https://github.com/keithfernandes12/young-illustrators-primer/pull/52) | `.claude/skills/seams` plus its first report, `docs/briefs/seams-2026-11-24.md`: 7 findings, 3 new (three slice-metric styles and two copies of the function, the tag set written five times, a record golden.py points to that is not there); the golden fakes' mismatch is known per stage, not coordinated; 13 questions with no owner. Stacked on S8 |
 | S7 | dropped | | closed 2026-11-24 by the KAN-38 owner: its acceptance already held on `main` (`test_serving_builds_a_complete_fake_book`), and the remaining seam, the golden runner's fakes, is KAN-132 |
 | S8 | in review | [#51](https://github.com/keithfernandes12/young-illustrators-primer/pull/51) | `scripts/audit_open_questions.py`: lists open questions with neither a Jira key nor a slice; 13 of 47 on `main` (numbered lists counted, struck-through questions skipped). Built under KAN-38, the plan's key; a separate key was not created |
@@ -428,6 +436,18 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
   `LOOP_EMPTY` therefore means no slice is ready and none is waiting on an open PR; a wait ends in
   `LOOP_WAIT`. A `LOOP_WAIT` iteration uses one of the Ralph prompt's `--max-iterations`; that is
   accepted while a slice waits, and is an Open question for the owner if it proves wasteful.
+
+- **2026-11-24** — S5 drops the plan's generic repeated-literal rule ("the same string literal in
+  more than three modules") and checks three conventions instead: a hand-written tag set (four or
+  more of the seven required tags in one dict), `slice/…` metric names with different separators,
+  and one `yip-…` experiment name in two modules. On `main` the generic rule reported 82 literals,
+  nearly all data-schema column names (`license`, `record_id`, `batch_id`) that modules share on
+  purpose through the data contracts. A list that long would be ignored. The targeted checks found
+  what the seams review found by hand: five hand-written tag sets and three slice-name styles.
+  After the independent review of #53: the same-name rule counts module-level functions only
+  (`_load` on seven classes is polymorphism), `slice-style` flags only the separators other than the
+  documented `/`, the required tags are read from `tests/test_conventions.py`, and every
+  `start_run` call is listed, known when S1 allowlists its file.
 
 - **2026-11-24** — The KAN-38 owner accepted the recommendations on the open points of S4–S8 and
   the seams report (`docs/briefs/seams-2026-11-24.md`, added by #52):

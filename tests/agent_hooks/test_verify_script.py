@@ -118,3 +118,28 @@ def test_privacy_can_be_turned_off_explicitly(monkeypatch, flag):
 
     verify.main([flag])
     assert "privacy" not in names
+
+
+def test_an_advisory_finding_warns_but_never_fails_verify(monkeypatch, capsys):
+    """cross-slice-coherence S5: the duplicate scan is heuristic, so it must not block a slice."""
+
+    class Found:
+        returncode = 1  # the scan found something new
+
+    monkeypatch.setattr(verify, "run", lambda name, cmd, cwd=None: True)
+    monkeypatch.setattr(verify, "changed_tests", list)
+    monkeypatch.setattr(verify.shutil, "which", lambda name: None)
+    monkeypatch.setattr(verify.Path, "rglob", lambda self, pattern: iter([]))
+    monkeypatch.setattr(verify.subprocess, "run", lambda *a, **k: Found())
+
+    exit_code = verify.main([])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "WARN  duplicates" in output
+    assert "VERIFY_RESULT: PASS" in output
+
+
+def test_the_duplicate_scan_is_registered_as_an_advisory():
+    assert ("duplicates", verify.ROOT / "scripts" / "scan_duplicates.py") in verify.ADVISORIES
+    assert (verify.ROOT / "scripts" / "scan_duplicates.py").exists()
