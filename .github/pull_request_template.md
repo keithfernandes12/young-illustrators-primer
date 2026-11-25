@@ -16,7 +16,7 @@
 
 Reconciled with main at `<sha>`: reused … / not applicable / differs because …
 
-<!-- <sha> is the origin/main commit you read up to (git log --stat <merge-base>..origin/main, and the open PRs). Keep one line; say what you reused. See docs/plans/cross-slice-coherence.md, slice S3. -->
+<!-- <sha> is the origin/main commit you read up to (git log --stat <merge-base>..origin/main, and the open PRs). Keep one line; say what you reused. See docs/engineering/engineering-loop.md step 6. -->
 
 ## Where the reviewer's judgement is needed
 
