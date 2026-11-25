@@ -205,9 +205,9 @@ helper lands before any slice that should use it, and the consumer lists it unde
 
 Add to `docs/engineering/review-checklist.md` and the `review-pr` skill: "Does this PR re-implement
 something now in `main`, or add something an open sibling PR also adds?" The review prompt gets
-`gh pr list --state open` output and `git log --stat <merge-base>..origin/main`, so the reviewer can
-answer it. A finding in that category is a Fix, not a Tidy, because it is cheap now and costs a
-migration later.
+`gh pr list --state open` output and `git log --stat` of `main` since the branch point (the
+prep below gives the command), so the reviewer can answer it. A finding in that category is a Fix,
+not a Tidy, because it is cheap now and costs a migration later.
 
 - **Why separate** — it changes how every review session is briefed.
 - **Touches** — `docs/engineering/review-checklist.md`, `.claude/skills/review-pr/`.
@@ -396,7 +396,7 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
 | S1 | merged | [#47](https://github.com/keithfernandes12/young-illustrators-primer/pull/47) | merged 2026-11-23 as `c331364`. `tests/test_conventions.py`: four scans, count-based allowlists with reasons and keys, stale entries fail |
 | S2 | not started | | prepped 2026-11-24; S1 merged; waits on the Open question on the helper's home |
 | S3 | merged | [#48](https://github.com/keithfernandes12/young-illustrators-primer/pull/48), [#49](https://github.com/keithfernandes12/young-illustrators-primer/pull/49) | reconcile step in `engineering-loop`, `loop-worker`, `create-pr` and the process doc; merge-order rule in the plan template and `docs/plans/AGENTS.md`. Needed #47 first (it links this plan and `tests/test_conventions.py`); #47 merged as `c331364`; #48 merged as `93d441e`. Also the slice-naming rule (plan slug in front, outside the plan). #48 merged as the skills and docs half; #49 adds the PR-template line (`.github/`), which goes in its own PR |
-| S4 | not started | | prepped 2026-11-24; S3 merged (#48, #49), so ready |
+| S4 | in review | [#54](https://github.com/keithfernandes12/young-illustrators-primer/pull/54) | the cross-slice question in the review checklist and `review-pr` (step 2 gathers open PRs and `main` since the branch point (`git rev-list --no-merges`, so it works for a stacked PR); step 3 asks it; follow-up mode re-asks it after a merge of `main`); a yes is a Fix |
 | S5 | in review | [#53](https://github.com/keithfernandes12/young-illustrators-primer/pull/53) | `scripts/scan_duplicates.py`, advisory in `verify` (`WARN  duplicates`, never fails): 18 findings on `main`, 6 new, 12 known (five `git rev-parse` sites, six `start_run` sites and the shared logger's tag set, known; four hand-written tag sets and two slice-name styles, new) |
 | S6 | in review | [#52](https://github.com/keithfernandes12/young-illustrators-primer/pull/52) | `.claude/skills/seams` plus its first report, `docs/briefs/seams-2026-11-24.md`: 7 findings, 3 new (three slice-metric styles and two copies of the function, the tag set written five times, a record golden.py points to that is not there); the golden fakes' mismatch is known per stage, not coordinated; 13 questions with no owner. Stacked on S8 |
 | S7 | dropped | | closed 2026-11-24 by the KAN-38 owner: its acceptance already held on `main` (`test_serving_builds_a_complete_fake_book`), and the remaining seam, the golden runner's fakes, is KAN-132 |
