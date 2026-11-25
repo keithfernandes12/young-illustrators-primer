@@ -244,7 +244,8 @@ name, and functions with the same normalised body, in more than one module, and 
 written out by hand (a tag set, a slice-metric separator, an experiment name; see the 2026-11-24
 Decision for why not any repeated literal). It warns and prints; it does not fail, so it cannot
 block a slice.
-Findings that stay open over two runs become Open questions in the owning plan.
+A person turns a finding that stays open into an Open question in the owning plan; the scan keeps
+no state (a baseline is an Open question below).
 
 - **Why separate** — heuristic, so it must not share a PR with the hard tests.
 - **Touches** — `scripts/scan_duplicates.py`, the `verify` skill's script list.

@@ -18,7 +18,8 @@ It reads `src/` and `scripts/` with `ast` and reports:
   and one ``yip-…`` experiment name in two modules (``experiment``). A generic "same literal in
   more than three modules" rule was tried first and dropped: on ``main`` it reported 82 literals,
   nearly all data-schema column names (``license``, ``record_id``) that modules share on purpose;
-- **S1's blind spots**, the patterns its scans cannot see: ``git rev-parse`` run by any function,
+- **S1's blind spots**, the patterns its scans cannot see: a ``git rev-parse`` call written as a
+  literal argument list (``["git", "rev-parse", …]``) in any function,
   ``set_tag("owner", "<str>")``, ``dict(owner="<str>")``, ``{**x, "owner": "<str>"}``,
   ``.create_run(``, and a ``start_run`` reached by an alias (``from mlflow import start_run``,
   ``getattr(x, "start_run")``, ``s = mlflow.start_run``) or given ``tags`` positionally or in ``**``;
@@ -152,7 +153,9 @@ def blind_spots(name: str, tree: ast.Module, required: frozenset[str] = REQUIRED
                 and _text(node.args[1]) is not None
             ):
                 yield Finding("literal-owner", where, 'set_tag("owner", "<str>")')
-            elif attr == "dict" and any(k.arg == "owner" and _text(k.value) is not None for k in node.keywords):
+            elif attr == "dict" and any(
+                k.arg == "owner" and _text(k.value) is not None for k in node.keywords
+            ):
                 yield Finding("literal-owner", where, 'dict(owner="<str>")')
             elif attr == "create_run":
                 yield Finding("create-run", where, "starts a run through MlflowClient, not the shared logger")
