@@ -612,6 +612,36 @@ the licence constraint on each.
   sets; who owns that step is still open between KAN-38 and KAN-42.
 - **Depends on** — S6a. **Jira** — KAN-38.
 
+### S6e2 · SAM mask-coverage threshold
+
+*size: small*
+
+Today only an empty SAM mask falls back to the unmasked box. A mask covering a sliver of its box
+still whitens the rest, so a character sheet can lose most of its crop to paper. SAM covers 31% of
+the box against the annotation's 40% (S6e), but nobody has measured the distribution across
+sheets, and a cutoff cannot be chosen without it.
+
+- **Why separate** — it needs a GPU pass over the real sheets and a measured number before any code
+  changes, and nothing downstream reads masks yet, so it does not belong in S6e's PR.
+- **Not blocking, and when it must land.** No code outside `drawing/` reads `mask_ref` or
+  `crop_ref` on `main` (checked 2026-11-24). `illustration/interface.py` conditions IP-Adapter on
+  `reference_image_ref`, not on the crop, and IP-Adapter is after the MVP (Out of scope). So the
+  trigger is **before the first consumer of `mask_ref`**: generating reference images from masked
+  crops, or IP-Adapter conditioning, whichever comes first.
+- **Work** —
+  1. Measure each sheet's mask share of its box across the 82 real sheets S6e used, on the GPU. Record
+     the distribution (median, low tail, how many sheets fall below each candidate cutoff) as a
+     dated Verified fact.
+  2. Add `min_mask_share` to `drawing_sheet.yaml` at a cutoff the data supports. Below it,
+     `sheet.py` falls back to the unmasked box, as it does today for an empty mask.
+- **Acceptance** — the distribution is recorded, and the cutoff is chosen from it and stated with its
+  reason. A test shows that a mask below `min_mask_share` falls back to the box and one at or above
+  it is kept. The setting lives in the config, not at a call site.
+- **Testing** — a fake segmenter returning a mask of a chosen share; dropping the comparison makes
+  the below-cutoff case keep its sliver.
+- **Depends on** — S6e (merged). **Jira** — KAN-38. Decided 2026-11-24 by the KAN-38 owner: measure,
+  then set it, as a future slice.
+
 ### S6f · Sensitivity analysis of the recogniser
 
 *size: small · added 2026-11-15 at the KAN-38 owner's request*
@@ -833,6 +863,7 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
 | S6c3 | merged | [#44](https://github.com/keithfernandes12/young-illustrators-primer/pull/44) | `evaluate.py --mlflow --owner` for accuracy and stability through `tracking.py`; refuses probes, owner-less runs, a missing `MLFLOW_TRACKING_URI` and colliding names. Round-tripped on the real server. KAN-38 |
 | S6d | not started | | first slice that trains; builds its own `--max-steps` cap. No longer blocked on hardware (CUDA torch, RTX 4060 8 GB, 2026-11-15); S6c merged (#37); must beat 0.5436 under the switched prompt. Reads S6c2's stability figures |
 | S6e | merged | [#35](https://github.com/keithfernandes12/young-illustrators-primer/pull/35) | `sheet.py`: Florence-2 + SAM 2.1 + ViTPose beside SigLIP 2; every field filled on 82/82 real sheets; two figures found as two on 12/20. Unblocks KAN-42 |
+| S6e2 | not started | | measure SAM mask share over the 82 real sheets, then add `min_mask_share` to `drawing_sheet.yaml`. Not blocking: no consumer of `mask_ref` yet; must land before the first one. KAN-38 |
 | S6f | merged | [#39](https://github.com/keithfernandes12/young-illustrators-primer/pull/39) | sensitivity: stroke drop, line width, erasure, prompt template, occlusion; paired bootstrap intervals; runs on `val`. Also carries the prompt switch to `a child's drawing of a {label}.` (S6c 0.5436 on `test`, S6c2 re-measured). Re-run under it: strokes -14.7 / -21.8, 7 px -2.5. KAN-38 |
 | S6f2 | in review | [#46](https://github.com/keithfernandes12/young-illustrators-primer/pull/46) | `sensitivity --mlflow` through `tracking.py` as kind `sensitivity`, with the shared `--owner` and early refusals; metric names unchanged (98 = 98 on a real run, values identical). Round-tripped on the real server (run `8abefd45`; all 96 of `dfaee7e2`'s metrics reproduced exactly). KAN-38 |
 | S6g2 | not started | | log S6g's bias report through `tracking.py` as a fourth kind (`bias`), and give `bias_report` the shared `--mlflow` / `--owner`. Waits on #45 (S6g) and S6f2. KAN-38 |
@@ -2073,6 +2104,8 @@ Cloud Scheduler calling the same `orchestration.py` functions. Record the choice
   against the annotation's 40%, so a threshold needs the distribution of mask share over the 82
   sheets, which has not been taken. *Recommended:* measure it, then add `min_mask_share` to
   `drawing_sheet.yaml`.
+  **Answered 2026-11-24 by the KAN-38 owner: measure, then set it, as slice S6e2.** It is not
+  blocking: nothing reads `mask_ref` yet, and S6e2 must land before the first consumer does.
 - **The default artifact store is a process-lifetime dictionary.** `MemoryArtifactStore` never
   evicts a child's crops and masks, a `mem://` ref cannot be read by another process (KAN-42's
   worker), and a content-hash name means two children's identical crops would share one object
