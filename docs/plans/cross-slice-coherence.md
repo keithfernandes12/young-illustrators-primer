@@ -37,8 +37,10 @@ that one file and merged; this plan is about the class of problem, not that file
 - PR #46's tree at `2f418ed`, re-checked at `3db5f56`: the S1 scans were run against it (three stale
   `drawing/sensitivity.py`
   entries) and its CLI test was checked against S0.
-- Not read: `docs/engineering/review-checklist.md` and the `review-pr` skill, which S4 starts by
-  reading. S3 read `loop-worker` and `engineering-loop` for its own PR. Assumed: the skills can be
+- The 2026-11-24 prep also read `docs/engineering/review-checklist.md` (the categories table), the
+  `review-pr` skill (steps 2 and 7), `.claude/skills/verify/scripts/verify.py`,
+  `src/primer/evaluation/golden.py` and `tests/models/test_area_interfaces.py`.
+- Not read: S3 read `loop-worker` and `engineering-loop` for its own PR. Assumed: the skills can be
   edited in this repo, and CI may run a new test file.
 
 ## Contract
@@ -139,12 +141,18 @@ their area's ticket.
     `Path(__file__).parent`.
   - **`golden.py`'s copy is different.** It runs at the repository root and has no dirty flag.
     Switching it means recording `git_dirty` in the golden metrics file. That is additive:
-    `check_gate.py` reads only the keys `thresholds.json` names, and nothing reads `git_sha` or
-    `git_dirty` today, so no reader needs updating. *Recommended:* switch it in S2, add
+    `check_gate.py` reads only the keys `thresholds.json` names and `fake_models`, and nothing
+    reads `git_sha` or `git_dirty` today, so no reader needs updating. Its dirty flag is scoped to
+    the folder it is given: `golden.py` passes `Path(__file__).parent`, so it reports whether
+    `src/primer/evaluation` is dirty, where its copy today runs at the repository root. *Recommended:* switch it in S2, add
     `git_dirty`, and tell the golden-gate owner (KAN-89).
-  - **Patch points.** Tests patch `evaluate._git_state` and `sensitivity._git_state`. Keep a
-    module-level name in each caller (`from primer._git import git_state` plus a thin
-    `_git_state`), or move the patches to the new module in the same PR.
+  - **Patch points.** Tests patch `evaluate._git_state` and `sensitivity._git_state`
+    (`tests/drawing/test_stability.py`, `tests/drawing/test_sensitivity.py`). Do not keep a thin
+    `def _git_state` in each caller: S1's scan flags every function named for git state except
+    `SHARED_GIT`, so the wrapper would turn S2's own check red. Call the helper through its module
+    (`_git.git_state(...)`) and move the patches to `primer._git.git_state` in the same PR, which
+    covers both callers; or bind the old name by assignment (`_git_state = functools.partial(...)`),
+    which a `FunctionDef` scan does not see.
   - **`data/versioning.py:_git_commit` stays out.** It records a dataset version's full commit,
     not a run's provenance (Verified facts, 2026-11-23).
   - **Proof table:**
@@ -209,11 +217,17 @@ migration later.
     names this case as one.
   - **The skill** (`review-pr`, step 2) gets the two inputs as commands the reviewer runs:
     `gh pr list --state open --limit 100 --json number,title,headRefName,baseRefName,files` and
-    `git log --stat $(git merge-base <head> origin/main)..origin/main`. The list includes the PR
-    itself and its own base chain; those are `Depends on`, not siblings, and the reviewer skips
-    them (a stack reads as "stack, expected"). Step 7 (follow-up mode)
-    reviews only the PR's own commits and skips merges of `main`, which is exactly where a new
-    helper arrives, so it asks the cross-slice question again after any merge of `main`.
+    `git log --stat $(git merge-base origin/main <O>^)..origin/main`, where `<O>` is
+    `git rev-list --no-merges origin/main..<head> | tail -1`, the oldest commit that is not on
+    `main`. `git merge-base <head> origin/main` is wrong here: once the branch has merged `main`
+    it is `main`'s tip and the range is empty, which hides what the merge brought in. The
+    `<O>` form also works for a stacked PR, whose first own commit's parent is already a lower
+    PR's commit. The list includes the PR itself and its own base chain; those are `Depends on`,
+    not siblings, and the reviewer skips them (a stack reads as "stack, expected"). Step 7
+    (follow-up mode) reviews only the PR's own commits and skips merges of `main`, which is exactly
+    where a new helper arrives, so it asks the cross-slice question again after any merge of `main`,
+    with the same range. A PR's own change is `git diff origin/<baseRefName>...<head>`, not
+    `origin/main...<head>`, which for a stacked PR is the whole stack.
   - **Naming.** Findings name slices with their plan's slug (S3's rule).
   - **Acceptance** — both files carry the question; the skill carries both commands and the
     follow-up rule; `scripts/check_docs.py` passes.
@@ -341,6 +355,11 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
     - **5 with neither a key nor a slice**: 4 in `mvp-cloud-deploy` (the `drawing` extra pin, L4
       quota region, course credit for Claude on Vertex, and when a SAM mask is too small to use) and 1 in `autonomous-loops`
       (subscription vs Vertex billing).
+    - **Correction (2026-11-24, from the independent review of #51):** the probe read only `- `
+      bullets. Three plans (`ai-coding-framework`, `ci-hardening`, `story-generation-llm`) write
+      their questions as numbered lists. With those counted and struck-through (`~~`) questions
+      skipped, the script reports **13 of 47** on `main` at `de4a121`. The 5 above are all still
+      in the 13.
   - **Hand-offs.** `mvp-cloud-deploy`'s "What S6c hands to S6d" sit under Open questions, so the
     same scan covers them.
   - **Proof table:**
@@ -361,7 +380,7 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
 | S5 | not started | | prepped 2026-11-24; ready |
 | S6 | in review | [#52](https://github.com/keithfernandes12/young-illustrators-primer/pull/52) | `.claude/skills/seams` plus its first report, `docs/briefs/seams-2026-11-24.md`: 7 findings, 4 new (three slice-metric styles, the tag set written five times, the golden fakes off-contract, a record golden.py points to that is not there). Stacked on S8 |
 | S7 | not started | | prepped 2026-11-24: mostly built already (`test_serving_builds_a_complete_fake_book`); narrow to the golden-fakes seam, or close |
-| S8 | in review | [#51](https://github.com/keithfernandes12/young-illustrators-primer/pull/51) | `scripts/audit_open_questions.py`: lists open questions with neither a Jira key nor a slice; 5 of 37 on `main`. Built under KAN-38, the plan's key; a separate key was not created |
+| S8 | in review | [#51](https://github.com/keithfernandes12/young-illustrators-primer/pull/51) | `scripts/audit_open_questions.py`: lists open questions with neither a Jira key nor a slice; 13 of 47 on `main` (numbered lists counted, struck-through questions skipped). Built under KAN-38, the plan's key; a separate key was not created |
 
 ## Decisions
 
@@ -449,7 +468,7 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
   - **`golden.py` points at a record that isn't there.** It says the fakes-versus-Protocols gap is
     recorded in `autonomous-loops.md`, and it is not.
   - **The open-questions probe:** 37 questions, 13 without a key, 5 with neither a key nor a
-    slice.
+    slice, counting `- ` bullets only. The script, which also reads numbered lists, finds 13 of 47.
 
 ## Open questions
 

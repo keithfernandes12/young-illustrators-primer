@@ -14,8 +14,9 @@ lenient rule the plan chose to start with: the first list should be short and tr
 names a slice only in passing still counts as tracked.
 
 It reads every `docs/plans/*.md` except `AGENTS.md` and templates (`_*.md`), and only the
-`## Open questions` section. A bullet is a line starting with `- ` at the left margin; its indented
-continuation lines belong to it.
+`## Open questions` section. A bullet is a line starting with `- ` or a number (`1. `) at the left
+margin; its indented continuation lines belong to it. A bullet that starts with `~~` is struck
+through, which a plan uses for a question that has been answered, and is not read.
 
 It always exits 0. It is an audit, not a gate: an untracked question is a reason to file
 something, not a reason to block a PR.
@@ -34,6 +35,7 @@ PLANS = Path(__file__).resolve().parents[1] / "docs" / "plans"
 KEY = re.compile(r"\bKAN-\d+\b")
 SLICE = re.compile(r"\bS\d+[a-z]?\d*\b")
 SECTION = "## Open questions"
+BULLET = re.compile(r"(?:- |\d+\. )")
 
 
 @dataclass(frozen=True)
@@ -59,12 +61,14 @@ def questions(path: Path) -> list[Question]:
         if current:
             body = " ".join(part.strip() for part in current)
             tracked = bool(KEY.search(body) or SLICE.search(body))
-            found.append(Question(path.name, first, body.removeprefix("- ").strip(), tracked))
+            text = BULLET.sub("", body, count=1).strip()
+            if not text.startswith("~~"):
+                found.append(Question(path.name, first, text, tracked))
 
     for number, line in enumerate(lines[start + 1 :], start=start + 2):
         if line.startswith("## "):
             break
-        if line.startswith("- "):
+        if BULLET.match(line):
             close()
             current, first = [line], number
         elif current and (line[:1].isspace() or not line.strip()):
