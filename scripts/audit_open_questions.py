@@ -11,7 +11,8 @@ person happens to reread that plan. This lists those, so a gap found by a review
 
 **Tracked** means the bullet contains a `KAN-<n>` key or a slice label (`S5`, `S6c2`). That is the
 lenient rule the plan chose to start with: the first list should be short and true. A bullet that
-names a slice only in passing still counts as tracked.
+names a slice only in passing still counts as tracked. So does one marked `**Answered`, the
+plans' convention for a question kept in place once it is decided.
 
 It reads every `docs/plans/*.md` except `AGENTS.md` and templates (`_*.md`), and only the
 `## Open questions` section. A bullet is a line starting with `- ` or a number (`1. `) at the left
@@ -34,6 +35,7 @@ from pathlib import Path
 PLANS = Path(__file__).resolve().parents[1] / "docs" / "plans"
 KEY = re.compile(r"\bKAN-\d+\b")
 SLICE = re.compile(r"\bS\d+[a-z]?\d*\b")
+ANSWERED = re.compile(r"\*\*Answered\b")
 SECTION = "## Open questions"
 BULLET = re.compile(r"(?:- |\d+\. )")
 
@@ -60,7 +62,7 @@ def questions(path: Path) -> list[Question]:
     def close() -> None:
         if current:
             body = " ".join(part.strip() for part in current)
-            tracked = bool(KEY.search(body) or SLICE.search(body))
+            tracked = bool(KEY.search(body) or SLICE.search(body) or ANSWERED.search(body))
             text = BULLET.sub("", body, count=1).strip()
             if not text.startswith("~~"):
                 found.append(Question(path.name, first, text, tracked))

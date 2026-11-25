@@ -121,6 +121,9 @@ Workload Identity Federation; actions pinned to commits, read-only default token
 
 - Claude subscription or Vertex AI billing per person? Recommended: subscription for interactive work and
   routines; Vertex AI for GitHub Actions if the GCP credit covers it. Each person decides.
+  **Answered 2026-11-24: subscription.** Each member uses a university-provided Claude Code
+  subscription. The course's GCP credit does not cover Claude on Vertex AI, so the Vertex option
+  for GitHub Actions does not apply (KAN-38 owner, recorded in `mvp-cloud-deploy`).
 
 ## Out of scope
 
