@@ -348,10 +348,10 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
 | S2 | not started | | prepped 2026-11-24; S1 merged; waits on the Open question on the helper's home |
 | S3 | merged | [#48](https://github.com/keithfernandes12/young-illustrators-primer/pull/48), [#49](https://github.com/keithfernandes12/young-illustrators-primer/pull/49) | reconcile step in `engineering-loop`, `loop-worker`, `create-pr` and the process doc; merge-order rule in the plan template and `docs/plans/AGENTS.md`. Needed #47 first (it links this plan and `tests/test_conventions.py`); #47 merged as `c331364`; #48 merged as `93d441e`. Also the slice-naming rule (plan slug in front, outside the plan). #48 merged as the skills and docs half; #49 adds the PR-template line (`.github/`), which goes in its own PR |
 | S4 | in review | [#54](https://github.com/keithfernandes12/young-illustrators-primer/pull/54) | the cross-slice question in the review checklist and `review-pr` (step 2 gathers open PRs and `main` since the merge base; step 3 asks it; follow-up mode re-asks it after a merge of `main`); a yes is a Fix |
-| S5 | not started | | prepped 2026-11-24; ready |
-| S6 | not started | | prepped 2026-11-24; ready, best after S8 |
+| S5 | in review | [#53](https://github.com/keithfernandes12/young-illustrators-primer/pull/53) | `scripts/scan_duplicates.py`, advisory in `verify` (`WARN  duplicates`, never fails): 16 findings on `main`, 10 new, 6 known |
+| S6 | in review | [#52](https://github.com/keithfernandes12/young-illustrators-primer/pull/52) | `.claude/skills/seams` plus its first report, `docs/briefs/seams-2026-11-24.md`: 7 findings, 4 new (three slice-metric styles, the tag set written five times, the golden fakes off-contract, a record golden.py points to that is not there). Stacked on S8 |
 | S7 | not started | | prepped 2026-11-24: mostly built already (`test_serving_builds_a_complete_fake_book`); narrow to the golden-fakes seam, or close |
-| S8 | not started | | prepped 2026-11-24; ready; needs a Jira key |
+| S8 | in review | [#51](https://github.com/keithfernandes12/young-illustrators-primer/pull/51) | `scripts/audit_open_questions.py`: lists open questions with neither a Jira key nor a slice; 5 of 37 on `main`. Built under KAN-38, the plan's key; a separate key was not created |
 
 ## Decisions
 
@@ -387,6 +387,14 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
   `LOOP_EMPTY` therefore means no slice is ready and none is waiting on an open PR; a wait ends in
   `LOOP_WAIT`. A `LOOP_WAIT` iteration uses one of the Ralph prompt's `--max-iterations`; that is
   accepted while a slice waits, and is an Open question for the owner if it proves wasteful.
+
+- **2026-11-24** — S5 drops the plan's generic repeated-literal rule ("the same string literal in
+  more than three modules") and checks three conventions instead: a hand-written tag set (four or
+  more of the seven required tags in one dict), `slice/…` metric names with different separators,
+  and one `yip-…` experiment name in two modules. On `main` the generic rule reported 82 literals,
+  nearly all data-schema column names (`license`, `record_id`, `batch_id`) that modules share on
+  purpose through the data contracts. A list that long would be ignored. The targeted checks found
+  what the seams review found by hand: five hand-written tag sets and three slice-name styles.
 
 ## Verified facts
 

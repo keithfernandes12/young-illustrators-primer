@@ -11,6 +11,8 @@ Runs, in order, and stops at nothing (every check reports):
   4. privacy lint on src/ and app/
   5. terraform fmt -check and validate, only when infra/ contains *.tf files
   6. npm run lint / test / build in app/, only when app/package.json exists
+  7. advisory: scripts/scan_duplicates.py (cross-slice-coherence S5). It prints `WARN  duplicates`
+     when it finds new duplicated helpers or conventions, and never changes VERIFY_RESULT.
 
 Prints one line per check and a final line that a /goal evaluator can read:
   VERIFY_RESULT: PASS
@@ -28,6 +30,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4]
 PRIVACY = ROOT / ".claude" / "skills" / "privacy-guard" / "scripts" / "privacy_lint.py"
+#: Advisory checks: printed, never counted. A heuristic must not be able to block a slice.
+ADVISORIES = (("duplicates", ROOT / "scripts" / "scan_duplicates.py"),)
 
 
 def changed_tests() -> list[str]:
@@ -62,6 +66,13 @@ def run(name: str, cmd: list[str], cwd: Path = ROOT) -> bool:
     result = subprocess.run(cmd, cwd=cwd, check=False)
     print(f"{'PASS' if result.returncode == 0 else 'FAIL'}  {name}", flush=True)
     return result.returncode == 0
+
+
+def advise(name: str, cmd: list[str], cwd: Path = ROOT) -> None:
+    """Run an advisory check. Its output is shown; its exit status only picks WARN or OK."""
+    print(f"--- {name} (advisory, does not affect VERIFY_RESULT)", flush=True)
+    result = subprocess.run(cmd, cwd=cwd, check=False)
+    print(f"{'OK  ' if result.returncode == 0 else 'WARN'}  {name}", flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -115,6 +126,10 @@ def main(argv: list[str] | None = None) -> int:
     for name, cmd, cwd in checks:
         if not run(name, cmd, cwd):
             failed.append(name)
+
+    for name, script in ADVISORIES:
+        if script.exists():
+            advise(name, [py, str(script)])
 
     for tool in missing_tools:
         print(f"--- prerequisite: {tool}", flush=True)
