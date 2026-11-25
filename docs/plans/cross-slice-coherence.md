@@ -138,9 +138,10 @@ their area's ticket.
     `git_state(package: Path) -> tuple[str, bool | None]`, and each caller passes
     `Path(__file__).parent`.
   - **`golden.py`'s copy is different.** It runs at the repository root and has no dirty flag.
-    Switching it means recording `git_dirty` in the golden metrics file, a contract change for
-    `check_gate.py`'s readers. *Recommended:* switch it in S2, add `git_dirty`, and confirm with the
-    golden-gate owner (KAN-89).
+    Switching it means recording `git_dirty` in the golden metrics file. That is additive:
+    `check_gate.py` reads only the keys `thresholds.json` names, and nothing reads `git_sha` or
+    `git_dirty` today, so no reader needs updating. *Recommended:* switch it in S2, add
+    `git_dirty`, and tell the golden-gate owner (KAN-89).
   - **Patch points.** Tests patch `evaluate._git_state` and `sensitivity._git_state`. Keep a
     module-level name in each caller (`from primer._git import git_state` plus a thin
     `_git_state`), or move the patches to the new module in the same PR.
@@ -150,7 +151,7 @@ their area's ticket.
 
     | File | Covered by |
     |---|---|
-    | the new helper module | `tests/drawing/test_top5.py::test_the_recorded_commit_is_the_packages_not_the_callers`, moved to point at it; plus a test that two packages get their own dirty flag |
+    | the new helper module | `tests/drawing/test_top5.py::test_the_recorded_commit_is_the_packages_not_the_callers` and `::test_git_dirty_follows_git_status` (which asserts the `cwd` is the module's folder), both moved to point at it and asserting the folder passed in; plus a test that two packages get their own dirty flag |
     | `drawing/evaluate.py`, `drawing/sensitivity.py` | their existing CLI tests, whose patches still apply |
     | `evaluation/golden.py` | `tests/evaluation/` plus a check that the metrics file carries `git_dirty` |
     | `tests/test_conventions.py` | `SHARED_GIT` points at the new home; the `golden.py` entry is deleted, so the stale check proves the copy is gone |
@@ -201,14 +202,16 @@ migration later.
 - **Touches** — `docs/engineering/review-checklist.md`, `.claude/skills/review-pr/`.
 - **Acceptance** — the checklist and the skill both carry the question and the two inputs.
 - **Depends on** — S3 (same vocabulary). **Jira** — KAN-38.
-- **Prep (2026-11-24)** — ready once #48 (S3) merges; docs and skill only.
+- **Prep (2026-11-24)** — ready; S3 merged (#48, #49). Docs and skill only.
   - **The checklist** (`docs/engineering/review-checklist.md`, *The change*) gets one line, worded
     as S3 words it: "Does this PR re-implement something now in `main`, or add something an open
     sibling PR also adds?" The *Finding categories* table already says what a **Fix** is; the line
     names this case as one.
   - **The skill** (`review-pr`, step 2) gets the two inputs as commands the reviewer runs:
-    `gh pr list --state open --json number,title,headRefName,files` and
-    `git log --stat $(git merge-base <head> origin/main)..origin/main`. Step 7 (follow-up mode)
+    `gh pr list --state open --limit 100 --json number,title,headRefName,baseRefName,files` and
+    `git log --stat $(git merge-base <head> origin/main)..origin/main`. The list includes the PR
+    itself and its own base chain; those are `Depends on`, not siblings, and the reviewer skips
+    them (a stack reads as "stack, expected"). Step 7 (follow-up mode)
     reviews only the PR's own commits and skips merges of `main`, which is exactly where a new
     helper arrives, so it asks the cross-slice question again after any merge of `main`.
   - **Naming.** Findings name slices with their plan's slug (S3's rule).
@@ -246,14 +249,19 @@ Findings that stay open over two runs become Open questions in the owning plan.
       body with docstrings removed), in two or more modules;
     - a string literal repeated in more than three modules (for example `"yip-drawing"` or a tag
       key);
-    - the S1 blind spots listed above.
-    S1's allowlisted sites are reported as *known*, not *new*, by importing S1's allowlists, so the
-    output separates the two.
+    - the S1 blind spots listed above, and the two call shapes the acceptance names: a function
+      named `git_(sha|state|commit)` (private or public) or a `subprocess` call whose arguments
+      include `rev-parse`, and every `.start_run` call site.
+    A site is *known* when S1 already accounts for it, so the output separates known from new:
+    `GIT_ALLOWED` and `SHARED_GIT` for git state, `START_RUN_ALLOWED` and `SHARED_LOGGER` for
+    `start_run`. `data/versioning.py:_git_commit` is on none of S1's lists, because S1 skips it on
+    purpose (`tests/test_conventions.py`, module docstring), so S5 keeps its own one-entry
+    allowlist for it, with the reason.
   - **Proof table:**
 
     | File | Covered by |
     |---|---|
-    | `scripts/scan_duplicates.py` | `tests/test_scan_duplicates.py`: fixture trees for each kind (two identical private helpers reported, one not; a literal in four modules reported, in three not; each S1 blind spot) |
+    | `scripts/scan_duplicates.py` | `tests/test_scan_duplicates.py`: fixture trees for each kind (two identical private helpers reported, one not; a literal in four modules reported, in three not; each S1 blind spot; a git-named function and a `start_run` site, each marked known when S1 lists it and new when not) |
     | `verify.py` | a test that an advisory finding prints `WARN` and leaves the result `PASS` |
 
   - **Acceptance, measured on `main` at `c331364`:** the six git-state copies (S1's five plus
@@ -283,8 +291,10 @@ Its output is a list of findings, each either a new slice in this plan or a Jira
     person's go-ahead, because creating Jira issues is an `ask` action.
   - **A first finding, found while preparing it.** `src/primer/evaluation/golden.py` says its
     fakes' mismatch with the area Protocols "is recorded in docs/plans/autonomous-loops.md", but
-    that plan does not mention it. The only record is a Verified fact in `mvp-cloud-deploy`. The
-    first report should carry it.
+    that plan does not mention it. It is recorded stage by stage and not together: for drawing in
+    `mvp-cloud-deploy` (`top5(true_label)` is handed the answer), for story in
+    `story-generation-llm` (S5 adds an adapter). No plan records the seam as a whole. The first
+    report should carry it.
 
 ### S7 · A seam smoke test
 
@@ -460,8 +470,10 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
   *Decides:* the owners of speech, story and illustration.
 - **Should S1's allowlist entries expire?** *Recommended:* yes, a date in each entry, so a forgotten
   exception shows up. *Decides:* the repository owner.
-- **Is `interface.py` stable enough for S7 now?** *Recommended:* check before starting; if not, S7
-  waits. *Decides:* the owner of serving.
+- **Narrow S7 to the golden-fakes seam, or close it?** The prep found that
+  `src/primer/interface.py` does not exist and that the book test already covers renames
+  (Verified facts, 2026-11-24). *Recommended:* narrow it, as the S7 prep says. *Decides:* the
+  golden-gate owner (KAN-89).
 
 ## Out of scope
 
