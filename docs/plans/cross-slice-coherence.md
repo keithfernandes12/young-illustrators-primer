@@ -379,7 +379,7 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
 | S4 | not started | | prepped 2026-11-24; S3 merged (#48, #49), so ready |
 | S5 | not started | | prepped 2026-11-24; ready |
 | S6 | in review | [#52](https://github.com/keithfernandes12/young-illustrators-primer/pull/52) | `.claude/skills/seams` plus its first report, `docs/briefs/seams-2026-11-24.md`: 7 findings, 3 new (three slice-metric styles and two copies of the function, the tag set written five times, a record golden.py points to that is not there); the golden fakes' mismatch is known per stage, not coordinated; 13 questions with no owner. Stacked on S8 |
-| S7 | not started | | prepped 2026-11-24: mostly built already (`test_serving_builds_a_complete_fake_book`); narrow to the golden-fakes seam, or close |
+| S7 | dropped | | closed 2026-11-24 by the KAN-38 owner: its acceptance already held on `main` (`test_serving_builds_a_complete_fake_book`), and the remaining seam, the golden runner's fakes, is KAN-132 |
 | S8 | in review | [#51](https://github.com/keithfernandes12/young-illustrators-primer/pull/51) | `scripts/audit_open_questions.py`: lists open questions with neither a Jira key nor a slice; 13 of 47 on `main` (numbered lists counted, struck-through questions skipped). Built under KAN-38, the plan's key; a separate key was not created |
 
 ## Decisions
@@ -416,6 +416,25 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
   `LOOP_EMPTY` therefore means no slice is ready and none is waiting on an open PR; a wait ends in
   `LOOP_WAIT`. A `LOOP_WAIT` iteration uses one of the Ralph prompt's `--max-iterations`; that is
   accepted while a slice waits, and is an Open question for the owner if it proves wasteful.
+
+- **2026-11-24** — The KAN-38 owner accepted the recommendations on the open points of S4–S8 and
+  the seams report:
+  - **S8 stays lenient.** A `KAN-` key or a slice label anywhere in a question counts as tracked.
+    Move to a `*Tracked:*` marker once that is the norm across plans.
+  - **A cross-slice duplicate is a Fix, not Blocking** (S4). The reconcile step already asks the
+    author to explain any divergence, and a Fix can be argued down where a Blocking finding cannot.
+  - **S5's targeted checks replace the generic literal rule.** S5 reading
+    `tests/test_conventions.py` for the allowlists is accepted for now. Moving the allowlists into a
+    shared module is a follow-up, best done when S2 creates one anyway.
+  - **One cross-area logger issue, not one per area:** **KAN-131**, linked to KAN-128. It covers
+    the seams findings N2–N4: four loggers, the tag set written out five times, and three
+    slice-name styles. Splitting it would invite three different fixes. No separate issue for
+    illustration's `:` unless KAN-131 waits.
+  - **The golden fakes are KAN-132,** linked to KAN-89, covering seams findings N5–N6.
+    **S7 is dropped** in its favour, so the gap is not tracked twice. The golden runner's owner
+    chooses between adapters and rewriting the fakes.
+  - **S8 keeps KAN-38** rather than a key of its own: it is a small process script, and a ticket
+    would add overhead without adding an owner.
 
 ## Verified facts
 
@@ -474,17 +493,21 @@ nor a Jira key in the text. S5 and S6 findings use it as the place a gap becomes
 
 - **Where does the shared git-state helper live?** Candidates: a new `src/primer/_git.py`, or
   `primer/evaluation/`. *Recommended:* a leaf module with no model-area imports, chosen in S2. *Decides:*
-  the repository owner.
+  the repository owner. **The KAN-38 owner proposes `src/primer/_git.py` (2026-11-24):**
+  `evaluation/` is the golden runner's area, so every model area would depend on the gate's package.
+  Asked on #50; awaiting the repository owner.
 - **Should the other areas' logging move onto one shared helper, not only the drawing one?**
   `tracking.py` is drawing-specific (`STAGE = "drawing"`). *Recommended:* a separate slice after S1,
   led by whoever owns speech logging (KAN-128), generalising the helper rather than copying it.
-  *Decides:* the owners of speech, story and illustration.
+  *Decides:* the owners of speech, story and illustration. **Tracked:** KAN-131 (2026-11-24).
 - **Should S1's allowlist entries expire?** *Recommended:* yes, a date in each entry, so a forgotten
-  exception shows up. *Decides:* the repository owner.
+  exception shows up. *Decides:* the repository owner. **The KAN-38 owner supports expiry**
+  (2026-11-24); asked on #50.
 - **Narrow S7 to the golden-fakes seam, or close it?** The prep found that
   `src/primer/interface.py` does not exist and that the book test already covers renames
   (Verified facts, 2026-11-24). *Recommended:* narrow it, as the S7 prep says. *Decides:* the
-  golden-gate owner (KAN-89).
+  golden-gate owner (KAN-89). **Answered 2026-11-24 by the KAN-38 owner: S7 is dropped, and the
+  seam is KAN-132,** so it is not tracked twice.
 
 ## Out of scope
 
