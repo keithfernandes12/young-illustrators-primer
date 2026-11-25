@@ -24,7 +24,8 @@ deployment, §8 failure analysis).
 - `dags/` — Airflow DAGs (`dags/README.md`); `docker-compose.yaml` and `infra/airflow/` run them.
 - `dashboards/tracker/` — Streamlit pipeline tracker. `app/`, `notebooks/` — empty.
 - `docs/` — decisions, plans, procedures. See **Documents** below.
-- `scripts/` — repo checks (`check_docs.py`, `check_pr.py`).
+- `scripts/` — repo checks (`check_docs.py`, `check_pr.py`) and `audit_open_questions.py`, which lists
+  plan open questions that no slice or Jira issue owns.
 - `.claude/` — agent settings, guard hooks and skills. `.githooks/` — the commit-message check.
 - New code goes under `src/primer/<area>/`. The old `src/<area>/` layout is closed.
 
