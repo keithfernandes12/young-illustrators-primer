@@ -9,7 +9,8 @@ hard rules are `tests/test_conventions.py` (cross-slice-coherence S1).
 
 It reads `src/` and `scripts/` with `ast` and reports:
 
-- **same-name** private helpers (``_name``) defined in two or more modules;
+- **same-name** private module-level functions (``_name``) defined in two or more modules (methods
+  are left out: ``_load`` on seven different classes is polymorphism, not a copy);
 - **same-body** functions: two or more modules with an identical body (docstring removed, at least
   three statements), whatever they are called;
 - **conventions written out by hand**: a dict holding four or more of the seven required MLflow
@@ -20,16 +21,21 @@ It reads `src/` and `scripts/` with `ast` and reports:
 - **S1's blind spots**, the patterns its scans cannot see: ``git rev-parse`` run by any function,
   ``set_tag("owner", "<str>")``, ``dict(owner="<str>")``, ``{**x, "owner": "<str>"}``,
   ``.create_run(``, and a ``start_run`` reached by an alias (``from mlflow import start_run``,
-  ``getattr(x, "start_run")``, ``s = mlflow.start_run``) or given ``tags`` positionally or in ``**``.
+  ``getattr(x, "start_run")``, ``s = mlflow.start_run``) or given ``tags`` positionally or in ``**``;
+- **every ``start_run`` call**, one ``start-run`` finding each, so the run loggers outside the shared
+  one stay visible.
 
-A finding whose file S1 already allowlists for the same kind is marked ``known``. Exit status is 1
-when there is at least one new finding, so `verify` can print WARN, and 0 otherwise.
+A finding whose file S1 already allowlists for the same kind is marked ``known``. That match is per
+file and kind, so a second copy added to an allowlisted file also reads ``known``; S1's own counts
+still fail on it. Exit status is 1 when there is at least one new finding, so `verify` can print
+WARN, 0 otherwise, and 2 when the scan itself crashed (the line starts with ``ERROR``).
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import functools
 import importlib.util
 import re
 import sys
@@ -37,14 +43,22 @@ from collections import defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 
 ROOT = Path(__file__).resolve().parents[1]
 FOLDERS = ("src", "scripts")
-#: `docs/engineering/model-development.md` -> Tracking conventions.
+#: `docs/engineering/model-development.md` -> Tracking conventions. Only a fallback: the scan reads
+#: the set from `tests/test_conventions.py` when it can, so the two cannot drift.
 REQUIRED_TAGS = frozenset({"stage", "owner", "data_version", "git_sha", "base_model", "gate_group", "where"})
 TAG_SET_MIN = 4  # required-tag keys in one dict that make it a hand-written tag set
 EXPERIMENT = re.compile(r"^yip-[a-z][a-z0-9-]*$")
 MIN_BODY = 3  # statements, so `return x` is never a duplicate
+#: The form `docs/engineering/model-development.md` fixes: slice/<key>/<value>/<metric>.
+SLICE_SEPARATOR = "/"
+#: Sites S1 deliberately does not scan, so the scan lists them as known: (kind, file).
+#: `data/versioning.py` records a dataset version's full commit, not a run's provenance
+#: (cross-slice-coherence Verified facts, 2026-11-23).
+OWN_KNOWN = {("git-rev-parse", "src/primer/data/versioning.py")}
 
 
 @dataclass(frozen=True)
@@ -94,11 +108,14 @@ def _docstrings(tree: ast.Module) -> set[int]:
     return ids
 
 
-def _str(node: ast.AST | None) -> bool:
-    return isinstance(node, ast.Constant) and isinstance(node.value, str)
+def _text(node: ast.AST | None) -> str | None:
+    """The value of a string literal, or None for anything else."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
 
 
-def blind_spots(name: str, tree: ast.Module) -> Iterator[Finding]:
+def blind_spots(name: str, tree: ast.Module, required: frozenset[str] = REQUIRED_TAGS) -> Iterator[Finding]:
     """The patterns `tests/test_conventions.py` cannot see, one finding each."""
     for node in ast.walk(tree):
         where = f"{name}:{getattr(node, 'lineno', 0)}"
@@ -108,7 +125,7 @@ def blind_spots(name: str, tree: ast.Module) -> Iterator[Finding]:
                 yield Finding(
                     "git-rev-parse",
                     where,
-                    "reads the commit; the shared helper is drawing/evaluate._git_state",
+                    "reads the commit by hand (SHARED_GIT in tests/test_conventions.py is the shared helper)",
                 )
         if isinstance(node, ast.ImportFrom) and node.module == "mlflow":
             for alias in node.names:
@@ -128,35 +145,32 @@ def blind_spots(name: str, tree: ast.Module) -> Iterator[Finding]:
             if (
                 attr == "set_tag"
                 and len(node.args) >= 2
-                and _str(node.args[0])
-                and node.args[0].value == "owner"
-                and _str(node.args[1])
-            ):  # type: ignore[union-attr]
+                and _text(node.args[0]) == "owner"
+                and _text(node.args[1]) is not None
+            ):
                 yield Finding("literal-owner", where, 'set_tag("owner", "<str>")')
-            elif attr == "dict" and any(k.arg == "owner" and _str(k.value) for k in node.keywords):
+            elif attr == "dict" and any(k.arg == "owner" and _text(k.value) is not None for k in node.keywords):
                 yield Finding("literal-owner", where, 'dict(owner="<str>")')
             elif attr == "create_run":
                 yield Finding("create-run", where, "starts a run through MlflowClient, not the shared logger")
-            elif (
-                attr == "getattr"
-                and len(node.args) >= 2
-                and _str(node.args[1])
-                and node.args[1].value == "start_run"
-            ):  # type: ignore[union-attr]
+            elif attr == "getattr" and len(node.args) >= 2 and _text(node.args[1]) == "start_run":
                 yield Finding("mlflow-alias", where, 'getattr(..., "start_run")')
-            elif attr == "start_run" and (len(node.args) >= 6 or any(k.arg is None for k in node.keywords)):
-                yield Finding(
-                    "start-run-tags", where, "tags given positionally or in **, which S1 cannot read"
-                )
+            elif attr == "start_run":
+                if len(node.args) >= 6 or any(k.arg is None for k in node.keywords):
+                    yield Finding(
+                        "start-run-tags", where, "tags given positionally or in **, which S1 cannot read"
+                    )
+                else:
+                    yield Finding("start-run", where, "starts an MLflow run; the shared logger is S1's")
         elif isinstance(node, ast.Dict):
             keys = {k.value for k in node.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
-            if len(keys & REQUIRED_TAGS) >= TAG_SET_MIN:
+            if len(keys & required) >= TAG_SET_MIN:
                 yield Finding(
-                    "tag-set", where, f"{len(keys & REQUIRED_TAGS)} of the 7 required tags written by hand"
+                    "tag-set", where, f"{len(keys & required)} of the {len(required)} required tags by hand"
                 )
             if None in node.keys:
                 for key, value in zip(node.keys, node.values, strict=True):
-                    if _str(key) and key.value == "owner" and _str(value):  # type: ignore[union-attr]
+                    if _text(key) == "owner" and _text(value) is not None:
                         yield Finding("literal-owner", where, '{**x, "owner": "<str>"}')
         elif (
             isinstance(node, ast.Assign)
@@ -181,27 +195,35 @@ def _slice_separator(node: ast.JoinedStr) -> str | None:
 
 
 def scan(root: Path = ROOT) -> list[Finding]:
+    conventions = _conventions(root)
+    required = frozenset(getattr(conventions, "REQUIRED_TAGS", REQUIRED_TAGS))
     names: dict[str, set[str]] = defaultdict(set)
     bodies: dict[str, set[str]] = defaultdict(set)
     experiments: dict[str, set[str]] = defaultdict(set)
     styles: dict[str, set[str]] = defaultdict(set)
     findings: list[Finding] = []
     for name, tree in _modules(root):
+        for top in tree.body:  # module level only: a method is not a copied helper
+            if (
+                isinstance(top, ast.FunctionDef | ast.AsyncFunctionDef)
+                and top.name.startswith("_")
+                and not top.name.startswith("__")
+            ):
+                names[top.name].add(f"{name}:{top.lineno}")
         for func in _functions(tree):
-            if func.name.startswith("_") and not func.name.startswith("__"):
-                names[func.name].add(f"{name}:{func.lineno}")
             key = _body_key(func)
             if key is not None:
                 bodies[key].add(f"{name}:{func.lineno} {func.name}")
         skip = _docstrings(tree)
         for node in ast.walk(tree):
-            if _str(node) and id(node) not in skip and EXPERIMENT.match(node.value):  # type: ignore[union-attr]
-                experiments[node.value].add(name)  # type: ignore[union-attr]
+            text = _text(node)
+            if text is not None and id(node) not in skip and EXPERIMENT.match(text):
+                experiments[text].add(name)
             elif isinstance(node, ast.JoinedStr):
                 separator = _slice_separator(node)
                 if separator is not None:
                     styles[separator].add(f"{name}:{node.lineno}")
-        findings.extend(blind_spots(name, tree))
+        findings.extend(blind_spots(name, tree, required))
     for func_name, places in sorted(names.items()):
         if len({p.split(":")[0] for p in places}) >= 2:
             findings.append(
@@ -219,39 +241,52 @@ def scan(root: Path = ROOT) -> list[Finding]:
                     f"{experiment!r} named in {len(modules)} modules",
                 )
             )
-    if len(styles) > 1:
-        for separator, places in sorted(styles.items()):
-            for place in sorted(places):
-                findings.append(
-                    Finding(
-                        "slice-style",
-                        place,
-                        f"separator {separator!r} between key and value ({len(styles)} styles in use)",
-                    )
+    for separator, places in sorted(styles.items()):
+        if separator == SLICE_SEPARATOR:
+            continue  # the documented form is not a finding
+        for place in sorted(places):
+            findings.append(
+                Finding(
+                    "slice-style",
+                    place,
+                    f"separator {separator!r} between key and value; the documented form is "
+                    "slice/<key>/<value>/<metric>",
                 )
+            )
     return findings
 
 
-def _allowlisted(root: Path) -> set[tuple[str, str]]:
-    """(kind, file) pairs S1 already lists, so the scan can say known rather than new."""
+@functools.cache
+def _conventions(root: Path) -> ModuleType | None:
+    """`tests/test_conventions.py` loaded once, or None when it is missing or will not import."""
     path = root / "tests" / "test_conventions.py"
     if not path.exists():
-        return set()
+        return None
     spec = importlib.util.spec_from_file_location("_conventions", path)
     if spec is None or spec.loader is None:
-        return set()
+        return None
     module = importlib.util.module_from_spec(spec)
     sys.modules["_conventions"] = module
     try:
         spec.loader.exec_module(module)
     except Exception:  # noqa: BLE001 -- advisory: a broken test file must not stop the scan
+        return None
+    return module
+
+
+def _allowlisted(root: Path) -> set[tuple[str, str]]:
+    """(kind, file) pairs S1 already lists, so the scan can say known rather than new."""
+    module = _conventions(root)
+    if module is None:
         return set()
-    known = {("git-rev-parse", f"src/{file}") for file, _ in getattr(module, "GIT_ALLOWED", {})}
+    known = set(OWN_KNOWN)
+    known |= {("git-rev-parse", f"src/{file}") for file, _ in getattr(module, "GIT_ALLOWED", {})}
     shared = getattr(module, "SHARED_GIT", ("", ""))[0]
     known.add(("git-rev-parse", f"src/{shared}"))
-    # The shared logger is where the tag set and the slice name are meant to live.
+    # The shared logger is where the tag set, the slice name and the run start are meant to live.
     logger = getattr(module, "SHARED_LOGGER", "")
-    known |= {("tag-set", f"src/{logger}"), ("slice-style", f"src/{logger}")}
+    known |= {(kind, f"src/{logger}") for kind in ("tag-set", "slice-style", "start-run")}
+    known |= {("start-run", f"src/{file}") for file in getattr(module, "START_RUN_ALLOWED", {})}
     return known
 
 
@@ -265,7 +300,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--root", type=Path, default=ROOT)
     args = parser.parse_args(argv)
-    findings = mark_known(scan(args.root), _allowlisted(args.root))
+    conventions = args.root / "tests" / "test_conventions.py"
+    try:
+        findings = mark_known(scan(args.root), _allowlisted(args.root))
+    except Exception as exc:  # noqa: BLE001 -- name the crash; verify shows this line under WARN
+        print(f"ERROR  the scan crashed: {exc!r}")
+        return 2
+    if conventions.exists() and _conventions(args.root) is None:
+        print(f"warning: {conventions} did not import, so the allowlist is unavailable", file=sys.stderr)
     for finding in findings:
         print(finding.line())
     new = sum(1 for f in findings if not f.known)
